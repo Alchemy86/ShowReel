@@ -25,6 +25,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
+| Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
 
 ## Sharp edges
 
@@ -60,12 +61,16 @@ Each is documented at the top of its module; read the module rather than duplica
 - **`Audio::at` is film time, `Audio::from` is source time.** Confusing the two
   is the classic mistake; both are pinned by a test.
 
-- **`examples/kanto.film.json` is committed and generated.** `kanto_reel.rs` is
+- **`examples/kanto.film.jsonc` is committed and generated.** `kanto_reel.rs` is
   canonical — regenerate with `cargo run --release --example kanto_reel -- -o
-  examples/kanto.film.json`, and `--check` on the same command fails if they
+  examples/kanto.film.jsonc`, and `--check` on the same command fails if they
   have drifted. Every asset reference in it must stay a bare name resolved by
   `-A/--assets`; a test rejects absolute paths, because a committed film with a
-  machine-specific path is useless to everyone else.
+  machine-specific path is useless to everyone else. It is `.jsonc`, not
+  `.json`, because it carries hand-written comments — `to_json` never emits
+  them back, so `--check` compares *parsed* films rather than raw text and a
+  comment cannot trip the drift guard (nor can it catch one gone stale; see
+  `src/timeline.rs`).
 
 - **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
   second. Using the first letterboxes a square source into a wide frame — the exact

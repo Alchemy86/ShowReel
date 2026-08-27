@@ -2,13 +2,13 @@
 
 ## Making a film without writing Rust
 
-**`kanto.film.json` in this directory is a complete, ready-to-render film**, and
-it is the honest answer to "what *is* a film in ShowReel?" — a JSON document.
-The Rust builders in `kanto_reel.rs` are sugar that produces exactly this and
-nothing more. You do not need them:
+**`kanto.film.jsonc` in this directory is a complete, ready-to-render film**,
+and it is the honest answer to "what *is* a film in ShowReel?" — a JSON
+document. The Rust builders in `kanto_reel.rs` are sugar that produces exactly
+this and nothing more. You do not need them:
 
 ```bash
-showreel render examples/kanto.film.json -A <assets> -o kanto-reel.mp4
+showreel render examples/kanto.film.jsonc -A <assets> -o kanto-reel.mp4
 ```
 
 Open it, read it top to bottom, change a duration or a caption, render it again.
@@ -19,14 +19,24 @@ mistakes a type cannot catch before you spend a render on them, and
 ### On reading it
 
 It is pretty-printed, and every scene carries a `name`, so the timeline is
-followable by scrolling. Two honest caveats:
+followable by scrolling. It is long (about 1300 lines) because it is fully
+explicit: every theme value, every placement. That is the trade for being
+readable by a tool as well as a person.
 
-- **JSON has no comment syntax**, so the *reasoning* behind the film — why an
-  inset sits where it does, where a clip timestamp came from — cannot live in
-  the file. It lives in `kanto_reel.rs`, which is the better document for it.
-- It is long (about 1300 lines) because it is fully explicit: every theme
-  value, every placement. That is the trade for being readable by a tool as
-  well as a person.
+**It has comments, which is why it's `.jsonc` and not `.json`.** Why a scene
+holds for four seconds, why an inset sits where it does, where a clip's
+timestamp came from — that reasoning used to live only in `kanto_reel.rs`,
+because JSON has no comment syntax. It now lives here too, next to the values
+it explains. `Film::from_json` accepts a narrow JSONC subset — `//` and
+`/* */` comments, plus a trailing comma on the last element of an array or
+object — via the [`jsonc-parser`](https://crates.io/crates/jsonc-parser)
+crate; see the "Comments in film files" section atop `src/timeline.rs` for
+why that crate and not one of the alternatives. A plain `.json` film with no
+comments still loads exactly as before.
+
+The map arithmetic and asset bookkeeping still stay in `kanto_reel.rs`. What
+moved into the JSON is the storytelling — why the film is shaped the way it
+is — not how a map rectangle's centre was computed.
 
 ### Assets are named, never pathed
 
@@ -41,23 +51,40 @@ what each reference is and where it came from.
 
 ### Which one is canonical
 
-**`kanto_reel.rs` is canonical. `kanto.film.json` is a checked-in artifact
-generated from it.** The Rust file holds the map arithmetic and the reasoning;
-the JSON is what that arithmetic produces. After changing the Rust, regenerate:
+**`kanto_reel.rs` is canonical. `kanto.film.jsonc` is a checked-in artifact
+generated from it.** The Rust file holds the map arithmetic; the JSON is what
+that arithmetic produces, annotated by hand with the reasoning behind the
+film itself. After changing the Rust, regenerate:
 
 ```bash
-cargo run --release --example kanto_reel -- -o examples/kanto.film.json
+cargo run --release --example kanto_reel -- -o examples/kanto.film.jsonc
 ```
 
 and this fails, loudly, if the two have drifted apart:
 
 ```bash
-cargo run --release --example kanto_reel -- --check -o examples/kanto.film.json
+cargo run --release --example kanto_reel -- --check -o examples/kanto.film.jsonc
 ```
 
-If you only want to *edit a film*, edit the JSON — copy it somewhere and render
-it. The `--check` guard exists to keep the committed copy honest, not to stop
-you using the format it is demonstrating.
+**Regenerating overwrites the file and discards its comments.** `to_json`
+only ever emits plain JSON — there is no way to reconstruct hand-written
+prose from a Rust builder. Comparing raw text would then fail `--check` on
+every comment in the committed file, which defeats the point of having them.
+So `--check` compares *parsed* films instead: it loads both the freshly
+generated JSON and the committed file and checks the resulting `Film` values
+are equal. A comment can go stale without tripping the guard — chosen over
+the other two options on the table: teaching the generator to emit comments
+(machinery for prose that belongs to a human editor, not a map-rectangle
+computation), or making the JSON canonical instead of the Rust (hand-
+maintaining the atlas arithmetic in JSON, the opposite of `AGENTS.md`'s
+"nothing in the crate may know what its films are about"). If you regenerate
+after changing `kanto_reel.rs`, move any comments that are still true back
+into the new file by hand; the CLI warns if the file it's about to overwrite
+looks like it has comments in it.
+
+If you only want to *edit a film*, edit the JSONC — copy it somewhere and
+render it. The `--check` guard exists to keep the committed copy honest, not
+to stop you using the format it is demonstrating.
 
 ## `kanto_reel.rs`
 
@@ -97,12 +124,12 @@ in this repository, and neither should be.
 ### Running it
 
 ```bash
-# The JSON is committed — this is all you need.
-showreel sheet  examples/kanto.film.json -A <assets> --every 1.5s -o sheet.png
-showreel render examples/kanto.film.json -A <assets> -o kanto-reel.mp4
+# The JSONC is committed — this is all you need.
+showreel sheet  examples/kanto.film.jsonc -A <assets> --every 1.5s -o sheet.png
+showreel render examples/kanto.film.jsonc -A <assets> -o kanto-reel.mp4
 
 # Only if you changed kanto_reel.rs:
-cargo run --release --example kanto_reel -- -o examples/kanto.film.json
+cargo run --release --example kanto_reel -- -o examples/kanto.film.jsonc
 ```
 
 ### What the footage placements claim

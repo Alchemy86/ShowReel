@@ -9,15 +9,20 @@
 //! sits where in the atlas, which second of which film shows which milestone —
 //! lives in this file, as *input*.
 //!
-//! This file is the **generator**; `examples/kanto.film.json` beside it is the
-//! description it produces, committed so that the film can be read, edited and
-//! rendered without compiling anything. This file is canonical — regenerate
-//! the JSON after changing it, and `--check` fails if the two disagree:
+//! This file is the **generator**; `examples/kanto.film.jsonc` beside it is
+//! the description it produces, committed so that the film can be read,
+//! edited and rendered without compiling anything. It is `.jsonc` rather
+//! than `.json` because the committed copy carries hand-written comments —
+//! the storytelling reasoning that belongs beside the values it explains,
+//! not buried here. This file stays canonical for the *values* — regenerate
+//! after changing it, and `--check` fails if the two disagree (comparing
+//! parsed films, not raw text, so the comments survive the check without
+//! being mistaken for drift — see `src/timeline.rs`):
 //!
 //! ```text
-//! cargo run --release --example kanto_reel -- -o examples/kanto.film.json
-//! cargo run --release --example kanto_reel -- --check -o examples/kanto.film.json
-//! showreel render examples/kanto.film.json -A <assets> -o kanto-reel.mp4
+//! cargo run --release --example kanto_reel -- -o examples/kanto.film.jsonc
+//! cargo run --release --example kanto_reel -- --check -o examples/kanto.film.jsonc
+//! showreel render examples/kanto.film.jsonc -A <assets> -o kanto-reel.mp4
 //! ```
 //!
 //! ## Where the assets come from, and what is real
@@ -399,16 +404,16 @@ fn build(aspect: f64) -> Film {
 }
 
 fn main() -> anyhow::Result<()> {
-    let mut out = std::path::PathBuf::from("kanto.film.json");
+    let mut out = std::path::PathBuf::from("kanto.film.jsonc");
     let mut check = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--out" | "-o" => out = args.next().unwrap_or_default().into(),
-            // The drift guard. `examples/kanto.film.json` is committed so that
-            // a person can read and render the film without compiling
-            // anything, which means there are now two descriptions of it. This
-            // is what stops them disagreeing silently.
+            // The drift guard. `examples/kanto.film.jsonc` is committed so
+            // that a person can read and render the film without compiling
+            // anything, which means there are now two descriptions of it.
+            // This is what stops them disagreeing silently.
             "--check" => check = true,
             other => eprintln!("ignoring unknown argument {other:?}"),
         }
@@ -423,18 +428,34 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("the film does not validate");
     }
     if check {
-        let want = film.to_json()?;
-        let got = std::fs::read_to_string(&out)
+        // This generator has no way to reconstruct the prose comments a
+        // person hand-adds to the committed file, so the guard compares
+        // *parsed* films rather than raw text — see the "Comments in film
+        // files" section of `src/timeline.rs` and `examples/README.md` for
+        // why. That means a comment can go stale without tripping this
+        // check; it cannot make the check fail to compile the film either.
+        let want = Film::from_json(&film.to_json()?)?;
+        let got_text = std::fs::read_to_string(&out)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", out.display()))?;
-        if got.trim() != want.trim() {
+        let got = Film::from_json(&got_text)
+            .map_err(|e| anyhow::anyhow!("parsing {}: {e}", out.display()))?;
+        if got != want {
             anyhow::bail!(
-                "{} is out of step with kanto_reel.rs — regenerate it:\n                     cargo run --release --example kanto_reel -- -o {}",
+                "{} is out of step with kanto_reel.rs — regenerate it:\n                     cargo run --release --example kanto_reel -- -o {}\n                 (this overwrites the file and discards any hand-written comments)",
                 out.display(),
                 out.display()
             );
         }
         println!("{} is in step with kanto_reel.rs", out.display());
         return Ok(());
+    }
+    if let Ok(existing) = std::fs::read_to_string(&out)
+        && (existing.contains("//") || existing.contains("/*"))
+    {
+        eprintln!(
+            "note: {} looks like it has comments in it — regenerating overwrites the file and discards them",
+            out.display()
+        );
     }
     std::fs::write(&out, film.to_json()?)?;
     println!(
