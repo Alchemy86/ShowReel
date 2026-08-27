@@ -479,7 +479,7 @@ impl Film {
 }
 
 /// An asset reference, with how it will be decoded.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum AssetUse {
     Still(String),
     Clip { asset: String, max_width: u32, trim: Option<(f64, f64)>, decode_fps: Option<f64> },

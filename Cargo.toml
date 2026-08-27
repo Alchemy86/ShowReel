@@ -6,31 +6,66 @@ description = "A declarative toolset for demo, explainer and animation films: ti
 license = "PolyForm-Noncommercial-1.0.0"
 readme = "README.md"
 
+[lib]
+name = "showreel"
+path = "src/lib.rs"
+# cdylib for the wasm target; rlib so the bin and tests link it as usual.
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tiny-skia = "0.11"
 rustybuzz = "0.20"
 ttf-parser = "0.25"
-rayon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 jsonc-parser = { version = "0.33", features = ["serde"] }
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+# Threaded batch rendering (`render_range`'s parallel path) and the CLI: both
+# need a real OS, so both are optional and off for the `wasm` target — see
+# [features] below and build-wasm.sh.
+rayon = { version = "1", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
 # Only pulled in by the `studio` feature — see [features] below.
 tiny_http = { version = "0.12.0", default-features = false, optional = true }
 
 [[bin]]
 name = "showreel"
 path = "src/bin/showreel.rs"
+required-features = ["cli"]
 
 [profile.release]
 opt-level = 3
 lto = "thin"
 
+# What a viewer actually downloads, so build-wasm.sh builds this profile
+# rather than plain `release`: size beats native-build speed for a wasm blob
+# handed over a network, in a way it never does for the binary on the
+# captain's own machine.
+[profile.web]
+inherits = "release"
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+
 [features]
+default = ["cli", "parallel"]
+# The `showreel` command-line binary.
+cli = ["dep:clap"]
+# Threaded batch rendering across all of `rayon`'s worker threads
+# (`Renderer::render_range`). Without it, the same method still works — it
+# just renders its chunks one frame at a time on the calling thread, which is
+# the only option `wasm32-unknown-unknown` has anyway (no thread spawning).
+parallel = ["dep:rayon"]
 # The browser studio (`showreel studio`). Off by default so the library and
 # the plain render path stay dependency-light; tiny_http is a small,
 # maintained, synchronous HTTP server — no async runtime, no TLS (this is a
 # localhost dev tool), which is why default-features are off above.
 studio = ["dep:tiny_http"]
+# The renderer compiled to run in a browser: `src/wasm.rs`'s `extern "C"`
+# exports (built for wasm32-unknown-unknown, see build-wasm.sh) plus, on a
+# native target, the `showreel web-pack` command that prepares a film's
+# assets for that page (pre-decoding clips, which need ffmpeg and so can
+# never run in the browser itself — see src/wasm.rs).
+wasm = []

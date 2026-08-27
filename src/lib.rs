@@ -48,8 +48,17 @@ pub mod timeline;
 pub mod scale;
 pub mod render;
 pub mod audio;
+// Shells out to ffmpeg (`std::process::Command`), which has no browser
+// story — see src/wasm.rs's module docs — so it is native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod encode;
 pub mod preview;
 pub mod prelude;
 #[cfg(feature = "studio")]
 pub mod studio;
+// The .srclip container is used natively by `showreel web-pack` (encode) and
+// in the browser by src/wasm.rs (decode), so it is not itself wasm32-only.
+#[cfg(feature = "wasm")]
+pub mod webclip;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+pub mod wasm;

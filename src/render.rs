@@ -14,6 +14,7 @@ use crate::text::FontDb;
 use crate::timeline::{Cut, Film, Scene};
 use crate::time::Time;
 use anyhow::Result;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::time::Instant;
 
@@ -198,6 +199,19 @@ impl<'a> Renderer<'a> {
         self.render_at(t)
     }
 
+    /// Render one chunk, across every available core when `parallel` is
+    /// built, or one frame at a time otherwise — the only option
+    /// `wasm32-unknown-unknown` has, since it cannot spawn threads.
+    #[cfg(feature = "parallel")]
+    fn render_chunk(&self, base: u32, end: u32) -> Vec<Result<Canvas>> {
+        (base..end).into_par_iter().map(|i| self.render_frame(i)).collect()
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn render_chunk(&self, base: u32, end: u32) -> Vec<Result<Canvas>> {
+        (base..end).map(|i| self.render_frame(i)).collect()
+    }
+
     /// Render `range` into `sink`, in order, across every available core.
     ///
     /// Frames are rendered in chunks so that memory stays bounded: a 4K frame
@@ -210,14 +224,16 @@ impl<'a> Renderer<'a> {
     ) -> Result<RenderStats> {
         let start = Instant::now();
         self.preload()?;
+        #[cfg(feature = "parallel")]
         let threads = rayon::current_num_threads().max(1);
+        #[cfg(not(feature = "parallel"))]
+        let threads = 1;
         let chunk = (threads * 2).max(2);
         let mut done = 0u32;
 
         for base in range.clone().step_by(chunk) {
             let end = (base + chunk as u32).min(range.end);
-            let rendered: Vec<Result<Canvas>> =
-                (base..end).into_par_iter().map(|i| self.render_frame(i)).collect();
+            let rendered = self.render_chunk(base, end);
             for (offset, frame) in rendered.into_iter().enumerate() {
                 sink.accept(base + offset as u32, &frame?)?;
                 done += 1;

@@ -88,9 +88,16 @@ impl FontDb {
     /// Register a font file. Returns the ids of the faces it contained.
     pub fn add_file(&mut self, path: impl AsRef<Path>) -> Result<Vec<FontId>> {
         let path = path.as_ref();
-        let bytes = Arc::new(
-            std::fs::read(path).with_context(|| format!("reading font {}", path.display()))?,
-        );
+        let bytes = std::fs::read(path).with_context(|| format!("reading font {}", path.display()))?;
+        self.add_bytes(bytes, path.to_path_buf())
+    }
+
+    /// Register a font from already-loaded bytes rather than a path — for a
+    /// caller with no filesystem, such as the wasm build, which fetches a
+    /// face over the network. `label` is cosmetic: it stands in for the path
+    /// `select`'s fallback (an exact font-file match) and error messages use.
+    pub fn add_bytes(&mut self, bytes: Vec<u8>, label: PathBuf) -> Result<Vec<FontId>> {
+        let bytes = Arc::new(bytes);
         let n = ttf_parser::fonts_in_collection(&bytes).unwrap_or(1);
         let mut ids = Vec::new();
         for index in 0..n {
@@ -101,7 +108,7 @@ impl FontDb {
                 .find(|n| n.name_id == ttf_parser::name_id::FAMILY && n.is_unicode())
                 .and_then(|n| n.to_string())
                 .unwrap_or_else(|| {
-                    path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+                    label.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
                 });
             let weight = face.weight().to_number();
             let italic = face.is_italic() || face.is_oblique();
@@ -112,11 +119,11 @@ impl FontDb {
                 family,
                 weight,
                 italic,
-                path: path.to_path_buf(),
+                path: label.clone(),
             });
         }
         if ids.is_empty() {
-            bail!("no usable faces in {}", path.display());
+            bail!("no usable faces in {}", label.display());
         }
         Ok(ids)
     }
