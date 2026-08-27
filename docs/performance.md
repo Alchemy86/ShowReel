@@ -58,8 +58,8 @@ draws a random number, or mutates shared state. Verified end to end rather
 than asserted —
 
 ```
-$ showreel render kanto.film.json --frames 600-609 --png det1 -o det1.mp4
-$ showreel render kanto.film.json --frames 600-609 --png det2 -o det2.mp4
+$ showreel render kanto.film.jsonc --frames 600-609 --png det1 -o det1.mp4
+$ showreel render kanto.film.jsonc --frames 600-609 --png det2 -o det2.mp4
 $ diff -r det1 det2 && md5sum det1.mp4 det2.mp4
 ```
 

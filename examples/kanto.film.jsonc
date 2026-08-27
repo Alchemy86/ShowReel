@@ -1,3 +1,20 @@
+// Kanto, entire — a ShowReel demonstration.
+//
+// Open on Pokémon Blue's title screen → pull back until all 226 maps of
+// Kanto are in one frame → real swarm-run footage bursts out from the map
+// coordinates where each moment happened → pull one clip forward and name
+// it → end card.
+//
+// This file is a checked-in artifact of examples/kanto_reel.rs, which stays
+// canonical: the map rectangles and the aspect-ratio arithmetic live there,
+// not here. What lives here is the film itself, and comments on *why* a
+// scene holds as long as it does or why a clip sits where it does — the
+// storytelling reasoning a reader actually meets when they open this file.
+// See examples/README.md for where each asset comes from and the evidence
+// behind each clip's timestamp. `kanto_reel --check` guards this file
+// against drifting from the Rust that produced it; it compares the two
+// *parsed* films, so hand-written comments like these survive regeneration
+// checks without being mistaken for drift (see src/timeline.rs for why).
 {
   "width": 1920,
   "height": 1080,
@@ -213,12 +230,20 @@
     "accent": "#ffd147",
     "background": "#080a0e"
   },
+  // The cartridge's own title theme, recorded off our emulator's sound chip
+  // (see examples/README.md for how) — laid down as two reads of the same
+  // file at the same source offset, which is how a constant-gain mixer
+  // expresses a level change: the first carries the title screen and
+  // recedes, the second comes up underneath at a fifth of the volume and
+  // stays there. Reading both from the same source second keeps them
+  // phase-aligned, so the performance itself never cuts — only its volume
+  // moves.
   "audio": [
     {
       "asset": "pokemon-blue-title.wav",
       "duration": 8.2,
       "fade_in": 0.35,
-      "fade_out": 3.2
+      "fade_out": 3.2,
     },
     {
       "asset": "pokemon-blue-title.wav",
@@ -227,9 +252,12 @@
       "fade_in": 3.2,
       "fade_out": 3.5,
       "gain": 0.2
-    }
+    },
   ],
   "opening": {
+    // The cartridge's own title screen, not a picture of one: a real
+    // capture, nearest-neighbour magnified so the Game Boy's pixels stay
+    // square. Held a beat before the title card animates in over it.
     "name": "title screen",
     "duration": 5.2,
     "background": "#07090e",
@@ -347,7 +375,7 @@
         "exit": null,
         "opacity": 1.0,
         "z": 0
-      }
+      },
     ]
   },
   "then": [
@@ -372,6 +400,17 @@
             "type": "still",
             "asset": "kanto.png",
             "fit": "cover",
+            // The move this whole toolset exists for: open at 1:1 on the
+            // Game Boy's own 160×144 window over Pallet Town, hold a beat,
+            // then pull back until all 226 maps are in frame — one
+            // continuous move across a 48-megapixel picture. Both ends are
+            // framed on the *same point*, so only the height changes: the
+            // camera stays on its subject for as long as it can stay
+            // centred, and only slides once the widening view no longer
+            // fits within the source (clamp_to_source below). Framing the
+            // far end as "whole" instead would start the centre travelling
+            // immediately, drifting off Pallet Town onto empty ground while
+            // still too zoomed in to show why that matters.
             "camera": {
               "shots": [
                 {
@@ -541,6 +580,9 @@
             "z": 0
           },
           {
+            // Knock the map back a little once the footage starts
+            // arriving, so each clip reads as sitting on top of it rather
+            // than in it.
             "type": "solid",
             "colour": "#05070ca8",
             "from": 0.3,
@@ -558,6 +600,20 @@
             "z": 0
           },
           {
+            // Five real moments, placed at the map coordinates where they
+            // happened. The opening chain all plays out within a few
+            // hundred atlas pixels of Pallet Town, which is a handful of
+            // screen pixels once all 226 maps are in frame — too close to
+            // draw each clip at its own location without piling them on
+            // top of each other. So each inset is hand-placed around the
+            // frame's edge instead, and the callout layer below it draws
+            // the line back to where the moment actually happened. The
+            // line is the claim, not the inset's position. Every timestamp
+            // here was checked by reading the milestone caption the run
+            // itself burned into that frame — see the evidence table in
+            // examples/README.md.
+            //
+            // 8s in: the caption reads "reached: leave-the-bedroom".
             "type": "clip",
             "asset": "pixel-chain-run.mp4",
             "fit": "contain",
@@ -652,6 +708,8 @@
             "z": 20
           },
           {
+            // 176s in: the caption reads "reached: take-a-starter" — the
+            // rival battle.
             "type": "clip",
             "asset": "pixel-chain-run.mp4",
             "fit": "contain",
@@ -746,6 +804,7 @@
             "z": 20
           },
           {
+            // 277s in: the caption reads "reached: out-of-the-lab".
             "type": "clip",
             "asset": "pixel-chain-run.mp4",
             "fit": "contain",
@@ -840,6 +899,7 @@
             "z": 20
           },
           {
+            // 330s in: the caption reads "reached: north-out-of-pallet".
             "type": "clip",
             "asset": "pixel-chain-run.mp4",
             "fit": "contain",
@@ -934,6 +994,8 @@
             "z": 20
           },
           {
+            // 22s in: 26 of these runs playing at once, not one — the
+            // grid film, not the single-run one above.
             "type": "clip",
             "asset": "pixel-chain-grid.mp4",
             "fit": "contain",
@@ -1077,6 +1139,11 @@
         }
       },
       "scene": {
+        // The explainer move: take a clip that's already on screen, dim
+        // everything else, bring it forward, and name exactly which
+        // decision this is. Same coordinates as its burst inset one scene
+        // ago (Oak's Lab, in the top-right) — this is that clip, made the
+        // whole point of the frame.
         "name": "pull it up",
         "duration": 5.6,
         "background": "#07090e",
@@ -1197,6 +1264,7 @@
         }
       },
       "scene": {
+        // The whole film is one JSON description; the closing line says so.
         "name": "end card",
         "duration": 4.6,
         "background": "#07090e",
@@ -1312,5 +1380,5 @@
         ]
       }
     }
-  ]
+  ],
 }

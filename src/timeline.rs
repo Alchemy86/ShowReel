@@ -15,6 +15,52 @@
 //! JSON alike, and leaves only the duration rule to check. That is the honest
 //! Rust answer to a React API: not a transliteration, but the same idea with
 //! the invariant moved into the type.
+//!
+//! # Comments in film files
+//!
+//! [`Film::from_json`] reads plain JSON exactly as before, and also a narrow
+//! JSONC subset: `//` and `/* */` comments, plus a trailing comma after the
+//! last element of an array or object. That is the whole allowance — nothing
+//! else JSONC-flavoured parsers tend to also permit (unquoted property names,
+//! single-quoted strings, hex numbers, a leading `+`) is accepted, so a film
+//! file stays recognisably JSON with two deliberate, named exceptions rather
+//! than drifting toward JSON5. Comments matter because the film file is the
+//! interface: it is meant to be read by a person, and "why does this scene
+//! hold for four seconds" cannot live in a format with no comment syntax.
+//! Trailing commas are a separate, smaller convenience worth taking at the
+//! same time — reordering or deleting the last line of a hand-edited list is
+//! common and a bare comma error there is pure friction.
+//!
+//! [`jsonc-parser`](https://docs.rs/jsonc-parser) does the parsing, chosen
+//! over the alternatives:
+//! - `json5` implements the full JSON5 grammar — unquoted keys, single quotes,
+//!   hex and leading-`+` numbers included — which is a wider dialect than
+//!   "JSON plus comments", and it deserialises through its *own* independent
+//!   `serde::Deserializer` rather than `serde_json`'s. This crate leans on
+//!   untagged enums and `#[serde(flatten)]` in several places (see the crate
+//!   root docs), and a second, less battle-tested `Deserializer`
+//!   implementation is exactly where those would misbehave first.
+//! - `serde_jsonrc` is a `serde_json` fork with comment support, but its last
+//!   release was in 2019; treated as unmaintained and ruled out on that
+//!   basis alone.
+//! - `jsonc-parser` is maintained (dprint/deno tooling), has zero required
+//!   dependencies (`serde` is opt-in, and already a dependency here), and its
+//!   `ParseOptions` exposes comments and trailing commas as two independent
+//!   flags — which is what let this be a considered, narrow decision instead
+//!   of an all-or-nothing dialect switch. It is used here to parse into a
+//!   `serde_json::Value` first; the actual type-level deserialisation into
+//!   [`Film`] then still goes through `serde_json`'s own `Deserializer`,
+//!   unchanged from before this was added.
+//!
+//! `Film::to_json` still emits plain JSON: there is no general way to
+//! reconstruct prose comments from a Rust builder, so nothing here tries.
+//! That means regenerating `examples/kanto.film.jsonc` from
+//! `examples/kanto_reel.rs` would discard any comments hand-added to the
+//! committed copy — so `kanto_reel --check` compares the two *structurally*
+//! (parse both, compare the resulting `Film`s) rather than as text, and
+//! comments are free to live in the committed file without the drift guard
+//! flagging them as a mismatch. See `examples/README.md` for the full
+//! reasoning and its trade-off.
 
 use crate::audio::Audio;
 use crate::color::Color;
@@ -256,6 +302,22 @@ fn default_bg() -> Color {
     Color::rgb(8, 10, 14)
 }
 
+/// The exact JSONC allowance: comments and trailing commas, nothing else.
+/// `jsonc_parser::ParseOptions::default()` turns on every laxity the crate
+/// knows — loose (unquoted) property names, single-quoted strings, hex
+/// numbers, a leading `+` on numbers, missing commas — which is closer to
+/// JSON5 than to "JSON with comments". Naming every field here keeps that a
+/// deliberate, visible choice rather than an accident of a library default.
+const JSONC_OPTIONS: jsonc_parser::ParseOptions = jsonc_parser::ParseOptions {
+    allow_comments: true,
+    allow_trailing_commas: true,
+    allow_loose_object_property_names: false,
+    allow_missing_commas: false,
+    allow_single_quoted_strings: false,
+    allow_hexadecimal_numbers: false,
+    allow_unary_plus_numbers: false,
+};
+
 /// Everything about a film except its scenes.
 ///
 /// Exists so that [`FilmSpec::open`] is the only way to make a [`Film`]: a film
@@ -397,8 +459,15 @@ impl Film {
         Ok(serde_json::to_string_pretty(self)?)
     }
 
+    /// Parses a film description. Accepts plain JSON, and also the narrow
+    /// JSONC subset described in the module docs above: `//` and `/* */`
+    /// comments, and a trailing comma on the last element of an array or
+    /// object. Every plain-JSON file that loaded before still loads
+    /// unchanged — this is purely additive.
     pub fn from_json(s: &str) -> anyhow::Result<Self> {
-        Ok(serde_json::from_str(s)?)
+        let value: serde_json::Value = jsonc_parser::parse_to_serde_value(s, &JSONC_OPTIONS)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::from_value(value)?)
     }
 
     pub fn load(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
@@ -567,6 +636,42 @@ mod tests {
         assert_eq!(Film::from_json(&s).unwrap(), f);
         // The JSON shape itself cannot express a leading transition.
         assert!(s.contains("\"opening\""), "{s}");
+    }
+
+    #[test]
+    fn plain_json_still_loads_unchanged() {
+        // The addition is purely additive: every file that parsed as strict
+        // JSON before must still parse, byte for byte, the same way.
+        let f = film();
+        assert_eq!(Film::from_json(&f.to_json().unwrap()).unwrap(), f);
+    }
+
+    #[test]
+    fn comments_and_trailing_commas_are_accepted() {
+        let src = r##"{
+            // a line comment on its own line
+            "width": 64, "height": 36, /* a block comment mid-line */ "fps": 30.0,
+            "opening": {
+                "duration": 2.0,
+                "layers": [
+                    // trailing comma after the last (only) element
+                    { "type": "solid", "colour": "#ffffff" },
+                ],
+            }, // trailing comma after the last object field
+        }"##;
+        let f = Film::from_json(src).unwrap();
+        assert_eq!(f.width, 64);
+        assert_eq!(f.height, 36);
+        assert_eq!(f.timeline.scene_count(), 1);
+    }
+
+    #[test]
+    fn jsonc_laxity_stops_at_comments_and_trailing_commas() {
+        // Unquoted keys are JSON5-shaped, not JSONC, and this crate does not
+        // accept them: the allowance is exactly comments and trailing
+        // commas, not a slide toward JSON5.
+        let src = r#"{ width: 64, "height": 36, "fps": 30.0, "opening": { "duration": 1.0 } }"#;
+        assert!(Film::from_json(src).is_err());
     }
 
     #[test]

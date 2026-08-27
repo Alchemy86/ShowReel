@@ -271,16 +271,19 @@ fn a_track_survives_the_json_round_trip_with_its_placement() {
 // ---------------------------------------------------------------------------
 // The committed film description.
 //
-// `examples/kanto.film.json` exists so that a film can be read and rendered
+// `examples/kanto.film.jsonc` exists so that a film can be read and rendered
 // without compiling anything. It is generated from `examples/kanto_reel.rs`,
 // which is canonical; `kanto_reel --check` is the guard against the two
-// drifting. What is checked *here* is the thing that would rot silently: that
-// the committed file still parses against today's types and still validates.
+// drifting. It carries hand-written comments explaining the film, which is
+// why it is `.jsonc` and not `.json` — see the "Comments in film files"
+// section atop `src/timeline.rs`. What is checked *here* is the thing that
+// would rot silently: that the committed file still parses against today's
+// types and still validates.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn the_committed_film_description_still_loads_and_validates() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/kanto.film.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/kanto.film.jsonc");
     let film = Film::load(&path).expect("the committed description must parse");
     let errs = film.validate();
     assert!(errs.is_empty(), "{errs:?}");

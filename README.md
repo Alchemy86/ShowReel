@@ -105,11 +105,15 @@ transition, or has two in a row, **cannot be written down**, in Rust or in the
 JSON.
 
 **You do not have to write Rust at all.** A film *is* a JSON document, and
-[`examples/kanto.film.json`](examples/kanto.film.json) is a complete one,
-committed and ready to render — open it, edit a duration, render it:
+[`examples/kanto.film.jsonc`](examples/kanto.film.jsonc) is a complete one,
+committed and ready to render — open it, edit a duration, render it. Comments
+are welcome: film files accept the JSONC subset of JSON — `//` and `/* */`
+comments, plus a trailing comma on the last element of a list — which is why
+that one's extension is `.jsonc` rather than `.json`. A plain `.json` file
+with no comments in it still loads exactly as before.
 
 ```bash
-showreel render examples/kanto.film.json -A <assets> -o reel.mp4
+showreel render examples/kanto.film.jsonc -A <assets> -o reel.mp4
 ```
 
 ### Sound
