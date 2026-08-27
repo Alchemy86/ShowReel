@@ -126,6 +126,24 @@ got before this round of features touched it.
   cross-blur dissolve" section of `README.md`.
 - **`showreel studio` needs `cargo build --features studio`** — the plain
   binary does not have the subcommand at all, on purpose (`src/studio.rs`).
+- **`[profile.web]` (Cargo.toml) is `opt-level = 3`, not the smaller `"z"`,
+  and `build-wasm.sh` compiles it with `RUSTFLAGS="-C target-feature=+simd128"`.**
+  Both were tried in isolation before being combined — see the measured
+  fps at each combination in the "Browser playback used to render every
+  frame..." sharp edge above. `opt-level = "z"` was actively hostile to this
+  binary's one real hot loop (pixel compositing, `src/canvas.rs`): it costs
+  more than the simd128 flag itself gains, because "z" also skips the
+  inlining tiny-skia's own `target_feature = "simd128"` codepaths
+  (`tiny-skia`'s `simd` cargo feature, already on by default) need to pay
+  off. The wasm binary is about 25% bigger for it (1.8MB -> 2.25MB,
+  stripped) — a real cost against the "opens anywhere, no server" download,
+  but a >10x compute win for a real-time renderer is the more load-bearing
+  trade. `wasm-opt` (binaryen) is wired in as an optional extra pass in
+  `build-wasm.sh` (skipped silently if not on `PATH`) but was never itself
+  measured in this environment — it was not installed here, and installing
+  system packages was out of scope for the session that added this; a
+  session with install rights should measure it before assuming the doc
+  figure some other project's README gives.
 - **The browser build cannot decode video, at all** — `Clip::load` shells out
   to ffmpeg, and there is neither ffmpeg nor a filesystem in a wasm32 browser
   sandbox. `showreel web-pack` (native, `--features wasm`) runs the ordinary
@@ -209,26 +227,37 @@ got before this round of features touched it.
   `decode_fps` to `min(film fps, 12)` for exactly this reason — raise it via
   the layer's "Decode fps override" field only once you know the cost.
 - **Browser playback used to render every frame at the loaded scale (always
-  1.0)** — no different from a paused frame. `sr_load_film`'s `scale` sets the
-  one *registered* preview, including what `max_width` every clip layer's
-  decode is registered under (`AssetStore::clip`'s cache key — see the
-  `.srclip` filename sharp edge above), so continuous playback can't just
-  re-`scale_film` a cheaper copy: a clip layer's `max_width` would shrink
-  along with everything else, and the resulting lookup would miss the one
+  1.0)** — no different from a paused frame, on a canvas that filled most of
+  the window: on a 1920-wide screen that is nearly the film's own resolution,
+  spent just to show a preview. `sr_load_film`'s `scale` builds the one
+  *registered* preview, and a clip layer's decode is registered under a
+  `max_width` baked into that same call (`AssetStore::clip`'s cache key — see
+  the `.srclip` filename sharp edge above) — so naively asking for a smaller
+  preview by re-`scale_film`-ing would shrink a clip's `max_width` right along
+  with everything else, and the resulting lookup would miss the one
   `max_width` actually registered — a miss native code answers by calling
-  `Clip::load` (ffmpeg), which does not exist in wasm. `sr_set_draft_scale`
-  (`src/wasm.rs`) scales a *further* copy of the registered preview for
-  playback only, via `draft_film`, which restores every clip layer's
-  `max_width` back to the registered value afterward — `scale_film` itself
-  must never be handed a clip layer whose registered decode you want kept.
-  `tools/web/main.js`'s `PLAYBACK_DRAFT_SCALE` engages this only while
-  `playing`; a scrub or a pause always renders the registered preview at full
-  quality. Measured on `examples/kanto.film.jsonc` (1920x1080/60fps) on one
-  dev machine, via `wasm.sr_render_at` in a tight loop (bypassing rAF, see
-  below): full quality was ~0.9-1.1 raw fps; `src/preview.rs`'s own
-  quarter-size number (0.25) only reached ~12.5fps; 0.125 was needed to clear
-  24-30fps (~26fps, 40-sample average) — quarter-size is the right call for a
-  *contact sheet*, not necessarily for interactive playback.
+  `Clip::load` (ffmpeg), which does not exist in wasm. `scale_keep_clip_decode`
+  (`src/wasm.rs`) is `scale_film` with every clip layer's `max_width` put back
+  to what the *caller's own base film* already declared it as; both
+  `sr_load_film`'s own `scale` and `sr_set_draft_scale`'s further narrowing
+  for continuous playback go through it, so **the browser can ask for any
+  preview size — to match whatever box the page actually renders it into —
+  without ever needing a differently-packed clip asset to match.**
+  `tools/web/main.js`'s `PLAYBACK_DRAFT_SCALE` mechanism still exists as a
+  fallback for continuous playback narrower than the loaded preview, engaged
+  only while `playing`; a scrub or a pause always renders the registered
+  preview at full quality. Measured on `examples/kanto.film.jsonc`
+  (1920x1080/60fps) on one dev machine, via `wasm.sr_render_at` in a tight
+  loop (bypassing rAF, see below) — at the *full* 1920x1080 preview, with
+  neither of the two build flags below: ~1.8 raw fps; with only `+simd128`:
+  ~3.6fps; with only `opt-level 3`: ~7.6fps; with both: ~20.6fps. At a
+  960x540 preview (half width — a quarter of the pixels) with both flags:
+  ~67fps, comfortably past this film's own 60fps. `src/preview.rs`'s
+  quarter-size contact-sheet number (0.25) reached ~12.5fps under the old
+  unoptimized build; draft-scale's old 0.125 floor and its ~26fps number are
+  historical baselines from before the build-flag fix below — the actual
+  floor a given machine needs should be re-measured against the current
+  build, the same way, before being trusted.
 - **`requestAnimationFrame` under `chrome-devtools-axi`'s headless Chrome is
   throttled to roughly 1Hz**, independent of how fast a frame actually
   renders — confirmed by counting bare `requestAnimationFrame` ticks with no

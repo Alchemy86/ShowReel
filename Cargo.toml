@@ -44,7 +44,7 @@ lto = "thin"
 # captain's own machine.
 [profile.web]
 inherits = "release"
-opt-level = "z"
+opt-level = 3
 lto = true
 strip = true
 panic = "abort"
