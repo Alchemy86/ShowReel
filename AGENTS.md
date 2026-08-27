@@ -82,10 +82,27 @@ Each is documented at the top of its module; read the module rather than duplica
   cache key is `(reference, fps, max_width, trim)`, and a film can use the
   same source file at several different trims (`examples/kanto.film.jsonc`
   does, six times, over `pixel-chain-run.mp4`). `clip_srclip_name` in
-  `src/bin/showreel.rs` and `clipAssetPath` in `tools/web/index.html` both
+  `src/bin/showreel.rs` and `clipAssetPath` in `tools/web/bridge.js` both
   fold those same four fields into the filename for exactly this reason —
   naming it just `{asset}.srclip` was tried first and silently served every
   trim the same, wrong, frames. The two functions must stay in lock step.
+- **A `.srclip`'s all-intraframe JPEG sequence is the reason a packaged
+  film's clips dominate its download size** (one real packaging run came out
+  51.6 MB, nearly all of it six trims of one source clip). Measured, not
+  guessed: the same 6s/640×360/30fps source packed as `.srclip` at the
+  default quality is **3.4 MB**; ffmpeg re-encoding the identical window to
+  ordinary h264 (`crf 23`) is **48 KB** and to VP8 (`crf 30`) is **147 KB** —
+  a 23-70× gap, because JPEG has no motion compensation and re-compresses
+  every frame from nothing. The immediate lever needs no code change:
+  `showreel web-pack --scale`/`--clip-quality` (`src/bin/showreel.rs`) trade
+  this down directly — a `--scale 0.5 --clip-quality 60` pass on the same
+  test clip nearly halved it (3.4 MB → 2.7 MB) with no format change. The
+  bigger fix this points at, not yet built: ship the clip as ffmpeg's own
+  small compressed video (still produced natively, still no browser ffmpeg)
+  and decode it client-side the same way `clipimport.js` already decodes a
+  captain's dropped file — a seeked `<video>` element, no demuxer needed —
+  paying a one-time browser-side decode cost per page load in exchange for
+  the ~20-60× smaller download this measurement shows is on the table.
 - **`Theme::DISPLAY`/`BODY`'s families are found by scanning system font
   directories (`FontDb::scan_system`), which a browser has none of.** The
   wasm build registers its own bytes via `FontDb::add_bytes` instead, from
