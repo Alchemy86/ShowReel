@@ -47,6 +47,7 @@ pub mod theme;
 pub mod timeline;
 pub mod scale;
 pub mod render;
+pub mod audio;
 pub mod encode;
 pub mod preview;
 pub mod prelude;

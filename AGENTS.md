@@ -24,6 +24,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Transitions split presentation from timing; the "no leading transition" rule is in the *type* | `src/transition.rs`, `src/timeline.rs` |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
+| Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
 
 ## Sharp edges
 
@@ -47,6 +48,25 @@ Each is documented at the top of its module; read the module rather than duplica
   best-effort and the absolute "never off-frame" guarantee is the caller's clamp. A
   caption once ran off the left edge because the plate grew away from its target without
   ever consulting the frame; `layer.rs` has the edge tests.
+- **The mobile cut must be checked for audio, not assumed.** It is a *second*
+  ffmpeg invocation over the finished master, and it carried `-an` for as long
+  as the crate was silent. A film can play perfectly and arrive on the phone
+  mute; `tests/render_pipeline.rs` ffprobes both outputs and asserts a level,
+  because "has an audio stream" and "is audible" are different claims.
+- **`afade` with `d=0` is not a no-op** — it mutes a sample. `AudioInput::filter`
+  therefore *omits* a stage rather than passing neutral parameters, and
+  `amix` is always given `normalize=0` (its default divides every input by the
+  input count, so adding a quiet second track silently halves the first).
+- **`Audio::at` is film time, `Audio::from` is source time.** Confusing the two
+  is the classic mistake; both are pinned by a test.
+
+- **`examples/kanto.film.json` is committed and generated.** `kanto_reel.rs` is
+  canonical — regenerate with `cargo run --release --example kanto_reel -- -o
+  examples/kanto.film.json`, and `--check` on the same command fails if they
+  have drifted. Every asset reference in it must stay a bare name resolved by
+  `-A/--assets`; a test rejects absolute paths, because a committed film with a
+  machine-specific path is useless to everyone else.
+
 - **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
   second. Using the first letterboxes a square source into a wide frame — the exact
   opposite of covering it.

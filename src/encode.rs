@@ -23,6 +23,7 @@
 //! available via [`crate::render::PngSequence`] when you want the frames
 //! themselves.
 
+use crate::audio::{AudioInput, mix_filter};
 use crate::canvas::Canvas;
 use crate::color::Color;
 use crate::render::FrameSink;
@@ -43,6 +44,13 @@ pub struct EncodeOptions {
     pub faststart: bool,
     /// `libx264` unless you have a reason.
     pub codec: String,
+    /// Tracks to mix under the video. Empty means a silent file, encoded with
+    /// exactly the command line this took before audio existed.
+    pub audio: Vec<AudioInput>,
+    /// `aac` is the one audio codec an mp4 can carry that every phone,
+    /// browser and messenger decodes.
+    pub audio_codec: String,
+    pub audio_bitrate: String,
 }
 
 impl Default for EncodeOptions {
@@ -56,6 +64,9 @@ impl Default for EncodeOptions {
             pixel_format: "yuv420p".into(),
             faststart: true,
             codec: "libx264".into(),
+            audio: Vec::new(),
+            audio_codec: "aac".into(),
+            audio_bitrate: "192k".into(),
         }
     }
 }
@@ -64,6 +75,11 @@ impl EncodeOptions {
     /// Faster and rougher, for preview passes.
     pub fn preview() -> Self {
         EncodeOptions { crf: 26, preset: "veryfast".into(), ..Default::default() }
+    }
+
+    pub fn with_audio(mut self, tracks: Vec<AudioInput>) -> Self {
+        self.audio = tracks;
+        self
     }
 }
 
@@ -74,13 +90,21 @@ pub struct MobileOptions {
     pub fps: u32,
     pub crf: u8,
     pub preset: String,
+    /// Lower than the master's: this cut exists to be small enough to send.
+    pub audio_bitrate: String,
 }
 
 impl Default for MobileOptions {
     fn default() -> Self {
         // 720 wide and 30fps: Telegram's sendVideo rejects 60fps outright, so
         // this is a delivery requirement rather than a size optimisation.
-        MobileOptions { width: 720, fps: 30, crf: 23, preset: "medium".into() }
+        MobileOptions {
+            width: 720,
+            fps: 30,
+            crf: 23,
+            preset: "medium".into(),
+            audio_bitrate: "128k".into(),
+        }
     }
 }
 
@@ -113,9 +137,28 @@ impl FfmpegSink {
             .args(["-f", "rawvideo", "-pix_fmt", "rgb24"])
             .args(["-s", &format!("{width}x{height}")])
             .args(["-r", &format!("{fps}")])
-            .args(["-i", "-"])
-            .args(["-an"])
-            .args(["-c:v", &opts.codec])
+            .args(["-i", "-"]);
+        // Every track is its own ffmpeg input, declared after the piped video,
+        // so the video is input 0 and the tracks are 1..=n.
+        for t in &opts.audio {
+            cmd.arg("-i").arg(&t.path);
+        }
+        match mix_filter(&opts.audio, 1) {
+            Some((filter, label)) => {
+                cmd.args(["-filter_complex", &filter])
+                    .args(["-map", "0:v"])
+                    .args(["-map", &label])
+                    .args(["-c:a", &opts.audio_codec])
+                    .args(["-b:a", &opts.audio_bitrate])
+                    // The mix is padded with silence, so the video is the
+                    // finite side and `-shortest` means "as long as the film".
+                    .arg("-shortest");
+            }
+            None => {
+                cmd.args(["-an"]);
+            }
+        }
+        cmd.args(["-c:v", &opts.codec])
             .args(["-crf", &opts.crf.to_string()])
             .args(["-preset", &opts.preset])
             .args(["-pix_fmt", &opts.pixel_format]);
@@ -200,7 +243,12 @@ pub fn mobile_cut(input: impl AsRef<Path>, output: impl AsRef<Path>, opts: &Mobi
         .args(["-preset", &opts.preset])
         .args(["-pix_fmt", "yuv420p"])
         .args(["-movflags", "+faststart"])
-        .args(["-an"])
+        // Re-encoded rather than `-an` (which silenced this cut) and rather
+        // than `-c:a copy`: the master's 192k is more than a phone speaker
+        // needs, and a copy would carry it anyway. A silent master simply
+        // produces a silent cut — ffmpeg maps no stream that is not there.
+        .args(["-c:a", "aac"])
+        .args(["-b:a", &opts.audio_bitrate])
         .arg(output)
         .output()
         .with_context(|| format!("running ffmpeg for the mobile cut of {}", input.display()))?;
@@ -253,6 +301,19 @@ mod tests {
         // The mobile cut must be 30fps: Telegram refuses 60.
         assert_eq!(MobileOptions::default().fps, 30);
         assert_eq!(MobileOptions::default().width, 720);
+    }
+
+    #[test]
+    fn a_silent_film_takes_the_command_line_it_always_took() {
+        // No tracks must mean `-an`, not an empty filter graph.
+        assert!(mix_filter(&EncodeOptions::default().audio, 1).is_none());
+    }
+
+    #[test]
+    fn the_mobile_cut_is_not_silent_by_default() {
+        // Regression: this cut passed `-an`, so a film with sound reached the
+        // phone silently while the master played fine.
+        assert!(!MobileOptions::default().audio_bitrate.is_empty());
     }
 
     #[test]
