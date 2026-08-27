@@ -187,6 +187,9 @@ plain render path stay exactly as dependency-light as they were.
   camera is fast
 - [The Remotion study](docs/remotion-study.md) — what their API gets right,
   what it gets wrong, and why ShowReel is a data tree rather than a macro DSL
+- [Does ShowReel need ffmpeg at all?](docs/native-encode-audit.md) — encode,
+  mux, decode and audio mixing scored separately, with real rav1e-vs-x264
+  numbers
 - [The example, in detail](examples/README.md) — the assets, and what the
   footage placements actually claim
 - [Brand](docs/brand/README.md) — the mark, and how to regenerate it

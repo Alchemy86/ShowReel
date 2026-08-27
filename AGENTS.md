@@ -28,6 +28,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
 | The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
 | The renderer also compiles to `wasm32-unknown-unknown` (no wasm-bindgen — plain `extern "C"` over linear memory, `projects/asciicity`'s pattern) so a film can be scrubbed in someone else's browser with no server. `rayon` and `clap` are optional (`parallel`/`cli` features) so the wasm build pulls in neither; ffmpeg has no browser story, so a clip's frames are pre-decoded natively by `showreel web-pack` and shipped as a `.srclip` JPEG sequence | `src/wasm.rs`, `src/webclip.rs`, `build-wasm.sh` |
+| The browser page (`tools/web/`) is a real editor, not just a scrubber: `editor.js` mutates a film's JSON tree directly (it *is* the wire format — see the sharp edge below) and `main.js` reloads it through the same `sr_load_film`/`sr_add_*` wasm calls the boot sequence uses. Adding a clip from the browser needs no ffmpeg either: `clipimport.js` decodes it via a seeked `<video>` element (the platform decoder, reached through the one API surface that already demuxes for you) and `srclip.js` packs the frames into the exact `.srclip` container `sr_add_clip` already reads — no new wasm surface. Exporting a video uses real WebCodecs (`VideoEncoder`, VP8) plus a hand-rolled, ffprobe-verified WebM muxer (`muxer.js`/`test-muxer.mjs`), since no browser ships a demuxer *or* a muxer | `tools/web/editor.js`, `tools/web/main.js`, `tools/web/clipimport.js`, `tools/web/srclip.js`, `tools/web/export.js`, `tools/web/muxer.js` |
 
 ## Sharp edges
 
@@ -90,6 +91,34 @@ Each is documented at the top of its module; read the module rather than duplica
   wasm build registers its own bytes via `FontDb::add_bytes` instead, from
   `tools/web/fonts/` — a fixed, small subset of Montserrat/Open Sans weights,
   not every weight the native binary might find installed.
+- **The browser editor's film object *is* the wire JSON, always** —
+  `tools/web/editor.js` never holds an internal-only shape it converts before
+  handing the film to `sr_load_film`. A `Layer`'s `placement` field there is
+  exactly `Placement`'s untagged wire form, a `Transition`'s `presentation`
+  exactly `Presentation`'s tagged form, and so on. Breaking that (adding a
+  JS-only convenience field) means either duplicating a conversion step the
+  crate doesn't otherwise need, or a per-layer "advanced JSON" editor showing
+  something that isn't actually what gets rendered.
+- **`Content::Text.style` is a bare `TextStyle`, not `Option<TextStyle>`** —
+  every other content kind's `style` is optional (`None` = derive from the
+  theme). Sending `"style": null` for a text layer fails with `invalid type:
+  null, expected struct TextStyle`, not a helpful "missing field" error. A
+  browser-added text layer omits the key entirely rather than nulling it;
+  `editor.js`'s `newLayer('text')` has the full explanation.
+- **A dropped clip decodes in the browser at roughly 0.5-1 *second* a frame**,
+  measured in a headless, GPU-less test environment — seeking a `<video>`
+  element and drawing its current frame is one full round trip per frame (see
+  `clipimport.js`'s doc comment for why there's no faster route without a
+  hand-rolled demuxer). Decoding a 3s clip at a 60fps film's own rate would
+  take minutes; `main.js`'s "+ Clip" handler defaults a browser-added clip's
+  `decode_fps` to `min(film fps, 12)` for exactly this reason — raise it via
+  the layer's "Decode fps override" field only once you know the cost.
+- **No audio in the browser at all yet** — the wasm renderer only ever
+  produces RGBA pixels; nothing decodes or mixes a film's `Audio` tracks (that
+  is `AudioInput::filter`, native-only, ffmpeg's `amix`). The editor still
+  lets you add/edit audio tracks (their fields round-trip to the JSON
+  correctly), and `export.js`'s WebM output is video-only — both honestly
+  documented gaps, not silent ones.
 
 - **`examples/kanto.film.jsonc` is committed and generated.** `kanto_reel.rs` is
   canonical — regenerate with `cargo run --release --example kanto_reel -- -o
@@ -128,9 +157,15 @@ Each is documented at the top of its module; read the module rather than duplica
   once, then writes `tools/web/showreel.wasm`. `showreel web-pack <film> -o dist` (needs
   `--features wasm`, and ffmpeg to pre-decode any clips) turns that plus a film into a
   self-contained directory any static file host can serve — open its `index.html` and
-  scrub. `cargo test --features wasm` and `cargo clippy --target wasm32-unknown-unknown
-  --no-default-features --features wasm --lib` both need to stay clean; see `src/wasm.rs`
-  for what the browser cannot do (encode, decode video, read a filesystem).
+  scrub, edit, add clips/stills, and export. `cargo test --features wasm` and `cargo
+  clippy --target wasm32-unknown-unknown --no-default-features --features wasm --lib`
+  both need to stay clean; see `src/wasm.rs` for what the browser cannot do (encode,
+  decode arbitrary video without a `<video>` element, read a filesystem). To iterate on
+  the editor itself without re-running `web-pack` each time, serve `tools/web/` directly
+  (e.g. `python3 -m http.server`) with a `film.json` (and any `assets/`) dropped next to
+  `index.html` — every JS file there is a plain ES module, no build step. `node
+  tools/web/test-muxer.mjs` checks the hand-rolled WebM muxer (`tools/web/muxer.js`)
+  against real `ffprobe`/`ffmpeg` decode; run it after touching that file.
 
 ## Maintaining this file
 
