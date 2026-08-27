@@ -192,7 +192,7 @@ fn build(aspect: f64) -> Film {
         )
         .layer(Layer::scrim().from(1.0))
         .layer(
-            Layer::title("AI plays Pokémon")
+            Layer::title("AgentGB - Plays Pokemon!")
                 .subtitle("600 cold boots · one retail cartridge · no save states")
                 .frac(0.1, 0.74, 0.8, 0.2)
                 .from(1.1)

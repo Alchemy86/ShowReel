@@ -257,6 +257,50 @@ impl TextLayout {
         Some(TextLayout { lines, font, size: style.size, line_step, first_baseline, width, height, glyph_count })
     }
 
+    /// Wrap `text` into `max_width`, shrinking only if wrapping cannot do it.
+    ///
+    /// This is the rule for any text going into a plate: **wrapping is
+    /// preferred to shrinking**, because a caption rendered two points smaller
+    /// than the one beside it reads as a mistake, whereas a caption on two
+    /// lines reads as a caption. Shrinking is the fallback for the cases
+    /// wrapping cannot fix — a single unbreakable word, or a slot too narrow to
+    /// hold one.
+    ///
+    /// Shrinking stops at a legibility floor, so the width guarantee here is
+    /// **best effort, not absolute**: a pathological string in a tiny slot
+    /// comes back at the floor size, still too wide. That is deliberate —
+    /// unreadable text hides a layout mistake instead of showing it. Callers
+    /// that must never overflow (every plate in `layer.rs`) size their plate
+    /// from the returned layout and then clamp it into the frame, which is
+    /// where the absolute guarantee lives.
+    pub fn fit_width(db: &FontDb, text: &str, style: &TextStyle, max_width: f64) -> Option<Self> {
+        let max_width = max_width.max(24.0);
+        let wrapped = TextLayout::build(db, text, style, Some(max_width))?;
+        if wrapped.width <= max_width + 0.5 {
+            return Some(wrapped);
+        }
+        // Wrapping left something too wide. Shrink until it fits, down to the
+        // legibility floor.
+        let floor = (style.size * 0.35).max(10.0).min(style.size);
+        let (mut lo, mut hi) = (floor, style.size);
+        let mut best: Option<TextLayout> = None;
+        for _ in 0..10 {
+            let mid = (lo + hi) / 2.0;
+            let st = TextStyle { size: mid, ..style.clone() };
+            match TextLayout::build(db, text, &st, Some(max_width)) {
+                Some(l) if l.width <= max_width + 0.5 => {
+                    best = Some(l);
+                    lo = mid;
+                }
+                _ => hi = mid,
+            }
+        }
+        best.or_else(|| {
+            let st = TextStyle { size: floor, ..style.clone() };
+            TextLayout::build(db, text, &st, Some(max_width))
+        })
+    }
+
     /// Lay out at the largest size that fits `box_`, never above `style.size`.
     ///
     /// This is the "a caption must not run off the frame" guarantee. Remotion
@@ -624,6 +668,42 @@ mod tests {
     fn explicit_newlines_are_honoured() {
         let l = TextLayout::build(db(), "one\ntwo\nthree", &style(), None).unwrap();
         assert_eq!(l.lines.len(), 3);
+    }
+
+    #[test]
+    fn fit_width_wraps_before_it_shrinks() {
+        let s = style();
+        // Room for a couple of words: it should wrap and keep the type size.
+        let l = TextLayout::fit_width(db(), "Red's house, upstairs", &s, 260.0).unwrap();
+        assert!(l.width <= 260.5, "width {}", l.width);
+        assert!(l.lines.len() > 1, "should have wrapped, got {} line(s)", l.lines.len());
+        assert_eq!(l.size, s.size, "wrapping must not change the type size");
+    }
+
+    #[test]
+    fn fit_width_shrinks_when_wrapping_cannot_help() {
+        let s = style();
+        // One unbreakable word, too wide for the slot at full size.
+        let l = TextLayout::fit_width(db(), "Supercalifragilistic", &s, 300.0).unwrap();
+        assert!(l.width <= 300.5, "width {}", l.width);
+        assert!(l.size < s.size, "should have shrunk, size {}", l.size);
+    }
+
+    #[test]
+    fn fit_width_stops_at_the_legibility_floor() {
+        // Below the floor it gives up rather than rendering something nobody
+        // could read. The caller's clamp is what stops it leaving the frame.
+        let s = style();
+        let l = TextLayout::fit_width(db(), "Supercalifragilisticexpialidocious", &s, 40.0).unwrap();
+        assert!(l.size >= (s.size * 0.35).min(s.size) - 0.5, "floor honoured, got {}", l.size);
+    }
+
+    #[test]
+    fn fit_width_leaves_text_that_already_fits_alone() {
+        let s = style();
+        let l = TextLayout::fit_width(db(), "Route 1", &s, 4000.0).unwrap();
+        assert_eq!(l.lines.len(), 1);
+        assert_eq!(l.size, s.size);
     }
 
     #[test]

@@ -1141,10 +1141,17 @@ impl Layer {
         let ts = style.cloned().unwrap_or_else(|| theme.lower_third.clone());
         let ds = detail_style.cloned().unwrap_or_else(|| theme.lower_third_detail.clone());
         let frame = ctx.frame;
-        let max_w = frame.w * 0.55;
+        let plate0 = Plate::dark();
+        let pad = match self.placement() {
+            Placement::Anchored { pad, .. } => pad,
+            _ => 0.0,
+        };
+        // The widest the text can be and still leave the plate inside the
+        // frame, rather than a flat fraction that ignores the padding.
+        let max_w = (frame.w - pad * 2.0 - plate0.pad.0 * 2.0 - 6.0).min(frame.w * 0.55).max(80.0);
 
-        let Some(main) = TextLayout::build(ctx.fonts, text, &ts, Some(max_w)) else { return };
-        let sub = detail.and_then(|d| TextLayout::build(ctx.fonts, d, &ds, Some(max_w)));
+        let Some(main) = TextLayout::fit_width(ctx.fonts, text, &ts, max_w) else { return };
+        let sub = detail.and_then(|d| TextLayout::fit_width(ctx.fonts, d, &ds, max_w));
         let gap = if sub.is_some() { ts.size * 0.30 } else { 0.0 };
 
         let plate = Plate::dark().accent(accent, 6.0);
@@ -1155,7 +1162,13 @@ impl Layer {
         let plate_h = text_h + plate.pad.1 * 2.0;
 
         let box_ = self.placement().resolve(&frame, (plate_w, plate_h));
-        let r = Rect::new(box_.x + state.dx, box_.y + state.dy, plate_w, plate_h);
+        let margin = frame.w * 0.008;
+        let r = Rect::new(
+            (box_.x + state.dx).clamp(margin, (frame.w - plate_w - margin).max(margin)),
+            (box_.y + state.dy).clamp(margin, (frame.h - plate_h - margin).max(margin)),
+            plate_w,
+            plate_h,
+        );
         plate.draw(canvas, r, alpha);
 
         let tx = r.x + accent_w + plate.pad.0;
@@ -1270,22 +1283,63 @@ impl Layer {
         }
 
         if plate_p > 0.0 {
-            let max_w = frame.w * 0.34;
-            let Some(main) = TextLayout::build(ctx.fonts, &spec.text, &ts, Some(max_w)) else { return };
-            let sub = spec.detail.as_ref().and_then(|d| TextLayout::build(ctx.fonts, d, &ds, Some(max_w)));
+            const ACCENT_W: f64 = 4.0;
+            let plate = Plate { pad: (22.0, 14.0), radius: 8.0, ..Plate::dark() }
+                .accent(spec.accent, ACCENT_W);
+            let chrome = plate.pad.0 * 2.0 + ACCENT_W;
+            // Wide enough that the plate's own drop shadow stays inside too,
+            // not just its rectangle.
+            let shadow_reach = plate.shadow.as_ref().map(|sh| sh.blur * 2.0 + sh.dx.abs()).unwrap_or(0.0);
+            let margin = (frame.w * 0.012).max(shadow_reach);
+
+            // How much room there actually is either side of the anchor. The
+            // old code laid the text out against a flat `frame.w * 0.34` and
+            // then placed the plate by growing away from the target, which has
+            // nothing to do with the frame — so a long label anchored near an
+            // edge simply ran off it.
+            let room_right = (frame.right() - margin - anchor.0).max(0.0);
+            let room_left = (anchor.0 - margin - frame.x).max(0.0);
+            let away_is_right = ux >= 0.0;
+            let (away_room, back_room) =
+                if away_is_right { (room_right, room_left) } else { (room_left, room_right) };
+            // Prefer growing away from the target, so the plate does not cover
+            // what it points at. Give that up only when the far side is
+            // genuinely cramped: overlapping the picture is recoverable,
+            // running off the frame is not.
+            let comfortable = (frame.w * 0.34).min(320.0);
+            let (grow_right, room) = if away_room >= comfortable || away_room >= back_room {
+                (away_is_right, away_room)
+            } else {
+                (!away_is_right, back_room)
+            };
+
+            // A preview frame can be a couple of hundred pixels wide, where a
+            // flat 60px floor exceeds the 34%-of-frame cap and `clamp` panics.
+            let cap = (frame.w * 0.34).max(24.0);
+            let max_text_w = (room - chrome).clamp(60.0_f64.min(cap), cap);
+            let Some(main) = TextLayout::fit_width(ctx.fonts, &spec.text, &ts, max_text_w) else {
+                return;
+            };
+            let sub = spec
+                .detail
+                .as_ref()
+                .and_then(|d| TextLayout::fit_width(ctx.fonts, d, &ds, max_text_w));
             let gap = if sub.is_some() { ts.size * 0.24 } else { 0.0 };
             let tw = main.width.max(sub.as_ref().map(|l| l.width).unwrap_or(0.0));
             let th = main.height + sub.as_ref().map(|l| l.height + gap).unwrap_or(0.0);
-            let plate = Plate { pad: (22.0, 14.0), radius: 8.0, ..Plate::dark() }.accent(spec.accent, 4.0);
-            let pw = tw + plate.pad.0 * 2.0 + 4.0;
+            let pw = tw + chrome;
             let ph = th + plate.pad.1 * 2.0;
-            // Grow away from the target, so the plate never covers the thing
-            // it is pointing at.
-            let px = if ux >= 0.0 { anchor.0 } else { anchor.0 - pw };
-            let py = anchor.1 - ph / 2.0;
+
+            let px = if grow_right { anchor.0 } else { anchor.0 - pw };
+            // The backstop. Whatever the arithmetic above decided, a plate
+            // never leaves the frame — that guarantee cannot depend on the
+            // caller having picked a sensible anchor.
+            let px = px.clamp(margin, (frame.w - pw - margin).max(margin));
+            let py = (anchor.1 - ph / 2.0).clamp(margin, (frame.h - ph - margin).max(margin));
+
             let a = alpha * plate_p;
             plate.draw(canvas, Rect::new(px, py, pw, ph), a);
-            let tx = px + 4.0 + plate.pad.0;
+            let tx = px + ACCENT_W + plate.pad.0;
             let mut ty = py + plate.pad.1;
             crate::text::draw(canvas, ctx.fonts, &main, &ts, (tx, ty), a, None);
             ty += main.height + gap;
@@ -1391,8 +1445,10 @@ impl Layer {
         {
             let ts = style.cloned().unwrap_or_else(|| ctx.theme.callout.clone());
             let a = alpha * ((p - 0.35) / 0.65).clamp(0.0, 1.0);
-            if let Some(l) = TextLayout::build(ctx.fonts, label, &ts, Some(cur.w)) {
-                let plate = Plate { pad: (20.0, 12.0), radius: 8.0, ..Plate::dark() };
+            let plate0 = Plate { pad: (20.0, 12.0), radius: 8.0, ..Plate::dark() };
+            let max_w = (frame.w * 0.8 - plate0.pad.0 * 2.0).min(cur.w.max(frame.w * 0.4));
+            if let Some(l) = TextLayout::fit_width(ctx.fonts, label, &ts, max_w) {
+                let plate = plate0;
                 let pw = l.width + plate.pad.0 * 2.0;
                 let ph = l.height + plate.pad.1 * 2.0;
                 let px = (cur.centre().0 - pw / 2.0).clamp(16.0, (frame.w - pw - 16.0).max(16.0));
@@ -1518,6 +1574,73 @@ fn stagger_units(layout: &TextLayout, kind: crate::motion::MotionKind) -> Vec<us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Solid ink touching each edge of the canvas. A plate that ran off the
+    /// frame leaves its cut edge — opaque background and half a glyph —
+    /// painted right against the boundary. The threshold is deliberately well
+    /// above zero: the faint tail of a drop shadow reaching the edge is not a
+    /// clipped caption, and testing for it would fail on cosmetics.
+    fn edge_ink(cv: &Canvas) -> (usize, usize, usize, usize) {
+        let (w, h) = (cv.width() as usize, cv.height() as usize);
+        let px = cv.as_ref().pixels();
+        let lit = |x: usize, y: usize| px[y * w + x].alpha() > 60;
+        let left = (0..h).filter(|&y| lit(0, y)).count();
+        let right = (0..h).filter(|&y| lit(w - 1, y)).count();
+        let top = (0..w).filter(|&x| lit(x, 0)).count();
+        let bottom = (0..w).filter(|&x| lit(x, h - 1)).count();
+        (left, right, top, bottom)
+    }
+
+    fn ctx_for<'a>(theme: &'a crate::theme::Theme, store: &'a AssetStore, w: f64, h: f64) -> RenderCtx<'a> {
+        RenderCtx {
+            assets: store,
+            fonts: FontDb::shared(),
+            theme,
+            frame: Rect::from_size(w, h),
+            fps: 30.0,
+        }
+    }
+
+    #[test]
+    fn a_callout_plate_never_leaves_the_frame() {
+        // The defect this reproduces: a long label anchored near the left edge
+        // whose target is to the right. The plate grew away from the target,
+        // straight off the frame, and the caption was drawn cut in half.
+        let store = AssetStore::new();
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 1920.0, 1080.0);
+        for (label, detail, target, anchor) in [
+            ("Red's house, upstairs", "leave-the-bedroom", (0.33, 0.63), (0.13, 0.40)),
+            ("A considerably longer caption than anyone expected", "with detail", (0.9, 0.5), (0.06, 0.5)),
+            ("Right edge", "detail here", (0.1, 0.5), (0.97, 0.5)),
+            ("Top edge", "detail", (0.5, 0.9), (0.5, 0.01)),
+            ("Bottom edge", "detail", (0.5, 0.1), (0.5, 0.99)),
+        ] {
+            let mut cv = Canvas::new(1920, 1080).unwrap();
+            let l = Layer::callout(label, target, anchor).detail(detail);
+            l.draw(&mut cv, &ctx, Time(5.0), Time(10.0)).unwrap();
+            let (le, ri, to, bo) = edge_ink(&cv);
+            assert!(
+                le == 0 && ri == 0 && to == 0 && bo == 0,
+                "{label:?} painted the frame edge: left {le}, right {ri}, top {to}, bottom {bo}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lower_third_plate_never_leaves_the_frame() {
+        let store = AssetStore::new();
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 1920.0, 1080.0);
+        let mut cv = Canvas::new(1920, 1080).unwrap();
+        let l = Layer::lower_third(
+            "An extremely long headline that has no business being on a lower third at all",
+        )
+        .detail("and a strapline that is also far too long for the space it has been given");
+        l.draw(&mut cv, &ctx, Time(5.0), Time(10.0)).unwrap();
+        let (le, ri, to, bo) = edge_ink(&cv);
+        assert!(le == 0 && ri == 0 && to == 0 && bo == 0, "left {le}, right {ri}, top {to}, bottom {bo}");
+    }
 
     #[test]
     fn a_pull_up_label_stays_inside_the_frame() {
