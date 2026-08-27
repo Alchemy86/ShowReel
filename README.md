@@ -28,7 +28,7 @@ It knows nothing about any subject. Maps, screen captures and video clips are
 | **48 megapixels, 4.3 ms** | the camera zooms, pans and holds over a source far larger than the frame. A 6832×7024 still renders to 1080p in 4.3 ms a frame — 33× faster than the obvious implementation |
 | **Text as geometry** | glyphs are filled paths, not font-engine blits, so a title takes a gradient, an outline and a drop shadow. Real shaping, kerning, tracking in ems, **tabular figures** so a counter does not jitter as it ticks |
 | **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris, zoom and a cross-blur dissolve, each composable with any easing curve or spring |
-| **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, and a **pull-up** that lifts a piece of the frame, dims the rest and annotates it |
+| **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, a **pull-up** that lifts a piece of the frame, dims the rest and annotates it, and a progress bar that fills like a counter but draws no digits |
 | **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut. A video clip's own soundtrack joins the mix too, with the same gain, fades and a mute |
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
@@ -189,6 +189,28 @@ of a third of a second a frame on top of everything else drawn — against the
 whole example film's own 12ms/frame average. A short transition (well under a
 second) keeps that bounded to a few seconds of extra render time; a film-length
 one would not.
+
+### A progress bar
+
+A generic decorative shape — a track and a fill that animates the same way
+`Counter` does, but draws no digits:
+
+```rust
+Layer::bar(0.0, 1.0, 2.0)   // fills over 2 seconds
+    .bar_track(Color::rgba(255, 255, 255, 40))
+    .bar_fill(Color::rgb(255, 209, 71))
+    .frac(0.2, 0.56, 0.6, 0.045)   // sized like Solid/Gradient: you place it
+```
+
+Real frame, `showreel still`, 1.2s into a 2s linear fill:
+
+![a progress bar, 60% filled, under a "Rendering" title](docs/stills/progress-bar.png)
+
+Corners default to a pill (half the bar's own height) and clamp gracefully
+when the filled portion is narrower than the radius, the same
+`round_rect_path` clamp every other rounded shape in ShowReel already uses.
+`Layer::bar_fixed(v)` holds at a constant level with no animation at all —
+useful for a static indicator rather than a fill.
 
 ## Look before you render
 

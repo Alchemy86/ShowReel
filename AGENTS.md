@@ -23,6 +23,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Glyphs are filled paths, not font-engine blits (so text takes gradients, strokes, shadows) | `src/text/font.rs` |
 | Transitions split presentation from timing; the "no leading transition" rule is in the *type* | `src/transition.rs`, `src/timeline.rs` |
 | `Presentation::CrossBlur` blurs every RGBA channel (`canvas::blur_rgba`), not just alpha (`canvas::blur_alpha`, for shadows) — both share the same three-pass box-blur core, `canvas::box_blur3` | `src/canvas.rs`, `src/transition.rs` |
+| `Content::Bar`'s `BarSpec` (`from`/`to`/`over`/`easing`) deliberately mirrors `CounterSpec` rather than reusing it — a bar has no digits, grouping or prefix/suffix, and nests under `"progress"` for the same `from`-collides-with-`Layer::from` reason `CounterSpec` nests under `"count"` | `src/layer.rs` |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
@@ -32,6 +33,33 @@ Each is documented at the top of its module; read the module rather than duplica
 | The renderer also compiles to `wasm32-unknown-unknown` (no wasm-bindgen — plain `extern "C"` over linear memory, `projects/asciicity`'s pattern) so a film can be scrubbed in someone else's browser with no server. `rayon` and `clap` are optional (`parallel`/`cli` features) so the wasm build pulls in neither; ffmpeg has no browser story, so a clip's frames are pre-decoded natively by `showreel web-pack` and shipped as a `.srclip` JPEG sequence | `src/wasm.rs`, `src/webclip.rs`, `build-wasm.sh` |
 | The browser page (`tools/web/`) is a real editor, not just a scrubber: `editor.js` mutates a film's JSON tree directly (it *is* the wire format — see the sharp edge below) and `main.js` reloads it through the same `sr_load_film`/`sr_add_*` wasm calls the boot sequence uses. Adding a clip from the browser needs no ffmpeg either: `clipimport.js` decodes it via a seeked `<video>` element (the platform decoder, reached through the one API surface that already demuxes for you) and `srclip.js` packs the frames into the exact `.srclip` container `sr_add_clip` already reads — no new wasm surface. Exporting a video uses real WebCodecs (`VideoEncoder`, VP8) plus a hand-rolled, ffprobe-verified WebM muxer (`muxer.js`/`test-muxer.mjs`), since no browser ships a demuxer *or* a muxer | `tools/web/editor.js`, `tools/web/main.js`, `tools/web/clipimport.js`, `tools/web/srclip.js`, `tools/web/export.js`, `tools/web/muxer.js` |
 | The editor is organised around what a person is doing (trim, add an effect, move/change text), not the data model: the inspector shows named presets and drag widgets first and folds the full field vocabulary under "Advanced"/"Exact position"/"Layer JSON" — the reach is never removed, only deferred. Direct manipulation (drag a clip's trim handles, drag a layer on the preview, drag a callout's ring and label) is real dragging against `geometry.js`'s from-scratch JS mirror of `Placement::resolve` and `CalloutSpec`'s target/label_at, not a data-model change — the wasm renderer and wire format are untouched | `tools/web/geometry.js`, `tools/web/editor.js`, `tools/web/index.html`'s `#stage-overlay` |
+
+## Considered, not built
+
+**Rich text runs — bolding or colouring one word inside a `Text`/`Title`/`LowerThird`
+string — was investigated and deliberately declined**, rather than half-landed. Today a
+layer is one `TextStyle` for its whole string; the investigation found four separate
+places that assumption runs through, not one:
+
+- `PositionedGlyph` already carries a `font: FontId` per glyph, so the *data model* is not
+  the blocker — a mixed-weight line is already representable.
+- `TextLayout::build` shapes and measures an entire line as a single `db.shape`/`db.measure`
+  call against one `(font, size, tracking)`. A bold word needs a second `FontId` (a
+  different weight, possibly a different file), shaped separately and stitched onto the
+  first run's pen position — losing `rustybuzz`'s cross-run kerning at the seam, a real,
+  accepted trade-off every such system makes, but worth naming rather than discovering late.
+- `wrap()` measures word widths against that one style; wrapping a line with a run boundary
+  mid-word needs the wrap algorithm to sum per-run segment widths, not call `measure` once
+  per candidate line.
+- `text::draw` applies one `style.fill`/`style.stroke` to every glyph in the whole layout —
+  the one function every text-bearing `Content` variant funnels through, so even a
+  colour-only slice touches code shared by six content kinds, not just `Title`/`LowerThird`.
+
+A colour-only version (no weight/shaping changes, since colour needs no re-shaping) would
+have been materially smaller — but the brief that named this named bold and colour as
+co-equal examples, and shipping only the easier half is itself a half-landing. Left for a
+session that can give the shaping/wrap/draw path the same careful pass the audio pipeline
+got before this round of features touched it.
 
 ## Sharp edges
 

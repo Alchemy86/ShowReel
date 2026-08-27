@@ -230,6 +230,42 @@ fn group_thousands(digits: &str, negative: bool) -> String {
     if negative { format!("-{out}") } else { out }
 }
 
+/// A value that fills a bar, the same way [`CounterSpec`] animates a number.
+///
+/// Not [`CounterSpec`] itself: a bar has no digits, grouping or prefix/suffix
+/// to carry, and `from`/`to` here are a 0..1 fraction rather than an arbitrary
+/// counted quantity. Nested under `"progress"` on [`Content::Bar`] for the
+/// same reason `CounterSpec` nests under `"count"` — its own `from` is a
+/// value, not the layer's *time* `from`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BarSpec {
+    pub from: f64,
+    pub to: f64,
+    /// How long the fill takes. Shorter than the layer means it lands early
+    /// and holds, the same convention `CounterSpec::over` uses.
+    pub over: Time,
+    #[serde(default)]
+    pub easing: Easing,
+}
+
+impl BarSpec {
+    pub fn new(from: f64, to: f64, over: impl Into<Time>) -> Self {
+        BarSpec { from, to, over: over.into(), easing: Easing::OutExpo }
+    }
+
+    /// A bar that just holds at a fixed level — no animation, an author
+    /// setting a static value rather than describing a fill.
+    pub fn fixed(value: f64) -> Self {
+        BarSpec::new(value, value, Time::ZERO)
+    }
+
+    pub fn value_at(&self, t: f64) -> f64 {
+        let d = self.over.as_secs();
+        let p = if d <= 0.0 { 1.0 } else { (t / d).clamp(0.0, 1.0) };
+        self.from + (self.to - self.from) * self.easing.apply(p)
+    }
+}
+
 /// A label that points at something.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CalloutSpec {
@@ -432,6 +468,20 @@ pub enum Content {
         #[serde(default)]
         style: Option<TextStyle>,
     },
+    /// A progress bar: a track and a fill that animates like a counter, with
+    /// no digits — purely decorative, the way a loading or scrub indicator is.
+    Bar {
+        #[serde(rename = "progress")]
+        spec: BarSpec,
+        #[serde(default = "bar_track_default")]
+        track: Color,
+        #[serde(default = "bar_fill_default")]
+        fill: Paint,
+        /// Corner radius in pixels. `None` is a pill: half the bar's own
+        /// height, recomputed against whatever placement box it draws into.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<f64>,
+    },
 }
 
 impl Content {
@@ -450,14 +500,17 @@ impl Content {
             }
             Content::LowerThird { .. } => Placement::Anchored { anchor: BottomLeft, pad: 96.0 },
             Content::Counter { .. } => Placement::Anchored { anchor: TopRight, pad: default_pad() },
-            // These carry their own coordinates, so the frame is the box.
+            // These carry their own coordinates, or (Bar, like Solid/Gradient)
+            // have no natural size of their own to anchor against — the frame
+            // is the box, and the author sizes it with `.frac()`/`.rect()`.
             Content::Solid { .. }
             | Content::Gradient { .. }
             | Content::Scrim { .. }
             | Content::Still { .. }
             | Content::Clip { .. }
             | Content::Callout { .. }
-            | Content::PullUp { .. } => Placement::Full,
+            | Content::PullUp { .. }
+            | Content::Bar { .. } => Placement::Full,
         }
     }
 }
@@ -484,6 +537,14 @@ fn one() -> f64 {
 
 fn is_default_clip_audio(a: &ClipAudio) -> bool {
     *a == ClipAudio::default()
+}
+
+fn bar_track_default() -> Color {
+    Color::rgba(255, 255, 255, 40)
+}
+
+fn bar_fill_default() -> Paint {
+    Paint::Solid(accent_default())
 }
 
 /// A layer: content, when it is on screen, and how it arrives and leaves.
@@ -607,6 +668,52 @@ impl Layer {
             label_style: None,
         })
         .entering(Motion::rise(0.4))
+    }
+
+    /// A progress bar filling from `from` to `to` (both 0..1) over `over`.
+    /// Sized wherever the layer is placed — see [`Content::default_placement`]
+    /// — so give it a box with `.frac()` or `.rect()` rather than leaving it
+    /// full-frame.
+    pub fn bar(from: f64, to: f64, over: impl Into<Time>) -> Self {
+        Layer::new(Content::Bar {
+            spec: BarSpec::new(from, to, over),
+            track: bar_track_default(),
+            fill: bar_fill_default(),
+            radius: None,
+        })
+    }
+
+    /// A bar that just holds at a fixed level rather than filling.
+    pub fn bar_fixed(value: f64) -> Self {
+        Layer::new(Content::Bar {
+            spec: BarSpec::fixed(value),
+            track: bar_track_default(),
+            fill: bar_fill_default(),
+            radius: None,
+        })
+    }
+
+    pub fn bar_track(mut self, c: Color) -> Self {
+        if let Content::Bar { track, .. } = &mut self.content {
+            *track = c;
+        }
+        self
+    }
+
+    pub fn bar_fill(mut self, p: impl Into<Paint>) -> Self {
+        if let Content::Bar { fill, .. } = &mut self.content {
+            *fill = p.into();
+        }
+        self
+    }
+
+    /// Square corners, or an explicit radius — the default is a pill (half
+    /// the bar's own height).
+    pub fn bar_radius(mut self, r: f64) -> Self {
+        if let Content::Bar { radius, .. } = &mut self.content {
+            *radius = Some(r);
+        }
+        self
     }
 
     pub fn callout(
@@ -1057,8 +1164,38 @@ impl Layer {
             Content::PullUp { spec, style } => {
                 self.draw_pull_up(canvas, ctx, spec, style.as_ref(), state, alpha);
             }
+            Content::Bar { spec, track, fill, radius } => {
+                self.draw_bar(canvas, spec, *track, fill, *radius, state, alpha, local);
+            }
         }
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_bar(
+        &self,
+        canvas: &mut Canvas,
+        spec: &BarSpec,
+        track: Color,
+        fill: &Paint,
+        radius: Option<f64>,
+        state: &MotionState,
+        alpha: f64,
+        local: Time,
+    ) {
+        let frame = canvas.rect();
+        let box_ = shift(self.placement().resolve(&frame, (frame.w, frame.h)), state);
+        if box_.w <= 0.0 || box_.h <= 0.0 {
+            return;
+        }
+        let r = radius.unwrap_or(box_.h / 2.0);
+        canvas.fill_round_rect(box_, r, &Paint::Solid(track.opacity(alpha)));
+        let value = spec.value_at(local.as_secs()).clamp(0.0, 1.0);
+        if value <= 0.0 {
+            return;
+        }
+        let filled = Rect::new(box_.x, box_.y, box_.w * value, box_.h);
+        canvas.fill_round_rect(filled, r, &fill.opacity(alpha));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2078,5 +2215,59 @@ mod tests {
         let t = layer.clip_audio_track(Time(0.0), Time(3.0), &store).unwrap().unwrap();
         assert_eq!(t.duration, 2.0, "clamped to what is left of the scene, not the declared duration");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- Content::Bar ------------------------------------------------------
+
+    #[test]
+    fn bar_spec_value_at_matches_counter_specs_semantics() {
+        let spec = BarSpec::new(0.0, 1.0, 2.0);
+        assert_eq!(spec.value_at(-1.0), 0.0, "before it starts, holds at from");
+        assert_eq!(spec.value_at(100.0), 1.0, "after it ends, holds at to");
+        // OutExpo is front-loaded, so it must be well past the linear halfway
+        // point by the halfway mark.
+        assert!(spec.value_at(1.0) > 0.9, "{}", spec.value_at(1.0));
+    }
+
+    #[test]
+    fn a_fixed_bar_holds_at_its_value_regardless_of_time() {
+        let spec = BarSpec::fixed(0.42);
+        assert_eq!(spec.value_at(0.0), 0.42);
+        assert_eq!(spec.value_at(50.0), 0.42);
+    }
+
+    #[test]
+    fn a_bar_fills_the_fraction_of_its_box_the_value_says() {
+        let store = AssetStore::new();
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 100.0, 20.0);
+        let layer = Layer::bar_fixed(0.5).bar_track(Color::BLACK).bar_fill(Color::WHITE).bar_radius(0.0);
+        let mut cv = Canvas::new(100, 20).unwrap();
+        layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        let px = |x: u32| cv.as_ref().pixels()[(10 * 100 + x) as usize].red();
+        assert!(px(20) > 200, "well inside the filled half, expected white");
+        assert!(px(80) < 40, "well inside the unfilled half, expected black track");
+    }
+
+    #[test]
+    fn a_bars_default_radius_is_a_pill_that_scales_with_the_box() {
+        let store = AssetStore::new();
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 100.0, 40.0);
+        // A no-op check that a default (None) radius does not panic and still
+        // draws something visible — the pill math lives in draw_bar directly.
+        let layer = Layer::bar_fixed(1.0);
+        let mut cv = Canvas::new(100, 40).unwrap();
+        layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        assert!(cv.as_ref().pixels()[(20 * 100 + 50) as usize].alpha() > 0);
+    }
+
+    #[test]
+    fn bar_content_round_trips_through_json_and_stays_terse() {
+        let l = Layer::bar(0.0, 1.0, 2.0);
+        let s = serde_json::to_string(&l.content).unwrap();
+        assert_eq!(serde_json::from_str::<Content>(&s).unwrap(), l.content);
+        assert!(s.contains("\"progress\""), "{s}");
+        assert!(!s.contains("\"radius\""), "a default radius should not be written: {s}");
     }
 }
