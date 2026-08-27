@@ -241,23 +241,9 @@ pub fn draw_viewport(
     dst: Rect,
     opacity: f64,
 ) {
-    use tiny_skia::{BlendMode, FilterQuality, Mask, PixmapPaint, Transform};
-
     let (level, div) = still.level_for(&vp, dst.w);
     // The viewport in the chosen level's own coordinates.
-    let (lx, ly) = (vp.x / div, vp.y / div);
-    let (lw, lh) = (vp.w / div, vp.h / div);
-    if lw <= 0.0 || lh <= 0.0 {
-        return;
-    }
-    let sx = (dst.w / lw) as f32;
-    let sy = (dst.h / lh) as f32;
-    // Translate so that the viewport's top-left lands on the destination's.
-    let tf = Transform::from_row(sx, 0.0, 0.0, sy, (dst.x - lx * sx as f64) as f32, (dst.y - ly * sy as f64) as f32);
-
-    // Magnifying pixel art: keep the pixels square rather than smearing them.
-    let quality = if sx >= 1.5 && sy >= 1.5 { FilterQuality::Nearest } else { FilterQuality::Bilinear };
-    let paint = PixmapPaint { opacity: opacity as f32, blend_mode: BlendMode::SourceOver, quality };
+    let vp_level = Rect::new(vp.x / div, vp.y / div, vp.w / div, vp.h / div);
 
     // Clip to the destination rect unless it is the whole canvas, so an inset
     // camera cannot paint over its neighbours.
@@ -268,12 +254,12 @@ pub fn draw_viewport(
         None
     } else {
         crate::canvas::round_rect_path(dst, 0.0).and_then(|p| {
-            let mut m = Mask::new(canvas.width(), canvas.height())?;
-            m.fill_path(&p, tiny_skia::FillRule::Winding, true, Transform::identity());
+            let mut m = tiny_skia::Mask::new(canvas.width(), canvas.height())?;
+            m.fill_path(&p, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity());
             Some(m)
         })
     };
-    canvas.pixmap.draw_pixmap(0, 0, level, &paint, tf, mask.as_ref());
+    canvas.draw_pixmap_cropped(level, vp_level, dst, opacity, mask.as_ref());
 }
 
 #[cfg(test)]

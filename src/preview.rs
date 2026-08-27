@@ -1,13 +1,15 @@
 //! Looking at a film without rendering all of it.
 //!
 //! Rendering a whole film to judge timing is the miserable loop the brief
-//! called out, and Remotion's answer is a browser Studio with a scrubber. We
-//! cannot have that without a browser, so this module closes the gap from the
-//! other end, with three cheap operations that answer the questions a scrubber
-//! is actually used for:
+//! called out, and Remotion's answer is a browser Studio with a scrubber.
+//! `showreel studio` (behind the `studio` feature — see `src/studio.rs`) is
+//! that browser now, and [`still_at`] is its engine: one frame, typically
+//! milliseconds, is what a scrubber asks for on every drag. This module is
+//! the terminal-only half of the same idea, for when a browser isn't wanted
+//! or the `studio` feature isn't built in:
 //!
-//! - **"what does it look like at 4.2 seconds?"** — [`still_at`], one frame,
-//!   typically milliseconds;
+//! - **"what does it look like at 4.2 seconds?"** — [`still_at`] again, direct
+//!   from `showreel still --at`;
 //! - **"is the pacing right?"** — [`contact_sheet`], the whole film as a
 //!   labelled grid of thumbnails, in one image;
 //! - **"does the motion work?"** — a quarter-size pass over the real timeline

@@ -90,6 +90,12 @@ impl Canvas {
         out
     }
 
+    /// PNG-encoded bytes, for handing a frame to something that isn't a file
+    /// — the studio server's `/api/frame`, in particular.
+    pub fn encode_png(&self) -> Result<Vec<u8>> {
+        self.pixmap.encode_png().context("encoding PNG")
+    }
+
     pub fn save_png(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
         let path = path.as_ref();
         if let Some(dir) = path.parent() {
@@ -125,6 +131,35 @@ impl Canvas {
         let quality = if sx >= 1.5 && sy >= 1.5 { FilterQuality::Nearest } else { FilterQuality::Bilinear };
         let paint = PixmapPaint { opacity: opacity as f32, blend_mode: blend, quality };
         self.pixmap.draw_pixmap(0, 0, src, &paint, tf, None);
+    }
+
+    /// Draw the `vp` region of `src` — in `src`'s own pixel coordinates — into
+    /// `dst`, scaled to fill it. The shared basis for a camera move, whether
+    /// the source is a still's mip level or a decoded video frame.
+    pub fn draw_pixmap_cropped(
+        &mut self,
+        src: PixmapRef<'_>,
+        vp: Rect,
+        dst: Rect,
+        opacity: f64,
+        mask: Option<&Mask>,
+    ) {
+        if dst.w <= 0.0 || dst.h <= 0.0 || vp.w <= 0.0 || vp.h <= 0.0 || opacity <= 0.0 {
+            return;
+        }
+        let sx = (dst.w / vp.w) as f32;
+        let sy = (dst.h / vp.h) as f32;
+        let tf = Transform::from_row(
+            sx,
+            0.0,
+            0.0,
+            sy,
+            (dst.x - vp.x * sx as f64) as f32,
+            (dst.y - vp.y * sy as f64) as f32,
+        );
+        let quality = if sx >= 1.5 && sy >= 1.5 { FilterQuality::Nearest } else { FilterQuality::Bilinear };
+        let paint = PixmapPaint { opacity: opacity as f32, blend_mode: BlendMode::SourceOver, quality };
+        self.pixmap.draw_pixmap(0, 0, src, &paint, tf, mask);
     }
 
     /// Draw `src` into `dst` through `mask` — the basis of wipes and irises.

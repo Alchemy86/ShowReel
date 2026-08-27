@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ — ShowReel Studio</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='46' fill='%230d1117' stroke='%2330363d' stroke-width='3'/%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%23f0f3f6' stroke-width='9'/%3E%3Cpolygon points='43,34 57,34 64,50 57,66 43,66 36,50' fill='%23ffd147'/%3E%3C/svg%3E">
+<style>__CSS__</style>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div id="brand">
+      <svg id="brand-mark" viewBox="0 0 100 100" width="22" height="22" aria-hidden="true">
+        <circle cx="50" cy="50" r="30" fill="none" stroke="currentColor" stroke-width="9"/>
+        <polygon points="43,34 57,34 64,50 57,66 43,66 36,50"/>
+      </svg>
+      <span id="brand-name">ShowReel</span>
+      <span id="brand-sub">Studio</span>
+    </div>
+    <div id="film-title">__TITLE__</div>
+    <div id="film-stats"></div>
+    <div id="conn-status" class="ok">● live</div>
+  </header>
+
+  <div id="error-banner" hidden>
+    <div id="error-banner-title"></div>
+    <ul id="error-list"></ul>
+  </div>
+
+  <main id="stage-wrap">
+    <div id="stage">
+      <img id="frame" alt="film preview">
+      <div id="stage-empty">no frame yet</div>
+    </div>
+  </main>
+
+  <div id="transport">
+    <button id="btn-play" class="icon-btn" title="Play / pause (space)">▶</button>
+    <button id="btn-step-back" class="icon-btn" title="Previous frame (,)">⏮</button>
+    <button id="btn-step-fwd" class="icon-btn" title="Next frame (.)">⏭</button>
+    <div id="timecode">0:00.00 <span id="timecode-sep">/</span> 0:00.00</div>
+    <div id="fps-readout" title="Achieved playback rate — best effort, not guaranteed real time"></div>
+    <div class="spacer"></div>
+    <button id="btn-set-in" class="text-btn" title="Mark loop start at the playhead">Set in</button>
+    <button id="btn-set-out" class="text-btn" title="Mark loop end at the playhead">Set out</button>
+    <label id="loop-toggle"><input type="checkbox" id="chk-loop"> Loop</label>
+    <button id="btn-clear-loop" class="text-btn" title="Clear the loop range">Clear</button>
+  </div>
+
+  <div id="scrubber-wrap">
+    <div id="scrubber">
+      <div id="scenes"></div>
+      <div id="loop-band" hidden></div>
+      <div id="playhead"></div>
+      <input type="range" id="seek" min="0" max="1" step="0.001" value="0">
+    </div>
+    <div id="scene-labels"></div>
+  </div>
+
+  <section id="structure">
+    <h2>Structure</h2>
+    <div id="scene-list"></div>
+    <div id="audio-list"></div>
+  </section>
+
+</div>
+<script>__JS__</script>
+</body>
+</html>

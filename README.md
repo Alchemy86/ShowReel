@@ -31,6 +31,7 @@ It knows nothing about any subject. Maps, screen captures and video clips are
 | **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut |
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
+| **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
 
 ## Render a film
 
@@ -152,6 +153,33 @@ radii and decode sizes all come down with the frame — so a thumbnail looks lik
 the film rather than the film with 1080p text pasted on it.
 
 ![the whole film as a labelled contact sheet](docs/stills/storyboard.png)
+
+## The studio
+
+`showreel still`, `sheet` and `preview` answer "what does this look like" from
+the terminal. `showreel studio` answers it in a browser, live, while you edit:
+
+```bash
+cargo run --release --features studio --bin showreel -- studio examples/kanto.film.jsonc -A <assets>
+```
+
+It starts a server on `localhost`, prints the URL, and gives you a scrubber
+over the real timeline, best-effort play (labelled with the frame rate it's
+actually achieving, not a promise of real time), the film's scene structure
+and every layer, and live reload — edit the film file, save, and the browser
+updates on its own. Parse and validation errors show in the page itself.
+
+![scrubbed mid-film, with the scene structure below](docs/stills/studio-scrub.png)
+
+A film file with a mistake in it doesn't leave you looking at a blank page or
+a terminal you've scrolled away from — the error is where you're already
+looking, and the last frame that did render stays on screen:
+
+![a JSON syntax error shown in the page, last-good frame still visible](docs/stills/studio-error.png)
+
+It's behind a `studio` feature — `cargo build`/`cargo run` without
+`--features studio` never pulls in the web server, so the library and the
+plain render path stay exactly as dependency-light as they were.
 
 ## Deeper
 
