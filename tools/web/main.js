@@ -25,12 +25,39 @@ const FONTS = [
 const $ = (id) => document.getElementById(id);
 const canvas = $('view'), ctx = canvas.getContext('2d', { alpha: false });
 const splash = $('splash'), errBanner = $('error-banner');
-const seek = $('seek'), playBtn = $('btn-play'), timecode = $('timecode');
+const seek = $('seek'), playBtn = $('btn-play'), timecode = $('timecode'), fpsReadout = $('fps-readout');
+
+// `src/preview.rs`'s own answer to "does the motion work?" is a quarter-size
+// pass over the real timeline. The browser build had never taken that route
+// for playback at all: `sr_load_film` always loaded at scale 1.0, so every
+// played frame did the same full-resolution work a paused scrub does — on
+// the reference film this task shipped with (1920x1080/60fps,
+// `examples/kanto.film.jsonc`), that measured at roughly 0.9-1.1 raw frames
+// per second, matching the "YouTube at 3fps" complaint this fix answers.
+// `sr_set_draft_scale` (src/wasm.rs) applies a further discount on top of
+// the already-loaded preview, only while playing; pausing or scrubbing
+// always renders `preview` at full quality again.
+//
+// Quarter-size (0.25, "roughly 16x less pixel work" per preview.rs) was the
+// first thing tried, direct-benchmarked on that same film/machine via
+// `wasm.sr_render_at` in a tight loop (bypassing rAF entirely, so this is
+// raw achievable throughput, not scheduler-limited): 1.0 -> 0.9fps, 0.5 ->
+// 3.7fps, 0.25 -> 12.5fps. Short of the 24-30fps target, so the same
+// benchmark was walked further down: 0.125 lands at ~26fps (40-sample
+// average) with headroom, and still holds a legible small preview frame
+// (240x135 on this film) — soft, but composition and motion read fine,
+// which is what playback needs; a paused frame is never affected.
+const PLAYBACK_DRAFT_SCALE = 0.125;
 
 let wasm, bridge;
 let film = null;
 let duration = 0, fps = 30, currentT = 0, playing = false, playAnchorWall = 0, playAnchorT = 0;
 let reloadTimer = null;
+// Rolling window of recent per-frame render+paint times, the same shape
+// `src/studio/page.js`'s `recordFrameTime` uses, so the browser build is
+// honest about achieved playback rate the same way the native studio is —
+// never a claimed real-time clock, always the frame rate actually measured.
+let frameTimes = [];
 
 // name -> Uint8Array (stills) or File (clip sources) added from the browser,
 // not fetched from the server — see editor.js's module docs on why a clip
@@ -187,10 +214,24 @@ function fmtT(t) {
   const m = Math.floor(t / 60), s = t - m * 60;
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
+function recordFrameTime(ms) {
+  frameTimes.push(ms);
+  if (frameTimes.length > 20) frameTimes.shift();
+  if (playing) {
+    const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+    const achieved = Math.min(1000 / avg, fps);
+    fpsReadout.textContent = `~${achieved.toFixed(1)} fps (best effort)`;
+  } else {
+    fpsReadout.textContent = '';
+  }
+}
+
 function renderAt(t) {
   currentT = Math.max(0, Math.min(duration, t));
+  const started = performance.now();
   if (!wasm.sr_render_at(currentT)) { fail(`rendering the frame: ${bridge.lastError()}`); return; }
   paint();
+  recordFrameTime(performance.now() - started);
   seek.value = currentT;
   timecode.textContent = `${fmtT(currentT)} / ${fmtT(duration)}`;
 }
@@ -257,12 +298,27 @@ function uniqueAssetName(map, base) {
 
 // ---- transport -----------------------------------------------------------
 
-seek.addEventListener('input', () => { playing = false; playBtn.textContent = '▶'; renderAt(parseFloat(seek.value)); });
+// A scrub always renders full quality — [`sr_set_draft_scale`]'s discount is
+// for continuous playback only, never for the single frame a drag lands on.
+seek.addEventListener('input', () => {
+  playing = false;
+  playBtn.textContent = '▶';
+  wasm.sr_set_draft_scale(1.0);
+  fpsReadout.textContent = '';
+  renderAt(parseFloat(seek.value));
+});
 playBtn.addEventListener('click', () => {
   playing = !playing;
   playBtn.textContent = playing ? '⏸' : '▶';
   playAnchorWall = performance.now();
   playAnchorT = currentT;
+  wasm.sr_set_draft_scale(playing ? PLAYBACK_DRAFT_SCALE : 1.0);
+  if (playing) {
+    frameTimes = [];
+  } else {
+    fpsReadout.textContent = '';
+    renderAt(currentT); // land back on the same frame at full quality
+  }
 });
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !playBtn.disabled && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
@@ -378,6 +434,10 @@ exportForm.addEventListener('click', async (e) => {
   if (act === 'start') {
     const wasPlaying = playing;
     playing = false;
+    // Export always reads full quality, regardless of whether playback left
+    // the draft scale engaged.
+    wasm.sr_set_draft_scale(1.0);
+    fpsReadout.textContent = '';
     exportAbort = new AbortController();
     renderExportForm({ running: true, pct: 0, label: 'starting…' });
     try {
@@ -405,6 +465,11 @@ exportForm.addEventListener('click', async (e) => {
     } finally {
       renderAt(currentT);
       playing = wasPlaying;
+      if (wasPlaying) {
+        wasm.sr_set_draft_scale(PLAYBACK_DRAFT_SCALE);
+        playAnchorWall = performance.now();
+        playAnchorT = currentT;
+      }
     }
   }
 });

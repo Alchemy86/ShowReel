@@ -38,19 +38,27 @@ use crate::assets::clip::Clip;
 use crate::assets::still::Still;
 use crate::assets::AssetStore;
 use crate::canvas::Canvas;
+use crate::layer::Content;
 use crate::render::Renderer;
 use crate::scale::scale_film;
 use crate::text::FontDb;
 use crate::time::Time;
-use crate::timeline::Film;
+use crate::timeline::{Film, Scene};
 use serde::Serialize;
 use std::path::PathBuf;
 
 struct State {
     /// The film exactly as written — durations, titles, scene names.
     film: Option<Film>,
-    /// The same film through [`scale_film`] — what is actually rendered.
+    /// The same film through [`scale_film`] — the full-quality frame a scrub
+    /// or a paused moment renders from. Also what every registered clip's
+    /// `max_width` was decoded at, so this is the shape any further-scaled
+    /// [`draft`](Self::draft) must not disturb.
     preview: Option<Film>,
+    /// [`preview`](Self::preview), scaled further down for continuous
+    /// playback — see [`sr_set_draft_scale`]. `None` means "render `preview`
+    /// directly," which is also what a paused frame always does.
+    draft: Option<Film>,
     assets: AssetStore,
     fonts: FontDb,
     last_frame: Option<Canvas>,
@@ -66,6 +74,7 @@ impl State {
         State {
             film: None,
             preview: None,
+            draft: None,
             assets: AssetStore::new(),
             fonts: FontDb::new(),
             last_frame: None,
@@ -74,6 +83,36 @@ impl State {
             structure_json: Vec::new(),
         }
     }
+}
+
+/// `scale_film(preview, k)`, with every clip layer's `max_width` put back to
+/// `preview`'s own value.
+///
+/// `scale_film` shrinks a clip's `max_width` right along with everything
+/// else — the right call for [`crate::preview::contact_sheet`], where a
+/// fresh, smaller decode is cheaper than a big one. But in the browser there
+/// is no ffmpeg to do that fresh decode: [`AssetStore::clip`] was populated
+/// by [`sr_add_clip`] under the *`preview`*-scale `max_width`, and a draft
+/// asking for any other `max_width` is a guaranteed cache miss — which native
+/// code answers by shelling out to `Clip::load`, which wasm cannot do at all.
+/// Every other field (frame size, placement, type) scales normally; only the
+/// clip's decode width stays pinned to what is actually registered.
+fn draft_film(preview: &Film, k: f64) -> Film {
+    fn restore(scene: &mut Scene, original: &Scene) {
+        for (l, ol) in scene.layers.iter_mut().zip(original.layers.iter()) {
+            if let (Content::Clip { max_width, .. }, Content::Clip { max_width: orig, .. }) =
+                (&mut l.content, &ol.content)
+            {
+                *max_width = *orig;
+            }
+        }
+    }
+    let mut draft = scale_film(preview, k);
+    restore(&mut draft.timeline.opening, &preview.timeline.opening);
+    for (link, orig_link) in draft.timeline.then.iter_mut().zip(preview.timeline.then.iter()) {
+        restore(&mut link.scene, &orig_link.scene);
+    }
+    draft
 }
 
 static mut STATE: Option<State> = None;
@@ -140,6 +179,7 @@ pub unsafe extern "C" fn sr_load_film(ptr: *mut u8, len: u32, scale: f64) -> i32
             st.structure_json = structure(&film).into_bytes();
             st.assets = AssetStore::new();
             st.last_frame = None;
+            st.draft = None;
             st.preview = Some(preview);
             st.film = Some(film);
             1
@@ -316,12 +356,29 @@ pub unsafe extern "C" fn sr_add_font(ptr: *mut u8, len: u32) -> i32 {
 
 // ---- rendering ----------------------------------------------------------
 
+/// Set (or clear) the extra scale-down applied on top of the loaded preview
+/// for continuous playback. `k >= 1.0` clears it — the next [`sr_render_at`]
+/// renders `preview` directly, full quality. `0.05..1.0` rebuilds a smaller
+/// [`draft_film`] once here, so playback's per-frame cost is exactly a
+/// smaller [`Renderer::render_at`] and not a `scale_film` call every tick.
+/// 1 on success, 0 if no film is loaded yet.
+#[unsafe(no_mangle)]
+pub extern "C" fn sr_set_draft_scale(k: f64) -> i32 {
+    let st = state();
+    let Some(preview) = &st.preview else {
+        set_error("no film loaded");
+        return 0;
+    };
+    st.draft = (k < 1.0 - 1e-9).then(|| draft_film(preview, k.clamp(0.05, 1.0)));
+    1
+}
+
 /// Render the frame at `t` seconds. 1 on success, 0 on failure (a missing
 /// asset the film needs, most likely — see [`sr_error_ptr`]).
 #[unsafe(no_mangle)]
 pub extern "C" fn sr_render_at(t: f64) -> i32 {
     let st = state();
-    let Some(preview) = &st.preview else {
+    let Some(preview) = st.draft.as_ref().or(st.preview.as_ref()) else {
         set_error("no film loaded");
         return 0;
     };
@@ -372,5 +429,50 @@ pub extern "C" fn sr_error_ptr() -> *const u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sr_error_len() -> u32 {
     state().error.len() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layer::Layer;
+    use crate::text::TextStyle;
+    use crate::timeline::Scene;
+
+    fn film_with_clip_and_text() -> Film {
+        Film::new(1920, 1080, 30.0).open(
+            Scene::new(2.0)
+                .layer(Layer::clip("c.mp4"))
+                .layer(Layer::text("body").styled(TextStyle::default().size(40.0))),
+        )
+    }
+
+    // The bug a naive `scale_film(preview, k)` would reintroduce: a clip
+    // layer's `max_width` would shrink along with everything else, so
+    // `sr_render_at` would ask `AssetStore` for a clip at a `max_width` that
+    // was never registered by `sr_add_clip` — a guaranteed miss that native
+    // code answers by calling `Clip::load` (ffmpeg), which does not exist in
+    // wasm. `draft_film` must leave clip `max_width` exactly as `preview`
+    // has it while still shrinking everything else (frame size, type).
+    #[test]
+    fn draft_film_pins_clip_width_but_shrinks_everything_else() {
+        let preview = film_with_clip_and_text();
+        let draft = draft_film(&preview, 0.25);
+
+        assert_eq!((draft.width, draft.height), (480, 270));
+
+        let Content::Clip { max_width, .. } = &draft.timeline.opening.layers[0].content else {
+            panic!("expected a clip")
+        };
+        let Content::Clip { max_width: registered, .. } = &preview.timeline.opening.layers[0].content
+        else {
+            panic!("expected a clip")
+        };
+        assert_eq!(max_width, registered, "clip decode width must match what sr_add_clip registered");
+
+        let Content::Text { style, .. } = &draft.timeline.opening.layers[1].content else {
+            panic!("expected text")
+        };
+        assert!((style.size - 10.0).abs() < 1e-9, "text should still scale down: got {}", style.size);
+    }
 }
 

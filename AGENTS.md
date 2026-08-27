@@ -130,6 +130,36 @@ Each is documented at the top of its module; read the module rather than duplica
   take minutes; `main.js`'s "+ Clip" handler defaults a browser-added clip's
   `decode_fps` to `min(film fps, 12)` for exactly this reason — raise it via
   the layer's "Decode fps override" field only once you know the cost.
+- **Browser playback used to render every frame at the loaded scale (always
+  1.0)** — no different from a paused frame. `sr_load_film`'s `scale` sets the
+  one *registered* preview, including what `max_width` every clip layer's
+  decode is registered under (`AssetStore::clip`'s cache key — see the
+  `.srclip` filename sharp edge above), so continuous playback can't just
+  re-`scale_film` a cheaper copy: a clip layer's `max_width` would shrink
+  along with everything else, and the resulting lookup would miss the one
+  `max_width` actually registered — a miss native code answers by calling
+  `Clip::load` (ffmpeg), which does not exist in wasm. `sr_set_draft_scale`
+  (`src/wasm.rs`) scales a *further* copy of the registered preview for
+  playback only, via `draft_film`, which restores every clip layer's
+  `max_width` back to the registered value afterward — `scale_film` itself
+  must never be handed a clip layer whose registered decode you want kept.
+  `tools/web/main.js`'s `PLAYBACK_DRAFT_SCALE` engages this only while
+  `playing`; a scrub or a pause always renders the registered preview at full
+  quality. Measured on `examples/kanto.film.jsonc` (1920x1080/60fps) on one
+  dev machine, via `wasm.sr_render_at` in a tight loop (bypassing rAF, see
+  below): full quality was ~0.9-1.1 raw fps; `src/preview.rs`'s own
+  quarter-size number (0.25) only reached ~12.5fps; 0.125 was needed to clear
+  24-30fps (~26fps, 40-sample average) — quarter-size is the right call for a
+  *contact sheet*, not necessarily for interactive playback.
+- **`requestAnimationFrame` under `chrome-devtools-axi`'s headless Chrome is
+  throttled to roughly 1Hz**, independent of how fast a frame actually
+  renders — confirmed by counting bare `requestAnimationFrame` ticks with no
+  ShowReel code involved at all. Timing the editor's real playback loop
+  (`main.js`'s `tick()`) through this harness reports that same ~1fps
+  regardless of true render cost, which will misdiagnose a fast renderer as
+  still slow. Benchmark real per-frame cost directly instead: call
+  `wasm.sr_render_at`/paint back-to-back in a tight loop via `eval`, bypassing
+  rAF entirely.
 - **No audio in the browser at all yet** — the wasm renderer only ever
   produces RGBA pixels; nothing decodes or mixes a film's `Audio` tracks (that
   is `AudioInput::filter`, native-only, ffmpeg's `amix`). The editor still
