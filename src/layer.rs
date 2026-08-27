@@ -13,6 +13,7 @@
 //! bring it forward, enlarged and annotated).
 
 use crate::assets::{AssetStore, ClipLoop};
+use crate::audio::{AudioInput, ClipAudio};
 use crate::camera::Camera;
 use crate::canvas::Canvas;
 use crate::color::{Color, Paint};
@@ -21,7 +22,7 @@ use crate::geom::{Anchor, Fit, Rect};
 use crate::motion::{Motion, MotionState};
 use crate::text::{Align, FontDb, GlyphTransform, Plate, Shadow, TextLayout, TextStyle};
 use crate::time::Time;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// What the renderer needs to draw a layer.
@@ -361,6 +362,10 @@ pub enum Content {
         border: Option<(Color, f64)>,
         #[serde(default)]
         shadow: Option<Shadow>,
+        /// The clip's own soundtrack, pulled into the mix — see
+        /// [`crate::audio::ClipAudio`].
+        #[serde(default, skip_serializing_if = "is_default_clip_audio")]
+        audio: ClipAudio,
     },
     /// A block of text.
     Text {
@@ -477,6 +482,10 @@ fn one() -> f64 {
     1.0
 }
 
+fn is_default_clip_audio(a: &ClipAudio) -> bool {
+    *a == ClipAudio::default()
+}
+
 /// A layer: content, when it is on screen, and how it arrives and leaves.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
@@ -555,6 +564,7 @@ impl Layer {
             radius: 0.0,
             border: None,
             shadow: None,
+            audio: ClipAudio::default(),
         })
     }
 
@@ -843,6 +853,34 @@ impl Layer {
         self
     }
 
+    /// Mute this clip's own soundtrack — it still draws, but contributes no
+    /// sound to the mix.
+    pub fn mute(mut self) -> Self {
+        if let Content::Clip { audio, .. } = &mut self.content {
+            audio.muted = true;
+        }
+        self
+    }
+
+    /// Level for this clip's own soundtrack in the mix. `1.0` leaves it
+    /// alone; a value under that is how a clip's sound is ducked under a
+    /// voice-over rather than muted outright.
+    pub fn clip_gain(mut self, g: f64) -> Self {
+        if let Content::Clip { audio, .. } = &mut self.content {
+            audio.gain = g;
+        }
+        self
+    }
+
+    /// Fade this clip's own soundtrack in and out, in the mix.
+    pub fn clip_fades(mut self, in_: impl Into<Time>, out: impl Into<Time>) -> Self {
+        if let Content::Clip { audio, .. } = &mut self.content {
+            audio.fade_in = in_.into();
+            audio.fade_out = out.into();
+        }
+        self
+    }
+
     // ---- timing ----------------------------------------------------------
 
     /// The span this layer occupies within a scene of `scene_duration`.
@@ -857,6 +895,38 @@ impl Layer {
         // Inclusive of the final instant so the last frame of a scene is not
         // silently empty.
         t >= s.start && t <= s.end()
+    }
+
+    /// The mix input for this layer's own soundtrack, if it is a clip with
+    /// unmuted audio and an on-screen window at all.
+    ///
+    /// `scene_start` places the scene on the film's clock (from
+    /// [`crate::timeline::Placed`]); the window is this layer's [`span`],
+    /// clamped to what is left of the scene, so a layer whose declared
+    /// `duration` overruns its scene cannot pull audio past where it is ever
+    /// actually drawn. See [`crate::audio::clip_track`] for why this does not
+    /// loop the audio to match [`ClipLoop::Loop`].
+    pub fn clip_audio_track(
+        &self,
+        scene_start: Time,
+        scene_duration: Time,
+        assets: &AssetStore,
+    ) -> Result<Option<AudioInput>> {
+        let Content::Clip { asset, trim, start, audio, .. } = &self.content else {
+            return Ok(None);
+        };
+        if audio.muted {
+            return Ok(None);
+        }
+        let span = self.span(scene_duration);
+        let remaining = (scene_duration - self.from).max(Time::ZERO);
+        let window = if span.duration.as_secs() < remaining.as_secs() { span.duration } else { remaining };
+        let source_from = trim.map(|(s, _)| s).unwrap_or(Time::ZERO) + *start;
+        let film_at = scene_start + self.from;
+        let path = assets
+            .resolve(asset)
+            .with_context(|| format!("clip {asset:?}: cannot find it for its own audio"))?;
+        Ok(crate::audio::clip_track(path, audio, film_at, source_from, window))
     }
 
     /// The whole-layer motion state at scene time `t`.
@@ -961,6 +1031,7 @@ impl Layer {
             }
             Content::Clip {
                 asset, fit, camera, trim, start, decode_fps, mode, max_width, radius, border, shadow,
+                audio: _,
             } => {
                 self.draw_clip(
                     canvas, ctx, local, state, alpha, asset, *fit, camera.as_ref(), *trim, *start,
@@ -1964,5 +2035,48 @@ mod tests {
         Layer::clip("plain.mp4").draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
         let p = cv.as_ref().pixels()[(50 * 100 + 50) as usize];
         assert!(p.green() > 150 && p.red() < 60, "should show the clip's own colour");
+    }
+
+    /// No decode happens here — `clip_audio_track` only resolves the source
+    /// path and does timing arithmetic, so a placeholder file is enough. The
+    /// directory is unique per test and removed at the end, since tests run
+    /// concurrently.
+    fn rooted_with_dummy_clip(unique: &str, name: &str) -> (std::path::PathBuf, AssetStore) {
+        let dir = std::env::temp_dir().join(format!("showreel-clip-audio-test-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), b"").unwrap();
+        let store = AssetStore::rooted(&dir);
+        (dir, store)
+    }
+
+    #[test]
+    fn clip_audio_track_uses_the_layers_own_window_and_source_offset() {
+        let (dir, store) = rooted_with_dummy_clip("window", "clip.mp4");
+        let layer = Layer::clip("clip.mp4").trim(1.0, 4.0).clip_start(0.5).from(2.0).clip_gain(0.5);
+        // As if this were a later scene, starting at 10s on the film's clock.
+        let t = layer.clip_audio_track(Time(10.0), Time(6.0), &store).unwrap().unwrap();
+        assert_eq!(t.at, 12.0, "scene start + layer.from");
+        assert_eq!(t.from, 1.5, "trim start + the clip's own playhead offset");
+        assert_eq!(t.duration, 4.0, "scene_duration - layer.from, duration unset");
+        assert_eq!(t.gain, 0.5);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_muted_clip_layer_contributes_no_audio_track() {
+        let (dir, store) = rooted_with_dummy_clip("muted", "clip.mp4");
+        let layer = Layer::clip("clip.mp4").mute();
+        assert!(layer.clip_audio_track(Time(0.0), Time(5.0), &store).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_clips_declared_duration_cannot_pull_audio_past_its_scene() {
+        let (dir, store) = rooted_with_dummy_clip("overrun", "clip.mp4");
+        // A 10s declared duration inside a 3s scene, one second in.
+        let layer = Layer::clip("clip.mp4").from(1.0).lasting(10.0);
+        let t = layer.clip_audio_track(Time(0.0), Time(3.0), &store).unwrap().unwrap();
+        assert_eq!(t.duration, 2.0, "clamped to what is left of the scene, not the declared duration");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -380,6 +380,21 @@ impl Film {
         self.audio.iter().map(|a| a.asset.as_str()).collect()
     }
 
+    /// Every clip layer's own soundtrack, ready to join the mix alongside
+    /// [`Film::audio`] — see [`crate::audio::clip_track`].
+    pub fn clip_audio(&self, assets: &crate::assets::AssetStore) -> anyhow::Result<Vec<crate::audio::AudioInput>> {
+        let mut out = Vec::new();
+        for p in self.timeline.placements() {
+            let scene = self.timeline.scene(p.index);
+            for l in &scene.layers {
+                if let Some(t) = l.clip_audio_track(p.start, scene.duration, assets)? {
+                    out.push(t);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn duration(&self) -> Time {
         self.timeline.duration()
     }

@@ -256,6 +256,80 @@ fn a_film_with_no_track_still_encodes_silent() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A tiny source with both a picture and a tone, so a clip layer has real
+/// audio to pull into the mix.
+fn tone_clip(dir: &Path, name: &str, seconds: f64, w: u32, h: u32, fps: f64) -> std::path::PathBuf {
+    let p = dir.join(name);
+    let ok = Command::new("ffmpeg")
+        .args(["-nostdin", "-v", "error", "-y"])
+        .args(["-f", "lavfi", "-i", &format!("testsrc2=size={w}x{h}:rate={fps}:duration={seconds}")])
+        .args(["-f", "lavfi", "-i", &format!("sine=frequency=440:duration={seconds}")])
+        .args(["-shortest", "-pix_fmt", "yuv420p"])
+        .arg(&p)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    assert!(ok, "could not synthesise a test clip");
+    p
+}
+
+#[test]
+fn a_clips_own_audio_reaches_the_mix_and_is_audible() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg is not on PATH");
+        return;
+    }
+    let dir = std::env::temp_dir().join("showreel-clip-audio-e2e");
+    std::fs::create_dir_all(&dir).unwrap();
+    tone_clip(&dir, "clip.mp4", 2.0, 64, 36, 10.0);
+
+    let film =
+        Film::new(64, 36, 10.0).open(Scene::new(2.0).layer(Layer::clip("clip.mp4").trim(0.0, 2.0)));
+    let store = AssetStore::rooted(&dir);
+    let tracks = film.clip_audio(&store).unwrap();
+    assert_eq!(tracks.len(), 1, "one unmuted clip layer draws one track");
+
+    let out = dir.join("clip-audio.mp4");
+    let opts = EncodeOptions::preview().with_audio(tracks);
+    let mut sink =
+        FfmpegSink::new(&out, film.width, film.height, film.fps, &opts, film.background).unwrap();
+    Renderer::new(&film, &store, FontDb::shared()).render_all(&mut sink).unwrap();
+
+    assert_eq!(audio_stream(&out).as_deref(), Some("aac"), "the clip's own audio must reach the master");
+    // Present is not the same as audible — the same distinction the
+    // standalone-track test above draws for the mobile cut.
+    let db = mean_volume_db(&out).expect("volumedetect should report a level");
+    assert!(db > -50.0, "the clip's audio is effectively silent at {db} dBFS");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_muted_clip_layer_adds_no_audio_stream() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg is not on PATH");
+        return;
+    }
+    let dir = std::env::temp_dir().join("showreel-clip-audio-muted-e2e");
+    std::fs::create_dir_all(&dir).unwrap();
+    tone_clip(&dir, "clip.mp4", 2.0, 64, 36, 10.0);
+
+    let film = Film::new(64, 36, 10.0)
+        .open(Scene::new(2.0).layer(Layer::clip("clip.mp4").trim(0.0, 2.0).mute()));
+    let store = AssetStore::rooted(&dir);
+    let tracks = film.clip_audio(&store).unwrap();
+    assert!(tracks.is_empty(), "a muted clip layer must contribute no track");
+
+    let out = dir.join("clip-audio-muted.mp4");
+    let opts = EncodeOptions::preview().with_audio(tracks);
+    let mut sink =
+        FfmpegSink::new(&out, film.width, film.height, film.fps, &opts, film.background).unwrap();
+    Renderer::new(&film, &store, FontDb::shared()).render_all(&mut sink).unwrap();
+    assert!(audio_stream(&out).is_none(), "a muted clip must not add an audio stream");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_track_survives_the_json_round_trip_with_its_placement() {
     let film = Film::new(64, 36, 10.0)

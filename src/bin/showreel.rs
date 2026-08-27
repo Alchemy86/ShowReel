@@ -261,7 +261,9 @@ fn cmd_render(
         range.end - range.start
     );
 
-    let tracks = resolve_audio(&film, &assets)?;
+    let mut tracks = resolve_audio(&film, &assets)?;
+    let clip_tracks = film.clip_audio(&assets).context("resolving a clip's own audio")?;
+    tracks.extend(clip_tracks);
     for t in &tracks {
         println!(
             "  sound   {} — {:.2}s..{:.2}s of the film, from {:.2}s in, fade {}s/{}s",
@@ -404,6 +406,37 @@ fn cmd_info(film_path: PathBuf) -> Result<()> {
                 a.fade_out.as_secs(),
                 if (a.gain - 1.0).abs() < 1e-9 { String::new() } else { format!(", gain {}", a.gain) }
             );
+        }
+    }
+    let mut clip_audio_lines = Vec::new();
+    for p in film.timeline.placements() {
+        let scene = film.timeline.scene(p.index);
+        for l in &scene.layers {
+            let showreel::layer::Content::Clip { asset, audio, .. } = &l.content else { continue };
+            let span = l.span(scene.duration);
+            let at = (p.start + span.start).as_secs();
+            let note = if audio.muted {
+                "muted".to_string()
+            } else {
+                let gain = if (audio.gain - 1.0).abs() < 1e-9 {
+                    String::new()
+                } else {
+                    format!(", gain {}", audio.gain)
+                };
+                format!(
+                    "{:.2}s, fade {}s/{}s{gain}",
+                    span.duration.as_secs(),
+                    audio.fade_in.as_secs(),
+                    audio.fade_out.as_secs()
+                )
+            };
+            clip_audio_lines.push(format!("    {at:>7.2}s  {asset:<28} {note}"));
+        }
+    }
+    if !clip_audio_lines.is_empty() {
+        println!("  clip audio:");
+        for l in clip_audio_lines {
+            println!("{l}");
         }
     }
     let used = film.assets_used();

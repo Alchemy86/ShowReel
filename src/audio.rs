@@ -32,6 +32,19 @@
 //!
 //! Per the crate rule, this module has no idea whether it is carrying a music
 //! bed, a voice-over or a sound effect. It takes a file and a position.
+//!
+//! # A clip's own soundtrack
+//!
+//! [`Content::Clip`](crate::layer::Content::Clip) draws a decoded video frame,
+//! but the source file it was decoded from usually carries sound too, and
+//! that sound reaches the mix through [`ClipAudio`] rather than through a
+//! film-level [`Audio`] track — it is intrinsic to that one clip, not a
+//! separately-placed bed. [`clip_track`] is the seam: it turns the clip's own
+//! timing (where it sits on the film's clock, where its decoded window starts
+//! in the source) plus a [`ClipAudio`] into an [`AudioInput`], by building an
+//! ephemeral [`Audio`] and calling [`Audio::resolve`] — so a clip's fades are
+//! clamped by exactly the rule a standalone track's already are, rather than
+//! a second copy of that arithmetic.
 
 use crate::time::Time;
 use serde::{Deserialize, Serialize};
@@ -210,6 +223,82 @@ impl Audio {
         }
         errs
     }
+}
+
+/// Whether a clip's own soundtrack joins the mix, and at what level.
+///
+/// Lives on [`Content::Clip`](crate::layer::Content::Clip) rather than as a
+/// standalone [`Audio`] track: its position and length are the clip's own —
+/// there is no `at`/`from`/`duration` to author separately, only the level.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClipAudio {
+    /// Draws silently — decoded and drawn as normal, contributes no sound.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
+    /// Linear gain. `1.0` leaves the source alone, `0.5` is half amplitude —
+    /// the lever for ducking a clip's own sound under a voice-over without
+    /// silencing it outright.
+    #[serde(default = "unity", skip_serializing_if = "is_unity")]
+    pub gain: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub fade_in: Time,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub fade_out: Time,
+}
+
+impl Default for ClipAudio {
+    fn default() -> Self {
+        ClipAudio { muted: false, gain: 1.0, fade_in: Time::ZERO, fade_out: Time::ZERO }
+    }
+}
+
+impl ClipAudio {
+    pub fn muted() -> Self {
+        ClipAudio { muted: true, ..Default::default() }
+    }
+
+    pub fn gain(g: f64) -> Self {
+        ClipAudio { gain: g, ..Default::default() }
+    }
+
+    pub fn fades(in_: impl Into<Time>, out: impl Into<Time>) -> Self {
+        ClipAudio { fade_in: in_.into(), fade_out: out.into(), ..Default::default() }
+    }
+}
+
+/// Build the mix input for a clip's own soundtrack, or `None` if it is muted
+/// or its on-screen window is empty.
+///
+/// `film_at`/`window` are where the clip layer sits and how long it is on
+/// screen, on the film's clock, already clamped to its scene — the same
+/// window the video itself draws for. `source_from` is where in the source
+/// file that window's first frame comes from (the clip's `trim` start plus
+/// its own playhead offset).
+///
+/// This does not loop a clip's audio to match [`ClipLoop::Loop`]
+/// (crate::assets::ClipLoop): a frozen or looping *picture* has no natural
+/// audio analogue, so the sound simply runs out when the decoded source does
+/// — like a video frozen on its last frame, not a video looping with it.
+pub fn clip_track(
+    path: impl AsRef<Path>,
+    audio: &ClipAudio,
+    film_at: Time,
+    source_from: Time,
+    window: Time,
+) -> Option<AudioInput> {
+    if audio.muted || window.as_secs() <= 0.0 {
+        return None;
+    }
+    let a = Audio {
+        asset: String::new(),
+        at: film_at,
+        from: source_from,
+        duration: Some(window),
+        fade_in: audio.fade_in,
+        fade_out: audio.fade_out,
+        gain: audio.gain,
+    };
+    Some(a.resolve(path, window))
 }
 
 /// One track, located on disk and with every timing resolved to seconds.
@@ -405,6 +494,45 @@ mod tests {
         let a: Audio = serde_json::from_str(r#"{"asset":"t.wav"}"#).unwrap();
         assert_eq!(a, Audio::track("t.wav"));
         assert_eq!(a.gain, 1.0, "gain must default to unity, not zero");
+    }
+
+    #[test]
+    fn a_muted_clip_produces_no_track() {
+        let a = ClipAudio::muted();
+        assert!(clip_track("/tmp/c.mp4", &a, Time(2.0), Time(1.0), Time(5.0)).is_none());
+    }
+
+    #[test]
+    fn an_empty_window_produces_no_track() {
+        let a = ClipAudio::default();
+        assert!(clip_track("/tmp/c.mp4", &a, Time(2.0), Time(1.0), Time(0.0)).is_none());
+    }
+
+    #[test]
+    fn a_clip_track_carries_its_own_position_and_source_offset() {
+        let a = ClipAudio::gain(0.5);
+        let t = clip_track("/tmp/c.mp4", &a, Time(3.0), Time(1.5), Time(4.0)).unwrap();
+        assert_eq!(t.at, 3.0);
+        assert_eq!(t.from, 1.5);
+        assert_eq!(t.duration, 4.0);
+        assert_eq!(t.gain, 0.5);
+    }
+
+    #[test]
+    fn clip_track_fades_are_clamped_the_same_way_a_standalone_tracks_are() {
+        // Reuses Audio::resolve, so an overlong fade against a short window
+        // must clamp exactly like the standalone-track test above.
+        let a = ClipAudio::fades(10.0, 10.0);
+        let t = clip_track("/tmp/c.mp4", &a, Time(0.0), Time(0.0), Time(4.0)).unwrap();
+        assert!(t.fade_in <= 4.0 && t.fade_out <= 4.0);
+    }
+
+    #[test]
+    fn clip_audio_defaults_to_full_gain_unmuted_and_stays_terse_in_json() {
+        let a = ClipAudio::default();
+        assert!(!a.muted);
+        assert_eq!(a.gain, 1.0);
+        assert_eq!(serde_json::to_string(&a).unwrap(), "{}");
     }
 
     #[test]

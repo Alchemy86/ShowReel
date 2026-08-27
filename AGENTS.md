@@ -25,6 +25,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
+| A clip's own soundtrack (`ClipAudio`, on `Content::Clip`) is a level, not a placement — its `at`/`from`/`duration` are the clip's own timing, so `clip_track` builds its `AudioInput` by delegating to `Audio::resolve` rather than re-deriving fade clamping | `src/audio.rs`, `src/layer.rs` (`Layer::clip_audio_track`), `src/timeline.rs` (`Film::clip_audio`) |
 | Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
 | The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
 | The renderer also compiles to `wasm32-unknown-unknown` (no wasm-bindgen — plain `extern "C"` over linear memory, `projects/asciicity`'s pattern) so a film can be scrubbed in someone else's browser with no server. `rayon` and `clap` are optional (`parallel`/`cli` features) so the wasm build pulls in neither; ffmpeg has no browser story, so a clip's frames are pre-decoded natively by `showreel web-pack` and shipped as a `.srclip` JPEG sequence | `src/wasm.rs`, `src/webclip.rs`, `build-wasm.sh` |
@@ -64,6 +65,18 @@ Each is documented at the top of its module; read the module rather than duplica
   input count, so adding a quiet second track silently halves the first).
 - **`Audio::at` is film time, `Audio::from` is source time.** Confusing the two
   is the classic mistake; both are pinned by a test.
+- **A clip's own audio does not loop with `ClipLoop::Loop`, and does not hold
+  with `ClipLoop::Hold`.** `Layer::clip_audio_track` mixes exactly the source
+  window the clip decoded for its on-screen span (clamped to what is left of
+  the scene — a layer's declared `duration` cannot pull audio past where it
+  is ever drawn); once that runs out the sound simply stops, the same way a
+  video frozen on its last frame does not keep making noise. Looping the
+  *audio* to match a looping picture would need `aloop` sized in samples,
+  which was judged not worth the complexity until a film actually needs it —
+  a deliberate gap, not a missed one. Measured on a 3s synthesised clip:
+  default gain reached the master at −24.1 dB mean, `.clip_gain(0.3)` at
+  −34.6 dB (≈ 20·log₁₀(0.3) quieter, as it should be), `.mute()` produced no
+  audio stream at all. See the "A clip's own audio" section of `README.md`.
 - **A clip's camera is not mip-backed the way a still's is.** `Content::Clip.camera`
   reuses `Camera`'s framing maths (`src/camera.rs`'s `Canvas::draw_pixmap_cropped`),
   but a clip frame is decoded once at `max_width` and a tight framing just

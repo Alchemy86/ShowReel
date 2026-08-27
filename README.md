@@ -29,7 +29,7 @@ It knows nothing about any subject. Maps, screen captures and video clips are
 | **Text as geometry** | glyphs are filled paths, not font-engine blits, so a title takes a gradient, an outline and a drop shadow. Real shaping, kerning, tracking in ems, **tabular figures** so a counter does not jitter as it ticks |
 | **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris and zoom, each composable with any easing curve or spring |
 | **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, and a **pull-up** that lifts a piece of the frame, dims the rest and annotates it |
-| **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut |
+| **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut. A video clip's own soundtrack joins the mix too, with the same gain, fades and a mute |
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
 | **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
@@ -136,6 +136,33 @@ inside the source — the two are easy to confuse and are deliberately different
 words. An unset duration means "to the end of the film". Tracks are mixed
 without ffmpeg quietly rescaling anyone's volume, and the mobile cut carries the
 audio too.
+
+### A clip's own audio
+
+`Content::Clip` draws a decoded video frame, and by default its source file's
+own soundtrack joins the mix too — no separate `Audio` track to place, since
+its position and length are the clip's own:
+
+```rust
+Layer::clip("burst.mp4").trim(8.0, 3.4)         // plays at full level
+Layer::clip("burst.mp4").trim(8.0, 3.4).mute()  // draws, contributes no sound
+Layer::clip("burst.mp4").trim(8.0, 3.4).clip_gain(0.3)        // ducked
+Layer::clip("burst.mp4").trim(8.0, 3.4).clip_fades(0.2, 0.5)  // in and out
+```
+
+Measured on a 3s test clip (320×180, a synthesised tone under a test pattern),
+rendered through `showreel render` exactly as any film is:
+
+| clip audio | master's audio stream | measured level |
+|---|---|---|
+| default (gain 1.0) | `aac` | −24.1 dB mean |
+| `.clip_gain(0.3)` | `aac`, 10.5 dB quieter | −34.6 dB mean (≈ 20·log₁₀(0.3), as it should) |
+| `.mute()` | none | — |
+
+This does not loop a clip's audio to match `ClipLoop::Loop` — a looping
+*picture* has no natural audio analogue, so the sound simply runs out when the
+decoded source does, the same way a video frozen on its last frame does not
+keep making noise. See `AGENTS.md` for the full reasoning.
 
 ## Look before you render
 
