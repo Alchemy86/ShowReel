@@ -90,6 +90,12 @@ impl Canvas {
         out
     }
 
+    /// PNG-encoded bytes, for handing a frame to something that isn't a file
+    /// — the studio server's `/api/frame`, in particular.
+    pub fn encode_png(&self) -> Result<Vec<u8>> {
+        self.pixmap.encode_png().context("encoding PNG")
+    }
+
     pub fn save_png(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
         let path = path.as_ref();
         if let Some(dir) = path.parent() {
