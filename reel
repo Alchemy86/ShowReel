@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Render ShowReel's own tour film, from nothing.
+#
+# Finds a Rust toolchain (offering to install one), builds in release, writes
+# the tour's description and renders it to out/showcase.mp4 plus the mobile
+# cut. Anything you pass goes straight through to the `showreel` binary, so
+# `./reel sheet out/showcase.film.json` works once it is built.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || { echo "ShowReel needs '$1' on your PATH." >&2; return 1; }
+}
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "No Rust toolchain found."
+  read -r -p "Install one with rustup? [y/N] " answer
+  case "$answer" in
+    [yY]*) curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+           # shellcheck disable=SC1091
+           . "$HOME/.cargo/env" ;;
+    *) echo "Install Rust from https://rustup.rs and run this again." >&2; exit 1 ;;
+  esac
+fi
+
+need ffmpeg || exit 1
+need ffprobe || exit 1
+
+cargo build --release --bins --examples
+
+# Passed arguments go straight to the CLI rather than rendering the tour.
+if [ "$#" -gt 0 ]; then
+  exec ./target/release/showreel "$@"
+fi
+
+mkdir -p out
+./target/release/examples/showcase --out out/showcase.film.json
+./target/release/showreel render out/showcase.film.json -o out/showcase.mp4
+
+echo
+echo "Wrote out/showcase.mp4 and out/showcase.mobile.mp4."
+echo "Try:  ./reel sheet out/showcase.film.json --every 1.5s -o out/sheet.png"

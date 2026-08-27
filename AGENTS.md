@@ -41,10 +41,26 @@ Each is documented at the top of its module; read the module rather than duplica
 - Counters nest under `"count"` rather than flattening: a counter's `from` is a value and a
   layer's `from` is a time.
 
+- **Any text drawn into a plate must be measured against the room that actually exists**,
+  then the plate clamped into the frame. `TextLayout::fit_width` wraps first and shrinks
+  only as a fallback, stopping at a legibility floor — so its width guarantee is
+  best-effort and the absolute "never off-frame" guarantee is the caller's clamp. A
+  caption once ran off the left edge because the plate grew away from its target without
+  ever consulting the frame; `layer.rs` has the edge tests.
+- **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
+  second. Using the first letterboxes a square source into a wide frame — the exact
+  opposite of covering it.
+
 ## Working on it
 
 - `cargo test` — unit tests live beside their modules; `tests/render_pipeline.rs` renders a
-  film using every layer kind and checks determinism and the JSON round trip.
+  film using every layer kind and checks determinism and the JSON round trip. It uses a
+  tiny frame on purpose: it is what catches clamp arithmetic that only holds at 1080p.
+- **Rebuild with `cargo build --release --bins --examples`.** A bare `cargo build
+  --release` does not rebuild examples, and `--examples` does not rebuild the `showreel`
+  binary. Rendering with a stale half of the pair produces output that contradicts the
+  source and wastes a debugging cycle — this has happened twice.
+- `./reel` renders the self-contained tour from a clean clone; it needs no assets.
 - **Use the preview path rather than rendering to judge anything**: `showreel sheet` puts
   the whole film on one page in a couple of seconds, and `showreel still --at <t>` is
   milliseconds. Both bugs in the sharp-edges list above were caught by the contact sheet

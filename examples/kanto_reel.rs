@@ -157,9 +157,6 @@ const BURSTS: &[Burst] = &[
     },
 ];
 
-fn ink() -> Color {
-    Color::WHITE
-}
 
 fn accent() -> Color {
     Color::rgb(255, 209, 71)
@@ -392,6 +389,5 @@ fn main() -> anyhow::Result<()> {
     for u in film.assets_used() {
         println!("  needs {u:?}");
     }
-    let _ = ink();
     Ok(())
 }

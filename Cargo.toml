@@ -3,7 +3,7 @@ name = "showreel"
 version = "0.1.0"
 edition = "2024"
 description = "A declarative toolset for demo, explainer and animation films: timeline, camera, typography, transitions."
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 readme = "README.md"
 
 [dependencies]

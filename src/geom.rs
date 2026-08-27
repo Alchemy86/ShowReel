@@ -58,6 +58,20 @@ impl Rect {
         }
     }
 
+    /// The largest rect of `aspect` that fits *inside* this one, centred.
+    ///
+    /// The counterpart to [`Rect::to_aspect`], which grows. This one crops,
+    /// which is what `Fit::Cover` needs: the region of a source that will be
+    /// shown when it fills a differently-shaped box.
+    pub fn inscribed_aspect(&self, aspect: f64) -> Rect {
+        let (cx, cy) = self.centre();
+        if self.aspect() > aspect {
+            Rect::centred(cx, cy, self.h * aspect, self.h)
+        } else {
+            Rect::centred(cx, cy, self.w, self.w / aspect)
+        }
+    }
+
     /// Linear blend between two rects.
     pub fn lerp(&self, other: &Rect, t: f64) -> Rect {
         Rect {
@@ -201,6 +215,21 @@ mod tests {
         // Both keep the source aspect ratio.
         assert!((c.aspect() - 160.0 / 144.0).abs() < 1e-9);
         assert!((k.aspect() - 160.0 / 144.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn to_aspect_grows_and_inscribed_aspect_crops() {
+        let square = Rect::from_size(5000.0, 5000.0);
+        let wide = 16.0 / 9.0;
+        let grown = square.to_aspect(wide);
+        let cropped = square.inscribed_aspect(wide);
+        assert!((grown.aspect() - wide).abs() < 1e-9);
+        assert!((cropped.aspect() - wide).abs() < 1e-9);
+        // Growing leaves the source entirely inside; cropping stays inside the
+        // source. That difference is Contain versus Cover.
+        assert!(grown.w > square.w && grown.h >= square.h - 1e-9);
+        assert!(cropped.w <= square.w + 1e-9 && cropped.h < square.h);
+        assert!((cropped.w - 5000.0).abs() < 1e-6, "width is the limit here");
     }
 
     #[test]

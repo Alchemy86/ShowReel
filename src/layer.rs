@@ -731,6 +731,38 @@ impl Layer {
         self
     }
 
+    /// For a counter: how many decimal places the value carries.
+    pub fn decimals(mut self, d: u8) -> Self {
+        if let Content::Counter { spec, .. } = &mut self.content {
+            spec.decimals = d;
+        }
+        self
+    }
+
+    /// For a counter: text appended to the value, e.g. `" MP"` or `"%"`.
+    pub fn suffix(mut self, t: impl Into<String>) -> Self {
+        if let Content::Counter { spec, .. } = &mut self.content {
+            spec.suffix = t.into();
+        }
+        self
+    }
+
+    /// For a counter: text put before the value, e.g. `"~"` or `"£"`.
+    pub fn prefix(mut self, t: impl Into<String>) -> Self {
+        if let Content::Counter { spec, .. } = &mut self.content {
+            spec.prefix = t.into();
+        }
+        self
+    }
+
+    /// For a counter: stop grouping thousands.
+    pub fn ungrouped(mut self) -> Self {
+        if let Content::Counter { spec, .. } = &mut self.content {
+            spec.group = false;
+        }
+        self
+    }
+
     pub fn accent(mut self, c: Color) -> Self {
         match &mut self.content {
             Content::LowerThird { accent, .. } => *accent = c,
@@ -1476,11 +1508,15 @@ impl Layer {
     }
 }
 
-/// The viewport of a still that a fit mode implies.
+/// The region of a still that a fit mode shows.
+///
+/// `Cover` fills the box and crops the overflow, so the viewport is the
+/// largest rect of the box's shape that fits *inside* the source — the
+/// inscribed one. Using `to_aspect` here instead, which grows, letterboxes a
+/// square source into a wide frame: the exact opposite of covering it.
 fn viewport_for_fit(src: &Rect, box_: &Rect, fit: Fit) -> Rect {
     match fit {
-        // Cover crops the source to the box's aspect.
-        Fit::Cover => src.to_aspect(box_.aspect()).clamp_within(src).inset(0.0),
+        Fit::Cover => src.inscribed_aspect(box_.aspect()),
         _ => *src,
     }
 }
@@ -1667,6 +1703,19 @@ mod tests {
     }
 
     #[test]
+    fn cover_shows_a_crop_and_contain_shows_everything() {
+        // A square source in a 16:9 box.
+        let src = Rect::from_size(5000.0, 5000.0);
+        let box_ = Rect::from_size(1920.0, 1080.0);
+        let cover = viewport_for_fit(&src, &box_, Fit::Cover);
+        assert!(cover.w <= src.w + 1e-9 && cover.h < src.h, "cover must crop: {cover:?}");
+        assert!((cover.aspect() - box_.aspect()).abs() < 1e-9);
+        // Contain shows the whole source; the letterboxing is in the
+        // destination rect instead.
+        assert_eq!(viewport_for_fit(&src, &box_, Fit::Contain), src);
+    }
+
+    #[test]
     fn counter_counts_and_holds() {
         let c = CounterSpec::new(0.0, 600.0, 2.0);
         assert_eq!(c.text_at(0.0), "0");
@@ -1682,6 +1731,17 @@ mod tests {
         assert_eq!(c.text_at(1.0), "~12\u{202f}345 runs");
         let plain = CounterSpec { group: false, ..CounterSpec::new(0.0, 12345.0, 1.0) };
         assert_eq!(plain.text_at(1.0), "12345");
+    }
+
+    #[test]
+    fn counter_format_builders_reach_the_spec() {
+        let l = Layer::counter(0.0, 12.5, 1.0).decimals(1).suffix(" MP").prefix("~").ungrouped();
+        let Content::Counter { spec, .. } = &l.content else { panic!() };
+        assert_eq!(spec.text_at(1.0), "~12.5 MP");
+        // And they are no-ops on content that has no counter, rather than
+        // silently constructing something wrong.
+        let t = Layer::title("x").decimals(3).suffix("!");
+        assert!(matches!(t.content, Content::Title { .. }));
     }
 
     #[test]
