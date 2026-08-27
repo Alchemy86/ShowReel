@@ -22,6 +22,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | A camera over a huge still is mip-backed; zoom interpolates *geometrically* | `src/camera.rs`, `src/assets/still.rs` |
 | Glyphs are filled paths, not font-engine blits (so text takes gradients, strokes, shadows) | `src/text/font.rs` |
 | Transitions split presentation from timing; the "no leading transition" rule is in the *type* | `src/transition.rs`, `src/timeline.rs` |
+| `Presentation::CrossBlur` blurs every RGBA channel (`canvas::blur_rgba`), not just alpha (`canvas::blur_alpha`, for shadows) — both share the same three-pass box-blur core, `canvas::box_blur3` | `src/canvas.rs`, `src/transition.rs` |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
@@ -83,6 +84,18 @@ Each is documented at the top of its module; read the module rather than duplica
   magnifies that — there is no pyramid to pick a sharper level from. Push a
   camera in close on a clip and raise `max_width` to match, or the footage
   goes soft.
+- **`Presentation::CrossBlur` is genuinely expensive, and the cost does not
+  fall with a smaller radius.** `canvas::blur_rgba` measured **~170ms a call**
+  at 1920×1080 (`canvas::tests::blur_rgba_cost_at_1080p`; an unoptimised debug
+  build is several times slower again) — a box blur's cost is the frame's
+  pixel count times its fixed 4 channels × 3 passes, not the window size, so
+  radius 5 and radius 24 cost the same. `compose` calls it twice a frame (the
+  outgoing and incoming sides), so this transition costs on the order of a
+  third of a second *per frame*, on top of everything else drawn that frame —
+  against the whole example film's own 12ms/frame average
+  (`docs/performance.md`). Fine for a transition well under a second; a
+  film-length one would not render in a reasonable time. See the "A
+  cross-blur dissolve" section of `README.md`.
 - **`showreel studio` needs `cargo build --features studio`** — the plain
   binary does not have the subcommand at all, on purpose (`src/studio.rs`).
 - **The browser build cannot decode video, at all** — `Clip::load` shells out

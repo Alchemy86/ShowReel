@@ -477,6 +477,7 @@ fn presentation_name(t: &showreel::transition::Transition) -> String {
         Push { .. } => "push",
         Iris { .. } => "iris",
         ZoomIn { .. } => "zoom-in",
+        CrossBlur { .. } => "cross-blur",
     }
     .to_string()
 }

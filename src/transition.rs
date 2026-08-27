@@ -117,6 +117,16 @@ pub enum Presentation {
         #[serde(default = "zoom_from")]
         from: f64,
     },
+    /// A dissolve where both frames soften toward the midpoint and sharpen
+    /// back out, rather than staying crisp throughout — reads as more
+    /// "cinematic" than a plain [`Presentation::Dissolve`]. `radius` is the
+    /// peak blur in pixels, reached at the transition's midpoint; it is zero
+    /// at both ends, so the transition still starts crisp on the outgoing
+    /// scene and ends crisp on the incoming one.
+    CrossBlur {
+        #[serde(default)]
+        radius: f64,
+    },
 }
 
 fn black() -> Color {
@@ -206,6 +216,19 @@ impl Present for Presentation {
                 let s = from + (1.0 - from) * p;
                 let (cx, cy) = frame.centre();
                 dst.draw_canvas(incoming, Rect::centred(cx, cy, frame.w * s, frame.h * s), p);
+            }
+            Presentation::CrossBlur { radius } => {
+                // Zero at both ends, peaking at the midpoint — the transition
+                // must not already be soft the instant it starts.
+                let amount = radius * (std::f64::consts::PI * p).sin();
+                let mut soft_out = out.clone();
+                let mut soft_in = incoming.clone();
+                if amount >= 1.0 {
+                    crate::canvas::blur_rgba(&mut soft_out.pixmap, amount);
+                    crate::canvas::blur_rgba(&mut soft_in.pixmap, amount);
+                }
+                dst.draw_canvas(&soft_out, frame, 1.0);
+                dst.draw_canvas(&soft_in, frame, p);
             }
         }
     }
@@ -351,6 +374,10 @@ impl Transition {
         Transition::new(d, Presentation::ZoomIn { from: 0.86 })
     }
 
+    pub fn cross_blur(d: impl Into<Time>) -> Self {
+        Transition::new(d, Presentation::CrossBlur { radius: 24.0 })
+    }
+
     pub fn timed(mut self, t: Timing) -> Self {
         self.timing = t;
         self
@@ -401,6 +428,7 @@ mod tests {
             Presentation::Push { direction: Direction::Up },
             Presentation::Iris { cx: 0.5, cy: 0.5, softness: 0.0 },
             Presentation::ZoomIn { from: 0.8 },
+            Presentation::CrossBlur { radius: 20.0 },
         ] {
             let mut dst = scene(Color::rgb(0, 255, 0));
             pres.compose(&a, &b, 1.0, &mut dst);
@@ -420,6 +448,7 @@ mod tests {
             Presentation::Push { direction: Direction::Up },
             Presentation::Iris { cx: 0.5, cy: 0.5, softness: 0.0 },
             Presentation::ZoomIn { from: 0.8 },
+            Presentation::CrossBlur { radius: 20.0 },
         ] {
             let mut dst = scene(Color::rgb(0, 255, 0));
             pres.compose(&a, &b, 0.0, &mut dst);
@@ -485,5 +514,52 @@ mod tests {
         let s = serde_json::to_string(&t).unwrap();
         assert_eq!(serde_json::from_str::<Transition>(&s).unwrap(), t);
         assert!(s.contains("\"wipe\""), "{s}");
+    }
+
+    #[test]
+    fn cross_blur_round_trips_through_json() {
+        let t = Transition::cross_blur(0.6);
+        let s = serde_json::to_string(&t).unwrap();
+        assert_eq!(serde_json::from_str::<Transition>(&s).unwrap(), t);
+        assert!(s.contains("\"cross-blur\""), "{s}");
+    }
+
+    /// A canvas split hard down the middle, so a blur has an edge to soften.
+    fn split_scene(left: Color, right: Color) -> Canvas {
+        let (w, h) = (64u32, 36u32);
+        let mut cv = Canvas::new(w, h).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                let c = if x < w / 2 { left } else { right };
+                cv.pixmap.pixels_mut()[(y * w + x) as usize] =
+                    tiny_skia::ColorU8::from_rgba(c.r, c.g, c.b, 255).premultiply();
+            }
+        }
+        cv
+    }
+
+    #[test]
+    fn cross_blur_softens_the_seam_only_mid_transition() {
+        // The identical split picture on both sides of the cut, so any change
+        // at the seam can only come from the blur itself — a dissolve between
+        // two copies of the same frame never changes at all.
+        let same = split_scene(RED, BLUE);
+        let pres = Presentation::CrossBlur { radius: 30.0 };
+        let near_seam = (0.47, 0.5); // just inside the red half, close to the cut
+
+        let mut start = scene(Color::BLACK);
+        pres.compose(&same, &same, 0.0, &mut start);
+        let (r0, _, b0) = sample(&start, near_seam.0, near_seam.1);
+        assert!(r0 > 200 && b0 < 60, "p=0 must be the crisp seam, got {r0},{b0}");
+
+        let mut mid = scene(Color::BLACK);
+        pres.compose(&same, &same, 0.5, &mut mid);
+        let (_, _, b_mid) = sample(&mid, near_seam.0, near_seam.1);
+        assert!(b_mid > b0 + 20, "the seam should visibly soften at the midpoint: {b0} -> {b_mid}");
+
+        let mut plain = scene(Color::BLACK);
+        Presentation::Dissolve.compose(&same, &same, 0.5, &mut plain);
+        let (_, _, b_plain) = sample(&plain, near_seam.0, near_seam.1);
+        assert!(b_plain < 60, "a plain dissolve of identical frames has no seam bleed, got {b_plain}");
     }
 }

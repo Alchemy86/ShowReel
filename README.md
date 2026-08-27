@@ -27,7 +27,7 @@ It knows nothing about any subject. Maps, screen captures and video clips are
 | **12.0 ms a frame** | the example film, 1920×1080 at 60fps, 2082 frames in 25 s on 20 cores — [what a frame costs](docs/performance.md) |
 | **48 megapixels, 4.3 ms** | the camera zooms, pans and holds over a source far larger than the frame. A 6832×7024 still renders to 1080p in 4.3 ms a frame — 33× faster than the obvious implementation |
 | **Text as geometry** | glyphs are filled paths, not font-engine blits, so a title takes a gradient, an outline and a drop shadow. Real shaping, kerning, tracking in ems, **tabular figures** so a counter does not jitter as it ticks |
-| **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris and zoom, each composable with any easing curve or spring |
+| **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris, zoom and a cross-blur dissolve, each composable with any easing curve or spring |
 | **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, and a **pull-up** that lifts a piece of the frame, dims the rest and annotates it |
 | **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut. A video clip's own soundtrack joins the mix too, with the same gain, fades and a mute |
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
@@ -163,6 +163,32 @@ This does not loop a clip's audio to match `ClipLoop::Loop` — a looping
 *picture* has no natural audio analogue, so the sound simply runs out when the
 decoded source does, the same way a video frozen on its last frame does not
 keep making noise. See `AGENTS.md` for the full reasoning.
+
+### A cross-blur dissolve
+
+`Presentation::CrossBlur` softens both frames toward the transition's
+midpoint and sharpens back out, rather than staying crisp throughout like a
+plain dissolve — it reads as a more "cinematic" cut:
+
+```rust
+Transition::cross_blur(1.2)  // radius defaults to 24px, peaking at the midpoint
+```
+
+Same cut, same midpoint, both stills real frames from `showreel still`:
+
+| plain dissolve | cross-blur |
+|---|---|
+| ![a plain dissolve at its midpoint: two titles double-exposed, both still sharp](docs/stills/dissolve-mid.png) | ![a cross-blur dissolve at its midpoint: both titles soft, reading as one glow rather than two overlapping words](docs/stills/cross-blur-mid.png) |
+
+**The cost is real and worth knowing before reaching for it.** Blurring every
+channel of a full frame (`canvas::blur_rgba`) measured at **~170ms per call**
+at 1920×1080 — independent of the blur radius, since a box blur's cost is the
+frame's pixel count, not the window size. `CrossBlur` calls it twice a frame
+(outgoing and incoming), so a transition at that resolution costs on the order
+of a third of a second a frame on top of everything else drawn — against the
+whole example film's own 12ms/frame average. A short transition (well under a
+second) keeps that bounded to a few seconds of extra render time; a film-length
+one would not.
 
 ## Look before you render
 
