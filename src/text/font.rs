@@ -16,6 +16,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// Glyph outlines, in font units, keyed by face and glyph id. `None` records
+/// that a glyph has no outline (a space), so it is not re-parsed every frame.
+type OutlineCache = HashMap<(FontId, u16), Option<Arc<tiny_skia::Path>>>;
+
 /// A face registered in a [`FontDb`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FontId(pub usize);
@@ -49,7 +53,7 @@ pub struct PositionedGlyph {
 /// the same face per frame.
 pub struct FontDb {
     faces: Vec<FaceData>,
-    outlines: Mutex<HashMap<(FontId, u16), Option<Arc<tiny_skia::Path>>>>,
+    outlines: Mutex<OutlineCache>,
     scanned: Mutex<bool>,
 }
 
@@ -372,7 +376,7 @@ mod tests {
 
     #[test]
     fn system_scan_finds_fonts() {
-        assert!(db().len() > 0, "no fonts found; typography tests cannot run");
+        assert!(!db().is_empty(), "no fonts found; typography tests cannot run");
     }
 
     #[test]

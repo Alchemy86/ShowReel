@@ -444,6 +444,7 @@ fn glyph_transform(
 
 /// Render the text once into a scratch pixmap, blur its alpha, tint it, and
 /// composite it under the real text.
+#[allow(clippy::too_many_arguments)]
 fn draw_shadow(
     canvas: &mut Canvas,
     db: &FontDb,

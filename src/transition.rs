@@ -67,14 +67,15 @@ pub trait Present: Send + Sync {
 }
 
 /// The built-in looks.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Presentation {
     /// No blend at all — the incoming scene replaces the outgoing one at the
     /// midpoint. Present so that a hard cut is still a timeline element and
     /// can be re-paced into something softer without restructuring the film.
     Cut,
-    /// Cross-fade. The workhorse.
+    /// Cross-fade. The workhorse, and the default.
+    #[default]
     Dissolve,
     /// Fade out through a colour, then in. Reads as a bigger break than a
     /// dissolve, which is what you want between chapters.
@@ -128,12 +129,6 @@ fn half() -> f64 {
 
 fn zoom_from() -> f64 {
     0.86
-}
-
-impl Default for Presentation {
-    fn default() -> Self {
-        Presentation::Dissolve
-    }
 }
 
 impl Present for Presentation {
@@ -258,13 +253,11 @@ fn wipe_mask(frame: Rect, dir: Direction, p: f64, softness: f64) -> Option<Mask>
         if r.w > 0.0 && r.h > 0.0
             && let Some(sk) = tiny_skia::Rect::from_xywh(r.x as f32, r.y as f32, r.w as f32, r.h as f32)
         {
-            let mut paint = tiny_skia::Paint::default();
-            paint.shader = shader;
+            let paint = tiny_skia::Paint { shader, ..Default::default() };
             pm.fill_rect(sk, &paint, Transform::identity(), None);
         }
     } else {
-        let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
-        paint.shader = shader;
+        let paint = tiny_skia::Paint { anti_alias: true, shader, ..Default::default() };
         let sk = tiny_skia::Rect::from_xywh(0.0, 0.0, frame.w as f32, frame.h as f32)?;
         pm.fill_rect(sk, &paint, Transform::identity(), None);
     }

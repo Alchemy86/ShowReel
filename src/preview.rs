@@ -44,7 +44,7 @@ pub fn contact_sheet(
     let step = every.as_secs().max(1.0 / film.fps);
     let total = film.duration().as_secs();
     let times: Vec<f64> = {
-        let n = ((total / step).floor() as usize).max(0) + 1;
+        let n = (total / step).floor().max(0.0) as usize + 1;
         (0..n).map(|i| (i as f64 * step).min(total.max(0.0))).collect()
     };
 

@@ -105,11 +105,14 @@ pub struct Renderer<'a> {
     pub film: &'a Film,
     pub assets: &'a AssetStore,
     pub fonts: &'a FontDb,
+    /// Resolved once rather than per layer per frame: building a theme
+    /// allocates its font-family lists, and a frame can hold a dozen layers.
+    theme: crate::theme::Theme,
 }
 
 impl<'a> Renderer<'a> {
     pub fn new(film: &'a Film, assets: &'a AssetStore, fonts: &'a FontDb) -> Self {
-        Renderer { film, assets, fonts }
+        Renderer { film, assets, fonts, theme: film.theme() }
     }
 
     pub fn frame_count(&self) -> u32 {
@@ -127,18 +130,24 @@ impl<'a> Renderer<'a> {
                 crate::timeline::AssetUse::Still(a) => {
                     self.assets.still(&a)?;
                 }
-                crate::timeline::AssetUse::Clip(a, max_w) => {
-                    self.assets.clip(&a, self.film.fps, max_w, None)?;
+                crate::timeline::AssetUse::Clip { asset, max_width, trim, decode_fps } => {
+                    self.assets.clip(
+                        &asset,
+                        decode_fps.unwrap_or(self.film.fps),
+                        max_width,
+                        trim,
+                    )?;
                 }
             }
         }
         Ok(())
     }
 
-    fn ctx(&self) -> RenderCtx<'a> {
+    fn ctx(&self) -> RenderCtx<'_> {
         RenderCtx {
             assets: self.assets,
             fonts: self.fonts,
+            theme: &self.theme,
             frame: self.film.frame_rect(),
             fps: self.film.fps,
         }
@@ -235,6 +244,7 @@ mod tests {
     use super::*;
     use crate::color::Color;
     use crate::layer::Layer;
+    use crate::motion::Motion;
     use crate::timeline::Scene;
     use crate::transition::Transition;
 
@@ -328,6 +338,50 @@ mod tests {
         let stats = r.render_range(4..9, &mut sink).unwrap();
         assert_eq!(stats.frames, 5);
         assert_eq!(sink.0.len(), 5);
+    }
+
+    /// Non-background pixels in the first frame of a one-title film.
+    fn title_ink(film: &Film) -> usize {
+        let store = AssetStore::new();
+        let r = Renderer::new(film, &store, FontDb::shared());
+        let c = r.render_frame(0).unwrap();
+        c.as_ref().pixels().iter().filter(|p| p.red() > 100).count()
+    }
+
+    #[test]
+    fn unstyled_text_follows_the_films_own_theme() {
+        // Regression: the drawing code used to reach for `Theme::default()`
+        // rather than the film's theme, so `Film::theme()` was dead and every
+        // scaled render — including every preview thumbnail — drew 1080p-sized
+        // type into a small frame.
+        let scene = || {
+            Scene::new(1.0).layer(Layer::title("WWWWW").entering(Motion::fade(0.0)))
+        };
+        let big = Film::new(640, 360, 10.0)
+            .background(Color::BLACK)
+            .theme(crate::theme::Theme::dark().scaled(0.6))
+            .open(scene());
+        let small = Film::new(640, 360, 10.0)
+            .background(Color::BLACK)
+            .theme(crate::theme::Theme::dark().scaled(0.15))
+            .open(scene());
+        let (b, s) = (title_ink(&big), title_ink(&small));
+        assert!(b > 0 && s > 0, "both should draw something: {b}, {s}");
+        assert!(s * 4 < b, "small theme drew {s}, big drew {b}");
+    }
+
+    #[test]
+    fn scaling_a_film_scales_its_overlay_text_too() {
+        let film = Film::new(1280, 720, 10.0)
+            .background(Color::BLACK)
+            .open(Scene::new(1.0).layer(Layer::title("WWWWW").entering(Motion::fade(0.0))));
+        let full = title_ink(&film);
+        let quarter = title_ink(&crate::scale::scale_film(&film, 0.25));
+        assert!(full > 0 && quarter > 0);
+        // A quarter-size frame holding proportionally sized type has roughly a
+        // sixteenth of the ink; allow a wide band, but it must not be the same.
+        let ratio = full as f64 / quarter as f64;
+        assert!((6.0..40.0).contains(&ratio), "ink ratio {ratio} (full {full}, quarter {quarter})");
     }
 
     #[test]

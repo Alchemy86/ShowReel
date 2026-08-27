@@ -23,6 +23,8 @@ showreel info    film.json                # scenes, timings, assets
 - **Camera** — zoom, pan and hold over a source much larger than the frame. A
   48-megapixel still renders at **4.3 ms/frame** to 1080p (measured; see
   `src/assets/still.rs`).
+- **Transitions** — cut, dissolve, fade-through-colour, wipe, slide, push, iris
+  and zoom, each composable with any timing curve or spring.
 - **Easing** — the usual curves, cubic Béziers, and real springs.
 - **Layers** — stills, clips, solids, gradients and scrims, composited by
   position, scale, opacity and z-order.
@@ -87,3 +89,43 @@ transitions in a row — see `src/timeline.rs`.
 
 `ffmpeg` and `ffprobe` on `PATH`. Fonts are found from the system font
 directories; `showreel fonts` lists what it can see.
+
+## The worked example
+
+`examples/kanto_reel.rs` builds a 35-second film — a Game Boy title screen, a
+pull-back over a 48-megapixel map of all 226 Pokémon Blue maps, real run
+footage bursting out at the coordinates where it was recorded, and a pull-up on
+one of them — entirely through the public API. Nothing in `src/` knows what any
+of it is.
+
+```bash
+cargo run --release --example kanto_reel -- -o kanto.film.json
+showreel sheet  kanto.film.json -A <assets> --every 1.5s   # look before rendering
+showreel render kanto.film.json -A <assets> -o kanto-reel.mp4
+```
+
+Measured on a 20-core machine, 1920×1080 at 60fps:
+
+| | frames | wall | per frame | peak RSS |
+|---|---|---|---|---|
+| the 48.0 MP pull-back alone | 660 | 10.0 s | 15.2 ms | 2.09 GB |
+| the whole film | 2082 | 26.2 s | 12.6 ms | 2.16 GB |
+
+Rendering the same description twice gives byte-identical PNGs and byte-identical
+mp4s.
+
+## Iterating
+
+Rendering a film to judge its timing is the slow way round. In rough order of
+cost:
+
+| | what it answers | cost here |
+|---|---|---|
+| `showreel still --at 4.2s` | "what does this moment look like?" | ~100 ms |
+| `showreel sheet --every 1.5s` | "is the pacing right?" | ~3 s for the whole film |
+| `showreel preview --scale 0.35` | "does the motion work?" | ~8× less pixel work |
+| `showreel render` | the delivery | full cost |
+
+`sheet` renders from a genuinely scaled-down film — type, padding, corner radii
+and decode sizes all come down with the frame — so a thumbnail looks like the
+film rather than like the film with 1080p text pasted on it.

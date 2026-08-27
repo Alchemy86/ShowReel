@@ -315,7 +315,13 @@ fn cmd_info(film_path: PathBuf) -> Result<()> {
         for u in used {
             match u {
                 showreel::timeline::AssetUse::Still(a) => println!("    still  {a}"),
-                showreel::timeline::AssetUse::Clip(a, w) => println!("    clip   {a} (decoded to {w}px wide)"),
+                showreel::timeline::AssetUse::Clip { asset, max_width, trim, decode_fps } => {
+                    let t = trim
+                        .map(|(a, d)| format!(", {a}s..{:.2}s", a + d))
+                        .unwrap_or_else(|| ", whole file".into());
+                    let f = decode_fps.map(|f| format!(", {f}fps")).unwrap_or_default();
+                    println!("    clip   {asset} ({max_width}px wide{t}{f})");
+                }
             }
         }
     }

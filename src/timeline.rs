@@ -268,6 +268,11 @@ pub struct FilmSpec {
 
 impl Film {
     /// Begin describing a film. Finish with [`FilmSpec::open`].
+    ///
+    /// Returns a [`FilmSpec`] rather than a `Film` on purpose: a film without
+    /// an opening scene is not a film, and the builder should not be able to
+    /// produce one.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(width: u32, height: u32, fps: f64) -> FilmSpec {
         FilmSpec {
             width,
@@ -322,8 +327,13 @@ impl Film {
                     crate::layer::Content::Still { asset, .. } => {
                         Some(AssetUse::Still(asset.clone()))
                     }
-                    crate::layer::Content::Clip { asset, max_width, .. } => {
-                        Some(AssetUse::Clip(asset.clone(), *max_width))
+                    crate::layer::Content::Clip { asset, max_width, trim, decode_fps, .. } => {
+                        Some(AssetUse::Clip {
+                            asset: asset.clone(),
+                            max_width: *max_width,
+                            trim: trim.map(|(a, b)| (a.as_secs(), b.as_secs())),
+                            decode_fps: *decode_fps,
+                        })
                     }
                     _ => None,
                 };
@@ -373,10 +383,10 @@ impl Film {
 }
 
 /// An asset reference, with how it will be decoded.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AssetUse {
     Still(String),
-    Clip(String, u32),
+    Clip { asset: String, max_width: u32, trim: Option<(f64, f64)>, decode_fps: Option<f64> },
 }
 
 impl FilmSpec {
@@ -529,6 +539,17 @@ mod tests {
         assert_eq!(Film::from_json(&s).unwrap(), f);
         // The JSON shape itself cannot express a leading transition.
         assert!(s.contains("\"opening\""), "{s}");
+    }
+
+    #[test]
+    fn clip_asset_use_carries_the_decode_parameters() {
+        // The same file trimmed two ways is two decodes, not one.
+        let f = Film::new(64, 36, 30.0).open(
+            Scene::new(1.0)
+                .layer(Layer::clip("a.mp4").trim(0.0, 2.0))
+                .layer(Layer::clip("a.mp4").trim(10.0, 2.0)),
+        );
+        assert_eq!(f.assets_used().len(), 2);
     }
 
     #[test]

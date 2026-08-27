@@ -250,7 +250,7 @@ pub fn round_rect_path(r: Rect, radius: f64) -> Option<tiny_skia::Path> {
     let (x, y, w, h, rr) = (r.x as f32, r.y as f32, r.w as f32, r.h as f32, radius as f32);
     // 0.5523 is the circle-to-cubic constant; the arcs are indistinguishable
     // from true quarter-circles at any size a frame will show.
-    let k = rr * 0.552_284_75;
+    let k = rr * 0.552_285;
     let mut pb = PathBuilder::new();
     pb.move_to(x + rr, y);
     pb.line_to(x + w - rr, y);

@@ -28,6 +28,11 @@ use serde::{Deserialize, Serialize};
 pub struct RenderCtx<'a> {
     pub assets: &'a AssetStore,
     pub fonts: &'a FontDb,
+    /// The styles unstyled content falls back to. Comes from the *film*, so a
+    /// film rendered at a quarter size gets quarter-size type: reaching for
+    /// `Theme::default()` here instead would silently ignore both the film's
+    /// own theme and any scaling applied to it.
+    pub theme: &'a crate::theme::Theme,
     /// The frame, in pixels.
     pub frame: Rect,
     pub fps: f64,
@@ -40,10 +45,11 @@ pub struct RenderCtx<'a> {
 /// representation rather than a tagged one, because `"placement": "centre"`
 /// is what an author wants to type and `{"at":"anchored","anchor":"centre"}`
 /// is not.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(from = "PlacementRepr", into = "PlacementRepr")]
 pub enum Placement {
     /// Fill the whole frame.
+    #[default]
     Full,
     /// Pinned to an anchor, `pad` in from the edges.
     Anchored { anchor: Anchor, pad: f64 },
@@ -105,12 +111,6 @@ impl From<Placement> for PlacementRepr {
 
 fn default_pad() -> f64 {
     72.0
-}
-
-impl Default for Placement {
-    fn default() -> Self {
-        Placement::Full
-    }
 }
 
 impl Placement {
@@ -221,7 +221,7 @@ fn group_thousands(digits: &str, negative: bool) -> String {
     let mut out = String::new();
     let n = digits.len();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (n - i) % 3 == 0 {
+        if i > 0 && (n - i).is_multiple_of(3) {
             out.push('\u{202f}');
         }
         out.push(c);
@@ -328,9 +328,20 @@ pub enum Content {
         asset: String,
         #[serde(default)]
         fit: Fit,
-        /// Seconds into the clip at which the layer's own time zero sits.
+        /// Which part of the source to decode: `(start, duration)` in the
+        /// source's own time. **Decoding is bounded by this**, so a four second
+        /// moment out of a six minute film costs four seconds of memory. A
+        /// long source without a trim is the fastest way to exhaust a machine.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trim: Option<(Time, Time)>,
+        /// Seconds into the decoded region at which the layer's own time zero
+        /// sits.
         #[serde(default)]
         start: Time,
+        /// Decode at this rate instead of the film's. Decoding a 30fps source
+        /// into a 60fps film at 60 doubles the memory for no more detail.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        decode_fps: Option<f64>,
         #[serde(default)]
         mode: ClipLoop,
         /// Cap the decode width. Keeps a 4K source from being held in memory
@@ -529,7 +540,9 @@ impl Layer {
         Layer::new(Content::Clip {
             asset: asset.into(),
             fit: Fit::Cover,
+            trim: None,
             start: Time::ZERO,
+            decode_fps: None,
             mode: ClipLoop::Hold,
             max_width: clip_max_w(),
             radius: 0.0,
@@ -741,10 +754,34 @@ impl Layer {
         self
     }
 
-    /// Where the clip's own playhead starts.
+    /// Where the clip's own playhead starts, within the decoded region.
     pub fn clip_start(mut self, t: impl Into<Time>) -> Self {
         if let Content::Clip { start, .. } = &mut self.content {
             *start = t.into();
+        }
+        self
+    }
+
+    /// Decode only `duration` seconds from `start` of the source.
+    pub fn trim(mut self, start: impl Into<Time>, duration: impl Into<Time>) -> Self {
+        if let Content::Clip { trim, .. } = &mut self.content {
+            *trim = Some((start.into(), duration.into()));
+        }
+        self
+    }
+
+    /// Decode at this rate rather than the film's.
+    pub fn decode_fps(mut self, fps: f64) -> Self {
+        if let Content::Clip { decode_fps, .. } = &mut self.content {
+            *decode_fps = Some(fps);
+        }
+        self
+    }
+
+    /// Cap the decoded width.
+    pub fn decode_width(mut self, w: u32) -> Self {
+        if let Content::Clip { max_width, .. } = &mut self.content {
+            *max_width = w;
         }
         self
     }
@@ -872,8 +909,13 @@ impl Layer {
                     }
                 }
             }
-            Content::Clip { asset, fit, start, mode, max_width, radius, border, shadow } => {
-                self.draw_clip(canvas, ctx, local, state, alpha, asset, *fit, *start, *mode, *max_width, *radius, *border, shadow.as_ref())?;
+            Content::Clip {
+                asset, fit, trim, start, decode_fps, mode, max_width, radius, border, shadow,
+            } => {
+                self.draw_clip(
+                    canvas, ctx, local, state, alpha, asset, *fit, *trim, *start, *decode_fps,
+                    *mode, *max_width, *radius, *border, shadow.as_ref(),
+                )?;
             }
             Content::Text { text, style, wrap, fit } => {
                 let box_ = self.placement().resolve(&frame, (frame.w * 0.8, frame.h * 0.3));
@@ -908,14 +950,18 @@ impl Layer {
         alpha: f64,
         asset: &str,
         fit: Fit,
+        trim: Option<(Time, Time)>,
         start: Time,
+        decode_fps: Option<f64>,
         mode: ClipLoop,
         max_width: u32,
         radius: f64,
         border: Option<(Color, f64)>,
         shadow: Option<&Shadow>,
     ) -> Result<()> {
-        let clip = ctx.assets.clip(asset, ctx.fps, max_width, None)?;
+        let fps = decode_fps.unwrap_or(ctx.fps);
+        let trim = trim.map(|(a, b)| (a.as_secs(), b.as_secs()));
+        let clip = ctx.assets.clip(asset, fps, max_width, trim)?;
         let (cw, ch) = clip.size();
         let box_ = shift_scaled(self.placement().resolve(&ctx.frame, (cw as f64, ch as f64)), state);
         let Some(frame_px) = clip.frame_at(local.as_secs() + start.as_secs(), mode) else {
@@ -1038,7 +1084,7 @@ impl Layer {
         alpha: f64,
         local: Time,
     ) {
-        let theme = crate::theme::Theme::default();
+        let theme = ctx.theme;
         let ts = style.cloned().unwrap_or_else(|| theme.title.clone());
         let ss = sub_style.cloned().unwrap_or_else(|| theme.subtitle.clone());
         let frame = ctx.frame;
@@ -1091,7 +1137,7 @@ impl Layer {
         state: &MotionState,
         alpha: f64,
     ) {
-        let theme = crate::theme::Theme::default();
+        let theme = ctx.theme;
         let ts = style.cloned().unwrap_or_else(|| theme.lower_third.clone());
         let ds = detail_style.cloned().unwrap_or_else(|| theme.lower_third_detail.clone());
         let frame = ctx.frame;
@@ -1134,7 +1180,7 @@ impl Layer {
         alpha: f64,
         local: Time,
     ) {
-        let theme = crate::theme::Theme::default();
+        let theme = ctx.theme;
         let ts = style.cloned().unwrap_or_else(|| theme.counter.clone());
         let ls = label_style.cloned().unwrap_or_else(|| theme.counter_label.clone());
         let text = spec.text_at(local.as_secs());
@@ -1182,7 +1228,7 @@ impl Layer {
         alpha: f64,
         local: Time,
     ) {
-        let theme = crate::theme::Theme::default();
+        let theme = ctx.theme;
         let ts = style.cloned().unwrap_or_else(|| theme.callout.clone());
         let ds = detail_style.cloned().unwrap_or_else(|| theme.callout_detail.clone());
         let frame = ctx.frame;
@@ -1343,15 +1389,22 @@ impl Layer {
         if let Some(label) = &spec.label
             && p > 0.35
         {
-            let theme = crate::theme::Theme::default();
-            let ts = style.cloned().unwrap_or_else(|| theme.callout.clone());
+            let ts = style.cloned().unwrap_or_else(|| ctx.theme.callout.clone());
             let a = alpha * ((p - 0.35) / 0.65).clamp(0.0, 1.0);
             if let Some(l) = TextLayout::build(ctx.fonts, label, &ts, Some(cur.w)) {
                 let plate = Plate { pad: (20.0, 12.0), radius: 8.0, ..Plate::dark() };
                 let pw = l.width + plate.pad.0 * 2.0;
                 let ph = l.height + plate.pad.1 * 2.0;
-                let px = cur.centre().0 - pw / 2.0;
-                let py = cur.bottom() + 18.0;
+                let px = (cur.centre().0 - pw / 2.0).clamp(16.0, (frame.w - pw - 16.0).max(16.0));
+                // Below the lifted rect, unless that would run off the frame,
+                // in which case above it. A caption half off the bottom edge
+                // is the sort of thing that only shows up in the render.
+                let below = cur.bottom() + 18.0;
+                let py = if below + ph <= frame.h - 16.0 {
+                    below
+                } else {
+                    (cur.y - ph - 18.0).max(16.0)
+                };
                 plate.draw(canvas, Rect::new(px, py, pw, ph), a);
                 crate::text::draw(
                     canvas,
@@ -1465,6 +1518,30 @@ fn stagger_units(layout: &TextLayout, kind: crate::motion::MotionKind) -> Vec<us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pull_up_label_stays_inside_the_frame() {
+        // A pull-up filling most of the frame has nowhere below it for a
+        // label, so it must go above rather than off the bottom edge.
+        let store = AssetStore::new();
+        let theme = crate::theme::Theme::dark();
+        let ctx = RenderCtx {
+            assets: &store,
+            fonts: FontDb::shared(),
+            theme: &theme,
+            frame: Rect::from_size(800.0, 450.0),
+            fps: 30.0,
+        };
+        let mut cv = Canvas::filled(800, 450, Color::rgb(120, 120, 120)).unwrap();
+        let l = Layer::pull_up((0.1, 0.1, 0.7, 0.7)).label("a label that must be visible");
+        l.draw(&mut cv, &ctx, Time(9.0), Time(10.0)).unwrap();
+        // Something was drawn in the top strip, where the label had to move to.
+        let top: usize = (0..40)
+            .flat_map(|y| (0..800).map(move |x| (x, y)))
+            .filter(|(x, y)| cv.as_ref().pixels()[(y * 800 + x) as usize].red() > 200)
+            .count();
+        assert!(top > 40, "the label should have moved above the lifted rect, got {top}");
+    }
 
     #[test]
     fn counter_counts_and_holds() {
