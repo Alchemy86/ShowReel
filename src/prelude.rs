@@ -1,6 +1,7 @@
 //! Everything needed to write a film, in one import.
 
 pub use crate::assets::{AssetStore, ClipLoop};
+pub use crate::audio::{Audio, AudioInput};
 pub use crate::camera::{Camera, Framing, Shot};
 pub use crate::canvas::Canvas;
 pub use crate::color::{Color, Paint};

@@ -9,11 +9,15 @@
 //! sits where in the atlas, which second of which film shows which milestone —
 //! lives in this file, as *input*.
 //!
-//! Run it to write the film description, then render it:
+//! This file is the **generator**; `examples/kanto.film.json` beside it is the
+//! description it produces, committed so that the film can be read, edited and
+//! rendered without compiling anything. This file is canonical — regenerate
+//! the JSON after changing it, and `--check` fails if the two disagree:
 //!
 //! ```text
-//! cargo run --release --example kanto_reel -- --assets <dir> --out kanto.film.json
-//! showreel render kanto.film.json -o kanto-reel.mp4
+//! cargo run --release --example kanto_reel -- -o examples/kanto.film.json
+//! cargo run --release --example kanto_reel -- --check -o examples/kanto.film.json
+//! showreel render examples/kanto.film.json -A <assets> -o kanto-reel.mp4
 //! ```
 //!
 //! ## Where the assets come from, and what is real
@@ -26,6 +30,12 @@
 //! - `pixel-chain-run.mp4` — `agentgb`'s screen-only policy playing a real cold
 //!   boot through the opening chain, captions burned in by the run itself.
 //! - `pixel-chain-grid.mp4` — 26 of those runs at once.
+//! - `pokemon-blue-title.wav` — the cartridge's own title theme, recorded off
+//!   the emulated sound chip. Not a file from anywhere: `terminalgb` boots the
+//!   ROM headlessly and keeps every sample its APU produces —
+//!   `cargo run --release --example music_probe --features music,image -- \
+//!   <dir-with-the-rom> --wav <dest> --seconds 40`. The ROM and the capture
+//!   are the user's own and live outside every repository.
 //!
 //! The map rectangles below are read off PixelGB's own `atlas.json`. The clip
 //! timestamps were checked by extracting the frame at each one and reading the
@@ -33,6 +43,11 @@
 //! a claim with evidence behind it rather than a guess.
 
 use showreel::prelude::*;
+
+/// The captured title theme. Like every other asset here it is named, not
+/// pathed: `showreel render -A <dir>` is what says where the media lives, so
+/// the film description stays portable and carries nothing machine-specific.
+const THEME: &str = "pokemon-blue-title.wav";
 
 /// The atlas PixelGB writes, in pixels.
 const ATLAS_W: f64 = 6832.0;
@@ -347,6 +362,29 @@ fn build(aspect: f64) -> Film {
                 .entering(Motion::rise(0.6)),
         );
 
+    // The soundtrack is the cartridge's own title theme, and it is under this
+    // film for the same reason the title screen is: it was produced by running
+    // the ROM on our own emulator, not sourced from anywhere. See the module
+    // header for how to capture it.
+    //
+    // It is laid down as *two* tracks reading the same file at the same
+    // offsets, which is how a constant-gain mixer expresses a level change:
+    // the first carries the title screen and recedes, the second comes up
+    // underneath it at a fifth of the volume and stays there. Because the
+    // second reads the source from where the first left off, the music itself
+    // is continuous across the change — what moves is only how loud it is.
+    let theme_hands_over_at = 5.0;
+    let carry = Audio::track(THEME)
+        .lasting(8.2)
+        .fades(0.35, 3.2);
+    let bed = Audio::track(THEME)
+        .at(theme_hands_over_at)
+        // Reading the source from the same second it is placed at keeps the
+        // two tracks phase-aligned: this is the same performance, quieter.
+        .from(theme_hands_over_at)
+        .fades(3.2, 3.5)
+        .gain(0.2);
+
     Film::new(1920, 1080, 60.0)
         .title("Kanto, entire — a ShowReel demonstration")
         .background(deep())
@@ -356,14 +394,22 @@ fn build(aspect: f64) -> Film {
         .then(Transition::dissolve(0.85), bursts)
         .then(Transition::dissolve(0.7), pull_up)
         .then(Transition::fade_black(0.8), end)
+        .sound(carry)
+        .sound(bed)
 }
 
 fn main() -> anyhow::Result<()> {
     let mut out = std::path::PathBuf::from("kanto.film.json");
+    let mut check = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--out" | "-o" => out = args.next().unwrap_or_default().into(),
+            // The drift guard. `examples/kanto.film.json` is committed so that
+            // a person can read and render the film without compiling
+            // anything, which means there are now two descriptions of it. This
+            // is what stops them disagreeing silently.
+            "--check" => check = true,
             other => eprintln!("ignoring unknown argument {other:?}"),
         }
     }
@@ -375,6 +421,20 @@ fn main() -> anyhow::Result<()> {
             eprintln!("error: {e}");
         }
         anyhow::bail!("the film does not validate");
+    }
+    if check {
+        let want = film.to_json()?;
+        let got = std::fs::read_to_string(&out)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", out.display()))?;
+        if got.trim() != want.trim() {
+            anyhow::bail!(
+                "{} is out of step with kanto_reel.rs — regenerate it:\n                     cargo run --release --example kanto_reel -- -o {}",
+                out.display(),
+                out.display()
+            );
+        }
+        println!("{} is in step with kanto_reel.rs", out.display());
+        return Ok(());
     }
     std::fs::write(&out, film.to_json()?)?;
     println!(

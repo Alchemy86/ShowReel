@@ -16,6 +16,7 @@
 //! Rust answer to a React API: not a transliteration, but the same idea with
 //! the invariant moved into the type.
 
+use crate::audio::Audio;
 use crate::color::Color;
 use crate::layer::Layer;
 use crate::theme::Theme;
@@ -243,6 +244,10 @@ pub struct Film {
     /// Overrides the built-in defaults for unstyled text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<Theme>,
+    /// Sound under the film, placed on the film's own clock. See
+    /// [`crate::audio`] for why this sits here and not on a scene.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio: Vec<Audio>,
     #[serde(flatten)]
     pub timeline: Timeline,
 }
@@ -293,6 +298,24 @@ impl Film {
     /// Add a scene with a hard cut.
     pub fn cut_to(self, scene: Scene) -> Self {
         self.then(Transition::cut(), scene)
+    }
+
+    /// Lay a track under the film. Repeatable — tracks are mixed.
+    ///
+    /// It is deliberately not part of [`FilmSpec`]: a track's default length
+    /// is "to the end of the film", which is not known until the scenes are.
+    pub fn sound(mut self, track: Audio) -> Self {
+        self.audio.push(track);
+        self
+    }
+
+    /// Every audio asset the film refers to, in declaration order.
+    ///
+    /// Unlike [`Film::assets_used`] these are not deduplicated or decoded:
+    /// ffmpeg reads each one itself, and the same file placed twice is two
+    /// legitimate inputs.
+    pub fn audio_assets(&self) -> Vec<&str> {
+        self.audio.iter().map(|a| a.asset.as_str()).collect()
     }
 
     pub fn duration(&self) -> Time {
@@ -363,6 +386,10 @@ impl Film {
                 self.width, self.height
             ));
         }
+        let total = self.duration();
+        for (i, a) in self.audio.iter().enumerate() {
+            errs.extend(a.validate(&format!("audio {i} ({})", a.asset), total));
+        }
         errs
     }
 
@@ -414,6 +441,7 @@ impl FilmSpec {
             title: self.title,
             background: self.background,
             theme: self.theme,
+            audio: Vec::new(),
             timeline: Timeline::new(opening),
         }
     }

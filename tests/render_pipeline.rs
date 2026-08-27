@@ -130,3 +130,182 @@ fn an_invalid_film_is_reported_rather_than_rendered() {
     assert!(!errs.is_empty());
     assert!(errs.iter().any(|e| e.contains("too short")), "{errs:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Audio, end to end.
+//
+// These are the only tests here that shell out, so they skip rather than fail
+// where ffmpeg is absent. The source is a tone ffmpeg synthesises on the spot:
+// the file stays asset-free, and a tone is enough to prove a stream exists,
+// survives the mix and reaches both outputs.
+// ---------------------------------------------------------------------------
+
+use showreel::audio::Audio;
+use showreel::encode::{
+    EncodeOptions, FfmpegSink, MobileOptions, ffmpeg_available, mobile_cut, mobile_path,
+};
+use showreel::render::Renderer;
+use std::path::Path;
+use std::process::Command;
+
+/// Codec name of the first audio stream, or None if the file has none.
+fn audio_stream(path: &Path) -> Option<String> {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a:0"])
+        .args(["-show_entries", "stream=codec_name", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Mean volume in dBFS, via ffmpeg's volumedetect.
+fn mean_volume_db(path: &Path) -> Option<f64> {
+    let out = Command::new("ffmpeg")
+        .args(["-nostdin", "-v", "info", "-i"])
+        .arg(path)
+        .args(["-af", "volumedetect", "-f", "null", "-"])
+        .output()
+        .ok()?;
+    let err = String::from_utf8_lossy(&out.stderr);
+    err.lines()
+        .find_map(|l| l.split("mean_volume:").nth(1))
+        .and_then(|v| v.trim().split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+}
+
+fn tone(dir: &Path, name: &str, seconds: f64) -> std::path::PathBuf {
+    let p = dir.join(name);
+    let ok = Command::new("ffmpeg")
+        .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(format!("sine=frequency=440:duration={seconds}"))
+        .args(["-ac", "2"])
+        .arg(&p)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    assert!(ok, "could not synthesise a test tone");
+    p
+}
+
+fn encode_with_audio(dir: &Path, film: &Film, tracks: Vec<showreel::audio::AudioInput>) -> std::path::PathBuf {
+    let out = dir.join("with-audio.mp4");
+    let store = AssetStore::new();
+    let fonts = FontDb::shared();
+    let opts = EncodeOptions::preview().with_audio(tracks);
+    let mut sink =
+        FfmpegSink::new(&out, film.width, film.height, film.fps, &opts, film.background).unwrap();
+    Renderer::new(film, &store, fonts).render_all(&mut sink).unwrap();
+    out
+}
+
+#[test]
+fn a_film_with_a_track_reaches_both_the_master_and_the_mobile_cut_with_sound() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg is not on PATH");
+        return;
+    }
+    let dir = std::env::temp_dir().join("showreel-audio-e2e");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = tone(&dir, "tone.wav", 3.0);
+
+    let film = Film::new(64, 36, 10.0)
+        .open(Scene::new(2.0).layer(Layer::solid(Color::rgb(20, 20, 20))));
+    let track = Audio::track("tone.wav").fades(0.2, 0.5).resolve(&src, film.duration());
+    let master = encode_with_audio(&dir, &film, vec![track]);
+
+    assert_eq!(audio_stream(&master).as_deref(), Some("aac"), "the master must carry audio");
+
+    // The regression this whole test exists for: the mobile cut used to be
+    // built with `-an`, so a film with sound arrived on the phone silent.
+    let mob = mobile_path(&master);
+    mobile_cut(&master, &mob, &MobileOptions::default()).unwrap();
+    assert_eq!(audio_stream(&mob).as_deref(), Some("aac"), "the mobile cut must carry audio too");
+
+    // Present is not the same as audible: a muted stream is still a stream.
+    let db = mean_volume_db(&mob).expect("volumedetect should report a level");
+    assert!(db > -50.0, "the mobile cut is effectively silent at {db} dBFS");
+    assert!(db < 0.0, "the mobile cut is clipping at {db} dBFS");
+
+    // The track is shorter than nothing, but the film's length still rules.
+    let dur = Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
+        .arg(&master)
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok())
+        .unwrap();
+    assert!((dur - 2.0).abs() < 0.35, "the film should still be ~2s, got {dur}s");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_film_with_no_track_still_encodes_silent() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg is not on PATH");
+        return;
+    }
+    let dir = std::env::temp_dir().join("showreel-audio-e2e-silent");
+    std::fs::create_dir_all(&dir).unwrap();
+    let film = Film::new(64, 36, 10.0)
+        .open(Scene::new(1.0).layer(Layer::solid(Color::rgb(20, 20, 20))));
+    let master = encode_with_audio(&dir, &film, Vec::new());
+    assert!(audio_stream(&master).is_none(), "a film with no tracks must have no audio stream");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_track_survives_the_json_round_trip_with_its_placement() {
+    let film = Film::new(64, 36, 10.0)
+        .open(Scene::new(2.0).layer(Layer::solid(Color::WHITE)))
+        .sound(Audio::track("theme.wav").at(0.5).from(1.0).lasting(1.0).fades(0.1, 0.4).gain(0.8));
+    let json = film.to_json().unwrap();
+    let back = Film::from_json(&json).unwrap();
+    assert_eq!(back, film);
+    assert_eq!(back.audio.len(), 1);
+    assert_eq!(back.audio[0].gain, 0.8);
+}
+
+// ---------------------------------------------------------------------------
+// The committed film description.
+//
+// `examples/kanto.film.json` exists so that a film can be read and rendered
+// without compiling anything. It is generated from `examples/kanto_reel.rs`,
+// which is canonical; `kanto_reel --check` is the guard against the two
+// drifting. What is checked *here* is the thing that would rot silently: that
+// the committed file still parses against today's types and still validates.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_committed_film_description_still_loads_and_validates() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/kanto.film.json");
+    let film = Film::load(&path).expect("the committed description must parse");
+    let errs = film.validate();
+    assert!(errs.is_empty(), "{errs:?}");
+
+    // It is the whole film, not a fragment.
+    assert_eq!(film.timeline.scene_count(), 5);
+    assert!((film.duration().as_secs() - 34.7).abs() < 1e-6);
+
+    // Every asset is a bare name, resolved by `-A/--assets`. An absolute path
+    // here would make the file useless on anyone else's machine.
+    let refs: Vec<String> = film
+        .assets_used()
+        .iter()
+        .map(|u| match u {
+            showreel::timeline::AssetUse::Still(a) => a.clone(),
+            showreel::timeline::AssetUse::Clip { asset, .. } => asset.clone(),
+        })
+        .chain(film.audio_assets().iter().map(|s| s.to_string()))
+        .collect();
+    assert!(!refs.is_empty());
+    for r in &refs {
+        assert!(!r.starts_with('/'), "{r} is an absolute path");
+        assert!(!r.contains(".."), "{r} escapes the assets root");
+    }
+
+    // And it carries its sound.
+    assert_eq!(film.audio.len(), 2, "the reel is scored");
+}

@@ -1,0 +1,1316 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 60.0,
+  "title": "Kanto, entire — a ShowReel demonstration",
+  "background": "#07090e",
+  "theme": {
+    "title": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 800,
+      "italic": false,
+      "size": 104.0,
+      "tracking": -0.018,
+      "line_height": 1.06,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000a5",
+        "blur": 30.0,
+        "dx": 0.0,
+        "dy": 8.0
+      },
+      "case": "as-written",
+      "align": "centre",
+      "tabular": false
+    },
+    "subtitle": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 400,
+      "italic": false,
+      "size": 38.0,
+      "tracking": 0.004,
+      "line_height": 1.35,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000c8",
+        "blur": 5.0,
+        "dx": 0.0,
+        "dy": 2.0
+      },
+      "case": "as-written",
+      "align": "centre",
+      "tabular": false
+    },
+    "caption": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 500,
+      "italic": false,
+      "size": 34.0,
+      "tracking": 0.0,
+      "line_height": 1.4,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000c8",
+        "blur": 5.0,
+        "dx": 0.0,
+        "dy": 2.0
+      },
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "lower_third": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 700,
+      "italic": false,
+      "size": 46.0,
+      "tracking": -0.006,
+      "line_height": 1.1,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "lower_third_detail": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 400,
+      "italic": false,
+      "size": 27.0,
+      "tracking": 0.008,
+      "line_height": 1.3,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "counter": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 700,
+      "italic": false,
+      "size": 82.0,
+      "tracking": -0.01,
+      "line_height": 1.0,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000aa",
+        "blur": 14.0,
+        "dx": 0.0,
+        "dy": 4.0
+      },
+      "case": "as-written",
+      "align": "right",
+      "tabular": true
+    },
+    "counter_label": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 600,
+      "italic": false,
+      "size": 22.0,
+      "tracking": 0.14,
+      "line_height": 1.15,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000c8",
+        "blur": 5.0,
+        "dx": 0.0,
+        "dy": 2.0
+      },
+      "case": "upper",
+      "align": "right",
+      "tabular": false
+    },
+    "callout": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 600,
+      "italic": false,
+      "size": 32.0,
+      "tracking": -0.002,
+      "line_height": 1.2,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "callout_detail": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 400,
+      "italic": false,
+      "size": 24.0,
+      "tracking": 0.0,
+      "line_height": 1.35,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "accent": "#ffd147",
+    "background": "#080a0e"
+  },
+  "audio": [
+    {
+      "asset": "pokemon-blue-title.wav",
+      "duration": 8.2,
+      "fade_in": 0.35,
+      "fade_out": 3.2
+    },
+    {
+      "asset": "pokemon-blue-title.wav",
+      "at": 5.0,
+      "from": 5.0,
+      "fade_in": 3.2,
+      "fade_out": 3.5,
+      "gain": 0.2
+    }
+  ],
+  "opening": {
+    "name": "title screen",
+    "duration": 5.2,
+    "background": "#07090e",
+    "layers": [
+      {
+        "type": "gradient",
+        "stops": [
+          [
+            0.0,
+            "#141b30"
+          ],
+          [
+            1.0,
+            "#06080d"
+          ]
+        ],
+        "angle": 108.0,
+        "from": 0.0,
+        "duration": null,
+        "enter": null,
+        "exit": null,
+        "opacity": 1.0,
+        "z": 0
+      },
+      {
+        "type": "clip",
+        "asset": "title-screen.mp4",
+        "fit": "contain",
+        "trim": [
+          0.0,
+          5.0
+        ],
+        "start": 0.0,
+        "decode_fps": 30.0,
+        "mode": "hold",
+        "max_width": 640,
+        "radius": 6.0,
+        "border": [
+          "#ffffff2e",
+          2.0
+        ],
+        "shadow": {
+          "colour": "#000000a0",
+          "blur": 30.0,
+          "dx": 0.0,
+          "dy": 10.0
+        },
+        "from": 0.0,
+        "duration": null,
+        "placement": {
+          "fx": 0.2,
+          "fy": 0.06,
+          "fw": 0.6,
+          "fh": 0.64
+        },
+        "enter": {
+          "kind": "scale",
+          "from": 0.86,
+          "duration": 0.9,
+          "timing": {
+            "kind": "spring",
+            "spring": {
+              "mass": 1.0,
+              "stiffness": 120.0,
+              "damping": 20.0,
+              "clamp": false
+            }
+          }
+        },
+        "exit": null,
+        "opacity": 1.0,
+        "z": 0
+      },
+      {
+        "type": "scrim",
+        "height": 0.42,
+        "strength": 0.85,
+        "colour": "#000000",
+        "from": 1.0,
+        "duration": null,
+        "enter": null,
+        "exit": null,
+        "opacity": 1.0,
+        "z": 0
+      },
+      {
+        "type": "title",
+        "text": "AgentGB - Plays Pokemon!",
+        "subtitle": "600 cold boots · one retail cartridge · no save states",
+        "style": null,
+        "subtitle_style": null,
+        "from": 1.1,
+        "duration": null,
+        "placement": {
+          "fx": 0.1,
+          "fy": 0.74,
+          "fw": 0.8,
+          "fh": 0.2
+        },
+        "enter": {
+          "kind": "chars",
+          "stagger": 0.02,
+          "rise": 26.0,
+          "duration": 0.52,
+          "timing": {
+            "kind": "spring",
+            "spring": {
+              "mass": 1.0,
+              "stiffness": 120.0,
+              "damping": 20.0,
+              "clamp": false
+            }
+          }
+        },
+        "exit": null,
+        "opacity": 1.0,
+        "z": 0
+      }
+    ]
+  },
+  "then": [
+    {
+      "transition": {
+        "duration": 0.75,
+        "presentation": {
+          "kind": "fade",
+          "through": "#000000"
+        },
+        "timing": {
+          "kind": "eased",
+          "easing": "in-out-cubic"
+        }
+      },
+      "scene": {
+        "name": "the pull-back",
+        "duration": 11.0,
+        "background": "#07090e",
+        "layers": [
+          {
+            "type": "still",
+            "asset": "kanto.png",
+            "fit": "cover",
+            "camera": {
+              "shots": [
+                {
+                  "at": 0.0,
+                  "framing": {
+                    "on": "point",
+                    "x": 1520.0,
+                    "y": 4560.0,
+                    "height": 144.0
+                  },
+                  "ease": "in-out-cubic"
+                },
+                {
+                  "at": 1.1,
+                  "framing": {
+                    "on": "point",
+                    "x": 1520.0,
+                    "y": 4560.0,
+                    "height": 144.0
+                  },
+                  "ease": "in-out-cubic"
+                },
+                {
+                  "at": 9.6,
+                  "framing": {
+                    "on": "point",
+                    "x": 1520.0,
+                    "y": 4560.0,
+                    "height": 7024.0
+                  },
+                  "ease": "in-out-cubic"
+                }
+              ],
+              "clamp_to_source": true
+            },
+            "from": 0.0,
+            "duration": null,
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "lower-third",
+            "text": "Kanto, entire",
+            "detail": "226 maps · 6 832 × 7 024 px · one picture",
+            "accent": "#ffd147",
+            "style": null,
+            "detail_style": null,
+            "from": 1.6,
+            "duration": 6.0,
+            "enter": {
+              "kind": "slide-in",
+              "dx": -80.0,
+              "dy": 0.0,
+              "duration": 0.55,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": {
+              "kind": "slide-in",
+              "dx": -70.0,
+              "dy": 0.0,
+              "duration": 0.45,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "counter",
+            "count": {
+              "from": 0.0,
+              "to": 226.0,
+              "over": 3.2,
+              "easing": "out-expo",
+              "decimals": 0,
+              "group": true,
+              "prefix": "",
+              "suffix": ""
+            },
+            "label": "maps in this picture",
+            "style": null,
+            "label_style": null,
+            "from": 3.0,
+            "duration": null,
+            "enter": {
+              "kind": "rise",
+              "distance": 40.0,
+              "duration": 0.4,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": {
+              "kind": "fade",
+              "duration": 0.5,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 0
+          }
+        ]
+      }
+    },
+    {
+      "transition": {
+        "duration": 0.85,
+        "presentation": {
+          "kind": "dissolve"
+        },
+        "timing": {
+          "kind": "eased",
+          "easing": "in-out-cubic"
+        }
+      },
+      "scene": {
+        "name": "where they happened",
+        "duration": 11.4,
+        "background": "#07090e",
+        "layers": [
+          {
+            "type": "still",
+            "asset": "kanto.png",
+            "fit": "cover",
+            "camera": {
+              "shots": [
+                {
+                  "at": 0.0,
+                  "framing": {
+                    "on": "whole"
+                  },
+                  "ease": "in-out-cubic"
+                }
+              ],
+              "clamp_to_source": true
+            },
+            "from": 0.0,
+            "duration": null,
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "solid",
+            "colour": "#05070ca8",
+            "from": 0.3,
+            "duration": null,
+            "enter": {
+              "kind": "fade",
+              "duration": 0.7,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "clip",
+            "asset": "pixel-chain-run.mp4",
+            "fit": "contain",
+            "trim": [
+              8.0,
+              3.4
+            ],
+            "start": 0.0,
+            "decode_fps": 30.0,
+            "mode": "hold",
+            "max_width": 480,
+            "radius": 8.0,
+            "border": [
+              "#ffffffc8",
+              2.5
+            ],
+            "shadow": {
+              "colour": "#000000a0",
+              "blur": 30.0,
+              "dx": 0.0,
+              "dy": 10.0
+            },
+            "from": 0.5,
+            "duration": 3.4,
+            "placement": {
+              "fx": 0.045,
+              "fy": 0.1,
+              "fw": 0.165,
+              "fh": 0.29333333333333333
+            },
+            "enter": {
+              "kind": "scale",
+              "from": 0.86,
+              "duration": 0.55,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": {
+              "kind": "scale",
+              "from": 0.8,
+              "duration": 0.4,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 10
+          },
+          {
+            "type": "callout",
+            "target": [
+              0.32894362186788156,
+              0.6287015945330297
+            ],
+            "label_at": [
+              0.1275,
+              0.4383333333333333
+            ],
+            "text": "Red's house, upstairs",
+            "detail": "leave-the-bedroom",
+            "accent": "#ffd147",
+            "ring": 26.0,
+            "style": null,
+            "detail_style": null,
+            "from": 0.8,
+            "duration": 3.1,
+            "enter": {
+              "kind": "fade",
+              "duration": 0.55,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "exit": {
+              "kind": "fade",
+              "duration": 0.35,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 20
+          },
+          {
+            "type": "clip",
+            "asset": "pixel-chain-run.mp4",
+            "fit": "contain",
+            "trim": [
+              176.0,
+              4.2
+            ],
+            "start": 0.0,
+            "decode_fps": 30.0,
+            "mode": "hold",
+            "max_width": 480,
+            "radius": 8.0,
+            "border": [
+              "#ffffffc8",
+              2.5
+            ],
+            "shadow": {
+              "colour": "#000000a0",
+              "blur": 30.0,
+              "dx": 0.0,
+              "dy": 10.0
+            },
+            "from": 2.0,
+            "duration": 4.2,
+            "placement": {
+              "fx": 0.605,
+              "fy": 0.085,
+              "fw": 0.195,
+              "fh": 0.3466666666666667
+            },
+            "enter": {
+              "kind": "scale",
+              "from": 0.86,
+              "duration": 0.55,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": {
+              "kind": "scale",
+              "from": 0.8,
+              "duration": 0.4,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 10
+          },
+          {
+            "type": "callout",
+            "target": [
+              0.3686645785876993,
+              0.6651480637813212
+            ],
+            "label_at": [
+              0.7025,
+              0.4766666666666667
+            ],
+            "text": "Oak's Lab",
+            "detail": "the rival battle",
+            "accent": "#ffd147",
+            "ring": 26.0,
+            "style": null,
+            "detail_style": null,
+            "from": 2.3,
+            "duration": 3.9000000000000004,
+            "enter": {
+              "kind": "fade",
+              "duration": 0.55,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "exit": {
+              "kind": "fade",
+              "duration": 0.35,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 20
+          },
+          {
+            "type": "clip",
+            "asset": "pixel-chain-run.mp4",
+            "fit": "contain",
+            "trim": [
+              277.0,
+              3.4
+            ],
+            "start": 0.0,
+            "decode_fps": 30.0,
+            "mode": "hold",
+            "max_width": 480,
+            "radius": 8.0,
+            "border": [
+              "#ffffffc8",
+              2.5
+            ],
+            "shadow": {
+              "colour": "#000000a0",
+              "blur": 30.0,
+              "dx": 0.0,
+              "dy": 10.0
+            },
+            "from": 3.7,
+            "duration": 3.4,
+            "placement": {
+              "fx": 0.045,
+              "fy": 0.6,
+              "fw": 0.165,
+              "fh": 0.29333333333333333
+            },
+            "enter": {
+              "kind": "scale",
+              "from": 0.86,
+              "duration": 0.55,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": {
+              "kind": "scale",
+              "from": 0.8,
+              "duration": 0.4,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 10
+          },
+          {
+            "type": "callout",
+            "target": [
+              0.3481634396355353,
+              0.6492027334851936
+            ],
+            "label_at": [
+              0.1275,
+              0.9383333333333334
+            ],
+            "text": "Pallet Town",
+            "detail": "out-of-the-lab",
+            "accent": "#ffd147",
+            "ring": 26.0,
+            "style": null,
+            "detail_style": null,
+            "from": 4.0,
+            "duration": 3.1,
+            "enter": {
+              "kind": "fade",
+              "duration": 0.55,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "exit": {
+              "kind": "fade",
+              "duration": 0.35,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 20
+          },
+          {
+            "type": "clip",
+            "asset": "pixel-chain-run.mp4",
+            "fit": "contain",
+            "trim": [
+              330.0,
+              3.4
+            ],
+            "start": 0.0,
+            "decode_fps": 30.0,
+            "mode": "hold",
+            "max_width": 480,
+            "radius": 8.0,
+            "border": [
+              "#ffffffc8",
+              2.5
+            ],
+            "shadow": {
+              "colour": "#000000a0",
+              "blur": 30.0,
+              "dx": 0.0,
+              "dy": 10.0
+            },
+            "from": 5.3,
+            "duration": 3.4,
+            "placement": {
+              "fx": 0.655,
+              "fy": 0.585,
+              "fw": 0.165,
+              "fh": 0.29333333333333333
+            },
+            "enter": {
+              "kind": "scale",
+              "from": 0.86,
+              "duration": 0.55,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": {
+              "kind": "scale",
+              "from": 0.8,
+              "duration": 0.4,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 10
+          },
+          {
+            "type": "callout",
+            "target": [
+              0.3481634396355353,
+              0.5876993166287016
+            ],
+            "label_at": [
+              0.7375,
+              0.9233333333333333
+            ],
+            "text": "Route 1",
+            "detail": "north-out-of-pallet",
+            "accent": "#ffd147",
+            "ring": 26.0,
+            "style": null,
+            "detail_style": null,
+            "from": 5.6,
+            "duration": 3.1,
+            "enter": {
+              "kind": "fade",
+              "duration": 0.55,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "exit": {
+              "kind": "fade",
+              "duration": 0.35,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 20
+          },
+          {
+            "type": "clip",
+            "asset": "pixel-chain-grid.mp4",
+            "fit": "contain",
+            "trim": [
+              22.0,
+              4.4
+            ],
+            "start": 0.0,
+            "decode_fps": 30.0,
+            "mode": "hold",
+            "max_width": 480,
+            "radius": 8.0,
+            "border": [
+              "#ffffffc8",
+              2.5
+            ],
+            "shadow": {
+              "colour": "#000000a0",
+              "blur": 30.0,
+              "dx": 0.0,
+              "dy": 10.0
+            },
+            "from": 6.8,
+            "duration": 4.4,
+            "placement": {
+              "fx": 0.045,
+              "fy": 0.115,
+              "fw": 0.215,
+              "fh": 0.3822222222222222
+            },
+            "enter": {
+              "kind": "scale",
+              "from": 0.86,
+              "duration": 0.55,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": {
+              "kind": "scale",
+              "from": 0.8,
+              "duration": 0.4,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 10
+          },
+          {
+            "type": "callout",
+            "target": [
+              0.3481634396355353,
+              0.5056947608200456
+            ],
+            "label_at": [
+              0.1525,
+              0.5422222222222222
+            ],
+            "text": "Viridian City",
+            "detail": "26 cold boots at once",
+            "accent": "#ffd147",
+            "ring": 26.0,
+            "style": null,
+            "detail_style": null,
+            "from": 7.1,
+            "duration": 4.1000000000000005,
+            "enter": {
+              "kind": "fade",
+              "duration": 0.55,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "exit": {
+              "kind": "fade",
+              "duration": 0.35,
+              "timing": {
+                "kind": "eased",
+                "easing": "out-cubic"
+              }
+            },
+            "opacity": 1.0,
+            "z": 20
+          },
+          {
+            "type": "counter",
+            "count": {
+              "from": 0.0,
+              "to": 584.0,
+              "over": 2.4,
+              "easing": "out-expo",
+              "decimals": 0,
+              "group": true,
+              "prefix": "",
+              "suffix": ""
+            },
+            "label": "runs finished",
+            "style": null,
+            "label_style": null,
+            "from": 1.0,
+            "duration": null,
+            "enter": {
+              "kind": "rise",
+              "distance": 40.0,
+              "duration": 0.4,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": null,
+            "opacity": 1.0,
+            "z": 30
+          }
+        ]
+      }
+    },
+    {
+      "transition": {
+        "duration": 0.7,
+        "presentation": {
+          "kind": "dissolve"
+        },
+        "timing": {
+          "kind": "eased",
+          "easing": "in-out-cubic"
+        }
+      },
+      "scene": {
+        "name": "pull it up",
+        "duration": 5.6,
+        "background": "#07090e",
+        "layers": [
+          {
+            "type": "still",
+            "asset": "kanto.png",
+            "fit": "cover",
+            "camera": {
+              "shots": [
+                {
+                  "at": 0.0,
+                  "framing": {
+                    "on": "whole"
+                  },
+                  "ease": "in-out-cubic"
+                }
+              ],
+              "clamp_to_source": true
+            },
+            "from": 0.0,
+            "duration": null,
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "solid",
+            "colour": "#05070ca8",
+            "from": 0.0,
+            "duration": null,
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "clip",
+            "asset": "pixel-chain-run.mp4",
+            "fit": "contain",
+            "trim": [
+              176.0,
+              5.4
+            ],
+            "start": 0.0,
+            "decode_fps": 30.0,
+            "mode": "hold",
+            "max_width": 480,
+            "radius": 8.0,
+            "border": [
+              "#ffffffbe",
+              2.5
+            ],
+            "shadow": {
+              "colour": "#000000a0",
+              "blur": 30.0,
+              "dx": 0.0,
+              "dy": 10.0
+            },
+            "from": 0.0,
+            "duration": null,
+            "placement": {
+              "fx": 0.605,
+              "fy": 0.085,
+              "fw": 0.195,
+              "fh": 0.3466666666666667
+            },
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 10
+          },
+          {
+            "type": "pull-up",
+            "region": [
+              0.6,
+              0.08,
+              0.20500000000000002,
+              0.3566666666666667
+            ],
+            "to": null,
+            "dim": 0.62,
+            "radius": 14.0,
+            "border": "#ffd147",
+            "border_width": 3.0,
+            "label": "Oak's Lab — the rival battle, decision 226",
+            "tether": true,
+            "style": null,
+            "from": 0.5,
+            "duration": null,
+            "enter": {
+              "kind": "scale",
+              "from": 0.0,
+              "duration": 1.0,
+              "timing": {
+                "kind": "eased",
+                "easing": "in-out-cubic"
+              }
+            },
+            "exit": null,
+            "opacity": 1.0,
+            "z": 40
+          }
+        ]
+      }
+    },
+    {
+      "transition": {
+        "duration": 0.8,
+        "presentation": {
+          "kind": "fade",
+          "through": "#000000"
+        },
+        "timing": {
+          "kind": "eased",
+          "easing": "in-out-cubic"
+        }
+      },
+      "scene": {
+        "name": "end card",
+        "duration": 4.6,
+        "background": "#07090e",
+        "layers": [
+          {
+            "type": "gradient",
+            "stops": [
+              [
+                0.0,
+                "#12182a"
+              ],
+              [
+                1.0,
+                "#06080d"
+              ]
+            ],
+            "angle": 108.0,
+            "from": 0.0,
+            "duration": null,
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "title",
+            "text": "ShowReel",
+            "subtitle": "timeline · camera · typography · transitions",
+            "style": null,
+            "subtitle_style": null,
+            "from": 0.0,
+            "duration": null,
+            "placement": {
+              "fx": 0.1,
+              "fy": 0.3,
+              "fw": 0.8,
+              "fh": 0.28
+            },
+            "enter": {
+              "kind": "words",
+              "stagger": 0.07,
+              "rise": 30.0,
+              "duration": 0.6,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "text",
+            "text": "Every frame in this film is a pure function of one JSON description.",
+            "style": {
+              "family": [
+                "Open Sans",
+                "Montserrat",
+                "Open Sans",
+                "DejaVu Sans"
+              ],
+              "weight": 400,
+              "italic": false,
+              "size": 30.0,
+              "tracking": 0.0,
+              "line_height": 1.15,
+              "fill": "#96a0b2",
+              "stroke": null,
+              "shadow": {
+                "colour": "#000000aa",
+                "blur": 14.0,
+                "dx": 0.0,
+                "dy": 4.0
+              },
+              "case": "as-written",
+              "align": "centre",
+              "tabular": false
+            },
+            "wrap": 1.0,
+            "fit": false,
+            "from": 1.3,
+            "duration": null,
+            "placement": {
+              "fx": 0.15,
+              "fy": 0.62,
+              "fw": 0.7,
+              "fh": 0.1
+            },
+            "enter": {
+              "kind": "rise",
+              "distance": 40.0,
+              "duration": 0.6,
+              "timing": {
+                "kind": "spring",
+                "spring": {
+                  "mass": 1.0,
+                  "stiffness": 120.0,
+                  "damping": 20.0,
+                  "clamp": false
+                }
+              }
+            },
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use showreel::assets::AssetStore;
+use showreel::audio::AudioInput;
 use showreel::encode::{EncodeOptions, FfmpegSink, MobileOptions, ffmpeg_available, mobile_cut, mobile_path};
 use showreel::preview;
 use showreel::render::{FrameSink, PngSequence, Renderer};
@@ -148,6 +149,25 @@ fn load(path: &Path) -> Result<Film> {
     Ok(film)
 }
 
+/// Locate every audio track and pin its timings against the film's length.
+///
+/// Done up front, before a single frame is rendered: a mistyped track name
+/// should fail in the first second, not after a ten-minute render followed by
+/// an ffmpeg error nobody can read.
+fn resolve_audio(film: &Film, assets: &AssetStore) -> Result<Vec<AudioInput>> {
+    let total = film.duration();
+    film.audio
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let path = assets
+                .resolve(&a.asset)
+                .with_context(|| format!("audio track {}: cannot find {}", i + 1, a.asset))?;
+            Ok(a.resolve(path, total))
+        })
+        .collect()
+}
+
 fn parse_frames(spec: &str, total: u32) -> Result<std::ops::Range<u32>> {
     let (a, b) = spec.split_once('-').unwrap_or((spec, spec));
     let start: u32 = a.trim().parse().unwrap_or(0);
@@ -196,7 +216,22 @@ fn cmd_render(
         range.end - range.start
     );
 
-    let mut encoder = FfmpegSink::new(&out, film.width, film.height, film.fps, &EncodeOptions { crf, ..EncodeOptions::default() }, film.background)?;
+    let tracks = resolve_audio(&film, &assets)?;
+    for t in &tracks {
+        println!(
+            "  sound   {} — {:.2}s..{:.2}s of the film, from {:.2}s in, fade {}s/{}s",
+            t.path.display(),
+            t.at,
+            t.at + t.duration,
+            t.from,
+            t.fade_in,
+            t.fade_out
+        );
+    }
+
+    let opts = EncodeOptions { crf, ..EncodeOptions::default() }.with_audio(tracks);
+    let mut encoder =
+        FfmpegSink::new(&out, film.width, film.height, film.fps, &opts, film.background)?;
     let stats = match png {
         None => renderer.render_range(range, &mut encoder)?,
         Some(dir) => {
@@ -308,6 +343,23 @@ fn cmd_info(film_path: PathBuf) -> Result<()> {
             s.layers.len(),
             via
         );
+    }
+    if !film.audio.is_empty() {
+        println!("  sound:");
+        let total = film.duration();
+        for a in &film.audio {
+            let d = a.resolve_duration(total).as_secs();
+            println!(
+                "    {:>7.2}s  {:<28} {:>5.2}s  from {:.2}s, fade {}s/{}s{}",
+                a.at.as_secs(),
+                a.asset,
+                d,
+                a.from.as_secs(),
+                a.fade_in.as_secs(),
+                a.fade_out.as_secs(),
+                if (a.gain - 1.0).abs() < 1e-9 { String::new() } else { format!(", gain {}", a.gain) }
+            );
+        }
     }
     let used = film.assets_used();
     if !used.is_empty() {

@@ -28,6 +28,7 @@ It knows nothing about any subject. Maps, screen captures and video clips are
 | **Text as geometry** | glyphs are filled paths, not font-engine blits, so a title takes a gradient, an outline and a drop shadow. Real shaping, kerning, tracking in ems, **tabular figures** so a counter does not jitter as it ticks |
 | **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris and zoom, each composable with any easing curve or spring |
 | **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, and a **pull-up** that lifts a piece of the frame, dims the rest and annotates it |
+| **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut |
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
 
@@ -102,6 +103,33 @@ The same film as JSON is the same tree, so timing changes need no recompile.
 A timeline is `Scene (Transition Scene)*` — a film that begins with a
 transition, or has two in a row, **cannot be written down**, in Rust or in the
 JSON.
+
+**You do not have to write Rust at all.** A film *is* a JSON document, and
+[`examples/kanto.film.json`](examples/kanto.film.json) is a complete one,
+committed and ready to render — open it, edit a duration, render it:
+
+```bash
+showreel render examples/kanto.film.json -A <assets> -o reel.mp4
+```
+
+### Sound
+
+A track hangs off the film rather than a scene, because a theme that carries an
+opening and settles under the next shot belongs to neither of them:
+
+```rust
+let film = film
+    // Carries the opening, then recedes.
+    .sound(Audio::track("theme.wav").lasting(8.2).fades(0.35, 3.2))
+    // The same performance underneath, quieter, to the end of the film.
+    .sound(Audio::track("theme.wav").at(5.0).from(5.0).fades(3.2, 3.5).gain(0.2));
+```
+
+`at` is where it lands on the film's clock and `from` is where to start reading
+inside the source — the two are easy to confuse and are deliberately different
+words. An unset duration means "to the end of the film". Tracks are mixed
+without ffmpeg quietly rescaling anyone's volume, and the mobile cut carries the
+audio too.
 
 ## Look before you render
 
