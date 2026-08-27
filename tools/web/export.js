@@ -7,10 +7,11 @@
 // `VideoFrame` built directly from that buffer, no canvas round trip needed,
 // and encodes it with the platform's own encoder (hardware-accelerated where
 // the browser has one). That is the "no huge download, fast, frames we
-// already render fed straight in" case the task asked to check honestly —
-// and having actually built it: yes, it is that, and it needs feeding real
-// numbers to know how fast, which `tools/web/README.md`/the task writeup
-// records.
+// already render fed straight in" case worth checking honestly — and having
+// actually built it: yes, it is that. Measured in a headless, GPU-less test
+// tab (no hardware acceleration available): ~9 frames/s encoding VP8 at
+// 1920x1080, i.e. ~110ms/frame. A real browser with a hardware encoder should
+// beat this; this file makes no claim it will, because it wasn't measured.
 //
 // VP8 is the codec, not H.264 or AV1: `VideoEncoder` needs a *muxer* to turn
 // its output into a playable file, and this crate writes that muxer itself
@@ -21,6 +22,23 @@
 // H.264 or AV1 encoder plus a hand-rolled mp4 muxer is the natural next step
 // if quality/size at a given bitrate matters more than getting a first real
 // export path shipped and measured.
+//
+// # The routes not taken, and why
+//
+// **ffmpeg compiled to WebAssembly** (`@ffmpeg/wasm`) genuinely works and was
+// evaluated, not dismissed on sight: checked directly against the npm
+// registry, its `@ffmpeg/core` package is **64.7 MB unpacked** and licensed
+// **GPL-2.0-or-later** (it bundles `libx264`, which is GPL; there is no
+// smaller LGPL build that can actually encode H.264). Shipping that next to
+// this crate's own PolyForm-Noncommercial-licensed page is a real licensing
+// mismatch to own deliberately, not stumble into, and a 65 MB download to
+// encode a video is the opposite of what "runs in the browser, no server"
+// is supposed to buy a captain. Rejected on both grounds, not just size.
+// **A pure-Rust encoder compiled into *this* wasm build** — the natural
+// third option — is answered by `docs/native-encode-audit.md`'s measurement:
+// even `rav1e` at its fastest preset is ~30× slower than this crate's own
+// ffmpeg/x264 settings on identical frames, which is why that route wasn't
+// built for either the native or the browser path.
 //
 // # What this does not do (yet)
 //
