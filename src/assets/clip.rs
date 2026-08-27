@@ -122,6 +122,10 @@ impl Clip {
         self.frames.len()
     }
 
+    pub fn fps(&self) -> f64 {
+        self.fps
+    }
+
     pub fn duration(&self) -> f64 {
         self.frames.len() as f64 / self.fps
     }

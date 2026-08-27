@@ -115,6 +115,26 @@ enum Command {
         #[arg(long, default_value_t = 1.0)]
         scale: f64,
     },
+    /// Package a film to run in a browser with no server: the wasm build
+    /// (`build-wasm.sh`) plus this film's assets, clips pre-decoded (needs
+    /// ffmpeg — see `src/wasm.rs`). Built with `--features wasm`.
+    #[cfg(feature = "wasm")]
+    WebPack {
+        film: PathBuf,
+        /// Where to look for assets. Repeatable.
+        #[arg(short = 'A', long = "assets")]
+        asset_roots: Vec<PathBuf>,
+        #[arg(short, long, default_value = "dist")]
+        out: PathBuf,
+        /// Package at a fraction of the film's declared size — smaller
+        /// frames and, since a clip's decoded size follows the frame,
+        /// smaller downloads.
+        #[arg(long, default_value_t = 1.0)]
+        scale: f64,
+        /// JPEG quality (1-100) for pre-decoded clip frames.
+        #[arg(long, default_value_t = 82)]
+        clip_quality: u8,
+    },
 }
 
 fn main() -> Result<()> {
@@ -138,6 +158,10 @@ fn main() -> Result<()> {
         #[cfg(feature = "studio")]
         Command::Studio { film, asset_roots, port, host, scale } => {
             cmd_studio(film, asset_roots, port, host, scale)
+        }
+        #[cfg(feature = "wasm")]
+        Command::WebPack { film, asset_roots, out, scale, clip_quality } => {
+            cmd_web_pack(film, asset_roots, out, scale, clip_quality)
         }
     }
 }
@@ -449,6 +473,116 @@ fn cmd_studio(
         bail!("{} does not exist", film_path.display());
     }
     showreel::studio::serve(film_path, roots, showreel::studio::StudioOptions { port, host, scale })
+}
+
+/// Where a clip's `.srclip` container lands under `assets/`, given the exact
+/// parameters it was decoded with. A bare `{asset}.srclip` would collide the
+/// moment the same source file is used twice at two different trims — kanto's
+/// own film does this six times over `pixel-chain-run.mp4` — so the decode
+/// parameters that make a clip's frames what they are go in the name too.
+/// `tools/web/index.html`'s `clipAssetPath` builds this exact same string
+/// from the same fields (all present in `sr_assets_needed_ptr`'s manifest),
+/// so the two must be kept in lock step.
+#[cfg(feature = "wasm")]
+fn clip_srclip_name(asset: &str, max_width: u32, fps: f64, trim: Option<(f64, f64)>) -> String {
+    match trim {
+        Some((start, dur)) => format!("{asset}@{max_width}x{fps:.3}_{start:.3}-{dur:.3}.srclip"),
+        None => format!("{asset}@{max_width}x{fps:.3}_full.srclip"),
+    }
+}
+
+/// Prepare a self-contained directory a static file host can serve as the
+/// whole shareable page: the wasm build (already produced by
+/// `build-wasm.sh`), the bundled fonts, and this film's own assets — stills
+/// copied as-is, clips pre-decoded through the same ffmpeg-backed path
+/// `showreel render` uses and packed as `.srclip` (`showreel::webclip`),
+/// since ffmpeg itself cannot go to the browser (see `src/wasm.rs`).
+#[cfg(feature = "wasm")]
+fn cmd_web_pack(
+    film_path: PathBuf,
+    roots: Vec<PathBuf>,
+    out: PathBuf,
+    scale: f64,
+    clip_quality: u8,
+) -> Result<()> {
+    use showreel::timeline::AssetUse;
+
+    let declared = load(&film_path)?;
+    // Scaled first: a clip's `max_width` scales with the frame (see
+    // src/scale.rs), and that is the exact key the wasm build's
+    // `AssetStore::clip` will look the decode up by, so packing must use the
+    // same scaled values or the browser asks for a clip nobody packed.
+    let film = scale_film(&declared, scale);
+    let assets = store(&film_path, &roots);
+
+    let web_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tools/web");
+    let wasm_src = web_root.join("showreel.wasm");
+    if !wasm_src.exists() {
+        bail!("{} does not exist — run ./build-wasm.sh first", wasm_src.display());
+    }
+
+    std::fs::create_dir_all(out.join("assets"))?;
+    std::fs::create_dir_all(out.join("fonts"))?;
+    std::fs::write(out.join("film.json"), film.to_json()?)?;
+    std::fs::copy(&wasm_src, out.join("showreel.wasm"))?;
+    std::fs::copy(web_root.join("index.html"), out.join("index.html"))?;
+    for entry in std::fs::read_dir(web_root.join("fonts"))? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            std::fs::copy(&path, out.join("fonts").join(path.file_name().unwrap()))?;
+        }
+    }
+
+    println!("{}: packaging for the browser at {out:?}, scale {scale}", film_path.display());
+    let mut asset_bytes: u64 = 0;
+    for u in film.assets_used() {
+        match u {
+            AssetUse::Still(name) => {
+                let bytes = std::fs::read(assets.resolve(&name)?)?;
+                let dest = out.join("assets").join(&name);
+                if let Some(dir) = dest.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(&dest, &bytes)?;
+                asset_bytes += bytes.len() as u64;
+                println!("  still  {name}  {:.0} KB", bytes.len() as f64 / 1024.0);
+            }
+            AssetUse::Clip { asset, max_width, trim, decode_fps } => {
+                let fps = decode_fps.unwrap_or(film.fps);
+                let clip = assets.clip(&asset, fps, max_width, trim)?;
+                let packed = showreel::webclip::encode(clip.as_ref(), clip_quality)
+                    .with_context(|| format!("packing {asset}"))?;
+                let dest = out.join("assets").join(clip_srclip_name(&asset, max_width, fps, trim));
+                if let Some(dir) = dest.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(&dest, &packed)?;
+                asset_bytes += packed.len() as u64;
+                println!(
+                    "  clip   {asset}  {} frames at {max_width}px, {:.0} KB",
+                    clip.frame_count(),
+                    packed.len() as f64 / 1024.0
+                );
+            }
+        }
+    }
+
+    let wasm_bytes = std::fs::metadata(&wasm_src)?.len();
+    let font_bytes: u64 = std::fs::read_dir(out.join("fonts"))?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum();
+    let total = wasm_bytes + font_bytes + asset_bytes;
+    println!(
+        "  {}  —  {:.1} MB total ({:.1} MB wasm, {:.1} MB fonts, {:.1} MB assets)",
+        out.display(),
+        total as f64 / 1e6,
+        wasm_bytes as f64 / 1e6,
+        font_bytes as f64 / 1e6,
+        asset_bytes as f64 / 1e6,
+    );
+    Ok(())
 }
 
 fn cmd_fonts(filter: Option<String>) -> Result<()> {

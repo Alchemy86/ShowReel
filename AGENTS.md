@@ -27,6 +27,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
 | Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
 | The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
+| The renderer also compiles to `wasm32-unknown-unknown` (no wasm-bindgen — plain `extern "C"` over linear memory, `projects/asciicity`'s pattern) so a film can be scrubbed in someone else's browser with no server. `rayon` and `clap` are optional (`parallel`/`cli` features) so the wasm build pulls in neither; ffmpeg has no browser story, so a clip's frames are pre-decoded natively by `showreel web-pack` and shipped as a `.srclip` JPEG sequence | `src/wasm.rs`, `src/webclip.rs`, `build-wasm.sh` |
 
 ## Sharp edges
 
@@ -69,6 +70,26 @@ Each is documented at the top of its module; read the module rather than duplica
   goes soft.
 - **`showreel studio` needs `cargo build --features studio`** — the plain
   binary does not have the subcommand at all, on purpose (`src/studio.rs`).
+- **The browser build cannot decode video, at all** — `Clip::load` shells out
+  to ffmpeg, and there is neither ffmpeg nor a filesystem in a wasm32 browser
+  sandbox. `showreel web-pack` (native, `--features wasm`) runs the ordinary
+  ffmpeg-backed decode ahead of time and packs the frames as a `.srclip`
+  container the wasm build unpacks with the `image` crate it already has for
+  stills. If you are chasing "why is this clip blank in the browser," the
+  clip was never pre-decoded, not a wasm-side rendering bug.
+- **A `.srclip`'s filename is not just the asset name.** `AssetStore::clip`'s
+  cache key is `(reference, fps, max_width, trim)`, and a film can use the
+  same source file at several different trims (`examples/kanto.film.jsonc`
+  does, six times, over `pixel-chain-run.mp4`). `clip_srclip_name` in
+  `src/bin/showreel.rs` and `clipAssetPath` in `tools/web/index.html` both
+  fold those same four fields into the filename for exactly this reason —
+  naming it just `{asset}.srclip` was tried first and silently served every
+  trim the same, wrong, frames. The two functions must stay in lock step.
+- **`Theme::DISPLAY`/`BODY`'s families are found by scanning system font
+  directories (`FontDb::scan_system`), which a browser has none of.** The
+  wasm build registers its own bytes via `FontDb::add_bytes` instead, from
+  `tools/web/fonts/` — a fixed, small subset of Montserrat/Open Sans weights,
+  not every weight the native binary might find installed.
 
 - **`examples/kanto.film.jsonc` is committed and generated.** `kanto_reel.rs` is
   canonical — regenerate with `cargo run --release --example kanto_reel -- -o
@@ -103,6 +124,13 @@ Each is documented at the top of its module; read the module rather than duplica
 - `ffmpeg` and `ffprobe` must be on `PATH`. Fonts come from the system; `showreel fonts`
   lists what is visible. The default theme wants Montserrat and Open Sans and degrades to
   whatever sans exists.
+- **Browser build**: `./build-wasm.sh` needs `rustup target add wasm32-unknown-unknown`
+  once, then writes `tools/web/showreel.wasm`. `showreel web-pack <film> -o dist` (needs
+  `--features wasm`, and ffmpeg to pre-decode any clips) turns that plus a film into a
+  self-contained directory any static file host can serve — open its `index.html` and
+  scrub. `cargo test --features wasm` and `cargo clippy --target wasm32-unknown-unknown
+  --no-default-features --features wasm --lib` both need to stay clean; see `src/wasm.rs`
+  for what the browser cannot do (encode, decode video, read a filesystem).
 
 ## Maintaining this file
 

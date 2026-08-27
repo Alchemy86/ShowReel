@@ -36,6 +36,14 @@ impl Still {
         Ok(Self::from_rgba(img))
     }
 
+    /// Decode from already-loaded bytes rather than a path — for a caller
+    /// with no filesystem, such as the wasm build, which fetches a still's
+    /// bytes over the network and hands them straight in.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let img = image::load_from_memory(bytes).context("decoding still")?.to_rgba8();
+        Ok(Self::from_rgba(img))
+    }
+
     pub fn from_rgba(img: image::RgbaImage) -> Self {
         let (width, height) = (img.width(), img.height());
         let mut levels = Vec::new();
