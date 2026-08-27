@@ -29,6 +29,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
 | The renderer also compiles to `wasm32-unknown-unknown` (no wasm-bindgen — plain `extern "C"` over linear memory, `projects/asciicity`'s pattern) so a film can be scrubbed in someone else's browser with no server. `rayon` and `clap` are optional (`parallel`/`cli` features) so the wasm build pulls in neither; ffmpeg has no browser story, so a clip's frames are pre-decoded natively by `showreel web-pack` and shipped as a `.srclip` JPEG sequence | `src/wasm.rs`, `src/webclip.rs`, `build-wasm.sh` |
 | The browser page (`tools/web/`) is a real editor, not just a scrubber: `editor.js` mutates a film's JSON tree directly (it *is* the wire format — see the sharp edge below) and `main.js` reloads it through the same `sr_load_film`/`sr_add_*` wasm calls the boot sequence uses. Adding a clip from the browser needs no ffmpeg either: `clipimport.js` decodes it via a seeked `<video>` element (the platform decoder, reached through the one API surface that already demuxes for you) and `srclip.js` packs the frames into the exact `.srclip` container `sr_add_clip` already reads — no new wasm surface. Exporting a video uses real WebCodecs (`VideoEncoder`, VP8) plus a hand-rolled, ffprobe-verified WebM muxer (`muxer.js`/`test-muxer.mjs`), since no browser ships a demuxer *or* a muxer | `tools/web/editor.js`, `tools/web/main.js`, `tools/web/clipimport.js`, `tools/web/srclip.js`, `tools/web/export.js`, `tools/web/muxer.js` |
+| The editor is organised around what a person is doing (trim, add an effect, move/change text), not the data model: the inspector shows named presets and drag widgets first and folds the full field vocabulary under "Advanced"/"Exact position"/"Layer JSON" — the reach is never removed, only deferred. Direct manipulation (drag a clip's trim handles, drag a layer on the preview, drag a callout's ring and label) is real dragging against `geometry.js`'s from-scratch JS mirror of `Placement::resolve` and `CalloutSpec`'s target/label_at, not a data-model change — the wasm renderer and wire format are untouched | `tools/web/geometry.js`, `tools/web/editor.js`, `tools/web/index.html`'s `#stage-overlay` |
 
 ## Sharp edges
 
@@ -116,6 +117,29 @@ Each is documented at the top of its module; read the module rather than duplica
   JS-only convenience field) means either duplicating a conversion step the
   crate doesn't otherwise need, or a per-layer "advanced JSON" editor showing
   something that isn't actually what gets rendered.
+- **`geometry.js`'s on-canvas selection box is exact for some content, a
+  guess for others — know which before trusting it.** `Placement::Full`,
+  `::Rect` and `::Frac` resolve from the frame size alone (`Placement::resolve`,
+  src/layer.rs), so those — and a bare `Content::Text`, whose "natural size"
+  is a fixed `frame.w*0.8 x frame.h*0.3` regardless of what the text says —
+  are reproduced exactly with zero font engine. `Title`/`LowerThird`/`Counter`
+  anchor against their *measured* text plate instead (real font metrics,
+  Rust-only), so their default (unset) placement box is a stand-in sized to
+  look about right — good enough to click and to start a drag, and the
+  moment a drag commits it becomes an explicit `Frac`, which is exact from
+  then on. A callout's `target`/`label_at` are already plain `[fx, fy]`
+  fractions (`CalloutSpec`, src/layer.rs) with no font dependency at all —
+  always exact, the cleanest case in the module. If a selection outline looks
+  slightly off around a freshly-added Title, that's this approximation, not a
+  renderer bug; drag it once and it locks to a precise box.
+- **Direct manipulation covers text-ish layers and callouts, not yet a
+  still/clip's camera framing.** A `Camera` (src/camera.rs) is keyframed pan
+  and geometric zoom over a mip pyramid, not a single point or box — dragging
+  it on the preview is the same "point at where you want it" idea the
+  position/callout work above proves out, but it needs its own interaction
+  (drag to reframe *and* scrub a timeline of keyframes) rather than reusing
+  `geometry.js`'s single-rect drag. Left for a follow-up; today a camera move
+  is still Advanced-JSON-only.
 - **`Content::Text.style` is a bare `TextStyle`, not `Option<TextStyle>`** —
   every other content kind's `style` is optional (`None` = derive from the
   theme). Sending `"style": null` for a text layer fails with `invalid type:

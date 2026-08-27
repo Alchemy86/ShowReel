@@ -12,9 +12,10 @@
 // only for what it *looks like* at a given time.
 
 import { WasmBridge, fetchBytes, clipAssetPath, clipCacheKey } from './bridge.js';
-import { createEditor, newFilm, newLayer } from './editor.js';
+import { createEditor, newFilm, newLayer, getScene, layerDisplayName } from './editor.js';
 import { importClip } from './clipimport.js';
 import { exportWebM, webCodecsAvailable } from './export.js';
+import { layerFrameRect, pointInRect, rectToFrac, calloutPins, fracFromFrame, calloutHit } from './geometry.js';
 
 const WASM = './showreel.wasm';
 const FONTS = [
@@ -64,6 +65,9 @@ let frameTimes = [];
 // keeps its *source* here rather than one fixed decode.
 const providedStills = new Map();
 const providedClips = new Map();
+// name -> real source length in seconds, known only for a browser-dropped
+// clip (probed via its `<video>` element) — the trim widget's drag range.
+const providedClipDurations = new Map();
 // `${kind}:${name}` -> 'ok' | 'missing', for the Assets panel's status dots.
 const assetStatus = new Map();
 // clipCacheKey(...) -> {bytes} — avoids re-decoding a browser clip on every
@@ -234,17 +238,24 @@ function renderAt(t) {
   recordFrameTime(performance.now() - started);
   seek.value = currentT;
   timecode.textContent = `${fmtT(currentT)} / ${fmtT(duration)}`;
+  updateOverlay();
 }
+// Scene start/end times at full-film scale, in wasm's own `Timeline::placements`
+// order — the same numbers the scrubber's segments use, kept here so the
+// canvas overlay can answer "which scene, and how far into it, is this
+// playhead time" without recomputing `Timeline::placements`' maths in JS.
+let scenePlacements = [];
 function buildStructure() {
   const s = JSON.parse(bridge.readStr(wasm.sr_structure_ptr, wasm.sr_structure_len) || '{}');
   duration = s.duration || 0;
   fps = s.fps || film.fps || 30;
+  scenePlacements = s.placements || [];
   $('film-title').textContent = s.title || '';
   $('film-stats').textContent = `${s.width}x${s.height} · ${s.fps}fps · ${s.duration.toFixed(2)}s`;
   seek.max = duration || 1;
   const scenes = $('scenes');
   scenes.innerHTML = '';
-  for (const p of s.placements || []) {
+  for (const p of scenePlacements) {
     const frac = duration > 0 ? p.duration / duration : 0;
     const seg = document.createElement('div');
     seg.style.flex = `${Math.max(frac, 0.001)} 0 0`;
@@ -287,6 +298,8 @@ const editor = createEditor({
   getFilm: () => film,
   onChange: scheduleReload,
   resolveAssetStatus,
+  getClipDuration: (name) => providedClipDurations.get(name) ?? null,
+  onSelect: () => updateOverlay(),
 });
 
 function uniqueAssetName(map, base) {
@@ -334,6 +347,182 @@ function tick(now) {
 }
 requestAnimationFrame(tick);
 
+// ---- canvas overlay: click the picture to select, drag to move it ------
+//
+// The wasm renderer never hands back "what's at this pixel" — it only ever
+// produces pixels (see `src/wasm.rs`'s exports). So this reads the *film
+// object* directly (the one source of truth `film` already is — see this
+// file's own module doc) using `geometry.js`'s exact-for-Full/Rect/Frac,
+// approximate-otherwise placement resolver, the same one the inspector's
+// quick position picker relies on. `#stage-overlay` is a plain DOM box laid
+// over the canvas; it never touches a rendered pixel itself.
+const stageOverlay = $('stage-overlay');
+const selBox = $('sel-box');
+const selPinTarget = $('sel-pin-target');
+const selPinLabel = $('sel-pin-label');
+const selLine = $('sel-line');
+
+function hideOverlays() {
+  selBox.hidden = true;
+  selPinTarget.hidden = true;
+  selPinLabel.hidden = true;
+  selLine.hidden = true;
+}
+
+function sceneIndexAtTime(t) {
+  for (const p of scenePlacements) if (t >= p.start && t <= p.end) return p.index;
+  return scenePlacements.length ? scenePlacements[scenePlacements.length - 1].index : 0;
+}
+function sceneStartTime(i) {
+  return scenePlacements.find((p) => p.index === i)?.start ?? 0;
+}
+function activeSpan(layer, sceneDuration) {
+  return [layer.from, layer.from + Math.max(layer.duration ?? (sceneDuration - layer.from), 0)];
+}
+// Every layer on screen at `localT`, topmost (highest z) first — the same
+// order a click should resolve against.
+function activeLayersAt(sceneIdx, localT) {
+  const scene = getScene(film, sceneIdx);
+  const out = [];
+  scene.layers.forEach((l, j) => {
+    const [start, end] = activeSpan(l, scene.duration);
+    if (localT >= start && localT <= end) out.push({ layer: l, j });
+  });
+  out.sort((a, b) => (b.layer.z || 0) - (a.layer.z || 0));
+  return out;
+}
+// `object-fit: contain`'s own letterbox math — the canvas's CSS box and its
+// pixel buffer rarely share an aspect ratio (a 1920x1080 buffer inside a
+// resizable pane), so a frame-pixel point maps to the DOM only after this.
+function stageImageRect() {
+  const w = stageOverlay.clientWidth, h = stageOverlay.clientHeight;
+  const iw = film?.width, ih = film?.height;
+  if (!w || !h || !iw || !ih) return null;
+  let dw, dh, ox, oy;
+  if (iw / ih > w / h) { dw = w; dh = w / (iw / ih); ox = 0; oy = (h - dh) / 2; }
+  else { dh = h; dw = h * (iw / ih); oy = 0; ox = (w - dw) / 2; }
+  return { ox, oy, scaleX: dw / iw, scaleY: dh / ih };
+}
+function frameToLocal(r, img) {
+  return { x: img.ox + r.x * img.scaleX, y: img.oy + r.y * img.scaleY, w: r.w * img.scaleX, h: r.h * img.scaleY };
+}
+function localToFrame(x, y, img) {
+  return { x: (x - img.ox) / img.scaleX, y: (y - img.oy) / img.scaleY };
+}
+
+// A callout doesn't have one box to drag — it has two independent points
+// (`target`, what the ring sits on; `label_at`, where the text sits) joined
+// by a line, so it gets its own pair of pins instead of `#sel-box`. Every
+// other draggable kind still gets the single rect box.
+function currentSelectedLayer() {
+  const sel = editor.getSelection();
+  if (!sel || sel.kind !== 'layer' || !film) return null;
+  const sceneIdx = sceneIndexAtTime(currentT);
+  if (sel.i !== sceneIdx) return null;
+  const scene = getScene(film, sceneIdx);
+  const layer = scene.layers[sel.j];
+  if (!layer) return null;
+  const localT = currentT - sceneStartTime(sceneIdx);
+  const [start, end] = activeSpan(layer, scene.duration);
+  if (localT < start || localT > end) return null;
+  return layer;
+}
+
+function updateOverlay() {
+  hideOverlays();
+  if (playing) return;
+  const layer = currentSelectedLayer();
+  const img = stageImageRect();
+  if (!layer || !img) return;
+
+  if (layer.type === 'callout') {
+    const pins = calloutPins(layer, film);
+    const t = frameToLocal({ ...pins.target, w: 0, h: 0 }, img);
+    const l = frameToLocal({ ...pins.label, w: 0, h: 0 }, img);
+    selPinTarget.hidden = false;
+    selPinTarget.style.left = `${t.x}px`;
+    selPinTarget.style.top = `${t.y}px`;
+    selPinLabel.hidden = false;
+    selPinLabel.style.left = `${l.x}px`;
+    selPinLabel.style.top = `${l.y}px`;
+    selPinLabel.querySelector('.pin-text').textContent = layer.text || 'Callout';
+    selLine.hidden = false;
+    const line = selLine.querySelector('line');
+    line.setAttribute('x1', t.x); line.setAttribute('y1', t.y);
+    line.setAttribute('x2', l.x); line.setAttribute('y2', l.y);
+    return;
+  }
+
+  const rect = layerFrameRect(layer, film);
+  if (!rect) return;
+  const local = frameToLocal(rect, img);
+  selBox.hidden = false;
+  selBox.style.left = `${local.x}px`;
+  selBox.style.top = `${local.y}px`;
+  selBox.style.width = `${local.w}px`;
+  selBox.style.height = `${local.h}px`;
+  selBox.querySelector('.sel-label').textContent = layerDisplayName(layer);
+}
+
+function beginDrag(onMove) {
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    editor.render(); // refreshes the inspector's exact fx/fy fields
+    scheduleReload();
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+stageOverlay.addEventListener('pointerdown', (e) => {
+  if (playing || !film) return;
+  const img = stageImageRect();
+  if (!img) return;
+  const overlayRect = stageOverlay.getBoundingClientRect();
+  const toFrame = (ev) => localToFrame(ev.clientX - overlayRect.left, ev.clientY - overlayRect.top, img);
+  const layer = currentSelectedLayer();
+
+  if (layer?.type === 'callout' && (e.target === selPinTarget || e.target === selPinLabel || selPinLabel.contains(e.target))) {
+    const isTarget = e.target === selPinTarget;
+    e.preventDefault();
+    beginDrag((ev) => {
+      const fp = toFrame(ev);
+      const frac = fracFromFrame(fp.x, fp.y, film);
+      if (isTarget) layer.target = frac; else layer.label_at = frac;
+      updateOverlay();
+    });
+    return;
+  }
+
+  if (layer && layer.type !== 'callout' && (e.target === selBox || selBox.contains(e.target))) {
+    const startRect = layerFrameRect(layer, film);
+    if (!startRect) return;
+    const startFrame = toFrame(e);
+    e.preventDefault();
+    beginDrag((ev) => {
+      const cur = toFrame(ev);
+      const nr = {
+        x: startRect.x + (cur.x - startFrame.x), y: startRect.y + (cur.y - startFrame.y),
+        w: startRect.w, h: startRect.h,
+      };
+      layer.placement = rectToFrac(nr, film);
+      updateOverlay();
+    });
+    return;
+  }
+
+  const sceneIdx = sceneIndexAtTime(currentT);
+  const localT = currentT - sceneStartTime(sceneIdx);
+  const fp = toFrame(e);
+  const hit = activeLayersAt(sceneIdx, localT).find(({ layer: l }) => (
+    l.type === 'callout' ? calloutHit(l, film, fp.x, fp.y) : pointInRect(fp.x, fp.y, layerFrameRect(l, film))
+  ));
+  editor.select(hit ? { kind: 'layer', i: sceneIdx, j: hit.j } : null);
+});
+
+window.addEventListener('resize', updateOverlay);
+
 // ---- toolbar: open / new still / new clip / save ---------------------
 
 $('btn-open').addEventListener('click', () => $('file-open').click());
@@ -372,6 +561,7 @@ $('file-clip').addEventListener('change', async (e) => {
   try {
     const info = await probeVideo(file);
     trim = [0, Math.min(3, info.duration)];
+    providedClipDurations.set(name, info.duration);
   } catch { /* fall back to the default trim; loadAssets will report the real error */ }
   // A server-packed clip's `decode_fps: null` (use the film's own rate) is
   // fine — ffmpeg decoded it once, natively, ahead of time. A browser-added
