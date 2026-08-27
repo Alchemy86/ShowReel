@@ -526,6 +526,22 @@ fn cmd_web_pack(
     std::fs::write(out.join("film.json"), film.to_json()?)?;
     std::fs::copy(&wasm_src, out.join("showreel.wasm"))?;
     std::fs::copy(web_root.join("index.html"), out.join("index.html"))?;
+    // The editor's JS modules — everything `index.html`'s `<script type="module">`
+    // imports (see that file and each module's own doc comment). Named
+    // explicitly, the same way the font loop below skips `README.md`, so a
+    // stray dev-only file (`test-muxer.mjs`, Node-only) never ships.
+    for module in [
+        "main.js",
+        "editor.js",
+        "bridge.js",
+        "muxer.js",
+        "srclip.js",
+        "clipimport.js",
+        "export.js",
+    ] {
+        std::fs::copy(web_root.join(module), out.join(module))
+            .with_context(|| format!("copying {module}"))?;
+    }
     for entry in std::fs::read_dir(web_root.join("fonts"))? {
         let path = entry?.path();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
