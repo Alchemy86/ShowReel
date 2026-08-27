@@ -146,6 +146,20 @@ impl AssetStore {
         self.stills.lock().unwrap().insert(name.to_string(), Arc::new(still));
     }
 
+    /// Register an already-built clip under the exact key [`AssetStore::clip`]
+    /// would look up, so a test can exercise clip drawing without ffmpeg.
+    pub fn insert_clip(
+        &self,
+        reference: &str,
+        fps: f64,
+        max_width: u32,
+        trim: Option<(f64, f64)>,
+        clip: Clip,
+    ) {
+        let key = format!("{reference}|{fps}|{max_width}|{trim:?}");
+        self.clips.lock().unwrap().insert(key, Arc::new(clip));
+    }
+
     /// Bytes held by decoded assets. Reported by the CLI so a heavy film says
     /// so rather than quietly swapping.
     pub fn memory_bytes(&self) -> usize {

@@ -26,6 +26,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
 | Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
+| The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
 
 ## Sharp edges
 
@@ -60,6 +61,14 @@ Each is documented at the top of its module; read the module rather than duplica
   input count, so adding a quiet second track silently halves the first).
 - **`Audio::at` is film time, `Audio::from` is source time.** Confusing the two
   is the classic mistake; both are pinned by a test.
+- **A clip's camera is not mip-backed the way a still's is.** `Content::Clip.camera`
+  reuses `Camera`'s framing maths (`src/camera.rs`'s `Canvas::draw_pixmap_cropped`),
+  but a clip frame is decoded once at `max_width` and a tight framing just
+  magnifies that — there is no pyramid to pick a sharper level from. Push a
+  camera in close on a clip and raise `max_width` to match, or the footage
+  goes soft.
+- **`showreel studio` needs `cargo build --features studio`** — the plain
+  binary does not have the subcommand at all, on purpose (`src/studio.rs`).
 
 - **`examples/kanto.film.jsonc` is committed and generated.** `kanto_reel.rs` is
   canonical — regenerate with `cargo run --release --example kanto_reel -- -o
@@ -87,9 +96,10 @@ Each is documented at the top of its module; read the module rather than duplica
   source and wastes a debugging cycle — this has happened twice.
 - `./reel` renders the self-contained tour from a clean clone; it needs no assets.
 - **Use the preview path rather than rendering to judge anything**: `showreel sheet` puts
-  the whole film on one page in a couple of seconds, and `showreel still --at <t>` is
-  milliseconds. Both bugs in the sharp-edges list above were caught by the contact sheet
-  before a single second of video was encoded.
+  the whole film on one page in a couple of seconds, `showreel still --at <t>` is
+  milliseconds, and `showreel studio` (needs `--features studio`) is the live, scrubbable
+  version of the same thing in a browser. Both bugs in the sharp-edges list above were
+  caught by the contact sheet before a single second of video was encoded.
 - `ffmpeg` and `ffprobe` must be on `PATH`. Fonts come from the system; `showreel fonts`
   lists what is visible. The default theme wants Montserrat and Open Sans and degrades to
   whatever sans exists.

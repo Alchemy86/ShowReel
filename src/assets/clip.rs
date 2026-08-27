@@ -111,6 +111,13 @@ impl Clip {
         Ok(Clip { frames, fps, width: out_w, height: out_h, source: path.to_path_buf() })
     }
 
+    /// Build a clip directly from decoded frames, skipping ffmpeg — for tests
+    /// and for programmatic films that generate their own footage.
+    pub fn from_frames(frames: Vec<Pixmap>, fps: f64) -> Self {
+        let (width, height) = frames.first().map(|p| (p.width(), p.height())).unwrap_or((1, 1));
+        Clip { frames, fps, width, height, source: PathBuf::new() }
+    }
+
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }

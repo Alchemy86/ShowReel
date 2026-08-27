@@ -51,3 +51,5 @@ pub mod audio;
 pub mod encode;
 pub mod preview;
 pub mod prelude;
+#[cfg(feature = "studio")]
+pub mod studio;

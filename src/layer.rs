@@ -328,6 +328,12 @@ pub enum Content {
         asset: String,
         #[serde(default)]
         fit: Fit,
+        /// A camera move over the decoded frame — the same vocabulary a still
+        /// uses. Unlike a still, a clip frame is not mip-backed, so a close
+        /// framing simply magnifies the frame it already decoded to; keep
+        /// `max_width` generous if the move pushes in tight.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        camera: Option<Camera>,
         /// Which part of the source to decode: `(start, duration)` in the
         /// source's own time. **Decoding is bounded by this**, so a four second
         /// moment out of a six minute film costs four seconds of memory. A
@@ -540,6 +546,7 @@ impl Layer {
         Layer::new(Content::Clip {
             asset: asset.into(),
             fit: Fit::Cover,
+            camera: None,
             trim: None,
             start: Time::ZERO,
             decode_fps: None,
@@ -688,6 +695,17 @@ impl Layer {
     pub fn fit(mut self, f: Fit) -> Self {
         match &mut self.content {
             Content::Still { fit, .. } | Content::Clip { fit, .. } => *fit = f,
+            _ => {}
+        }
+        self
+    }
+
+    /// A camera move over a still or a clip — the instance-method form of
+    /// [`Layer::camera`], for when the layer already exists (a clip, say,
+    /// mid-chain of `.trim()` and `.framed()`).
+    pub fn with_camera(mut self, cam: Camera) -> Self {
+        match &mut self.content {
+            Content::Still { camera, .. } | Content::Clip { camera, .. } => *camera = Some(cam),
             _ => {}
         }
         self
@@ -942,11 +960,11 @@ impl Layer {
                 }
             }
             Content::Clip {
-                asset, fit, trim, start, decode_fps, mode, max_width, radius, border, shadow,
+                asset, fit, camera, trim, start, decode_fps, mode, max_width, radius, border, shadow,
             } => {
                 self.draw_clip(
-                    canvas, ctx, local, state, alpha, asset, *fit, *trim, *start, *decode_fps,
-                    *mode, *max_width, *radius, *border, shadow.as_ref(),
+                    canvas, ctx, local, state, alpha, asset, *fit, camera.as_ref(), *trim, *start,
+                    *decode_fps, *mode, *max_width, *radius, *border, shadow.as_ref(),
                 )?;
             }
             Content::Text { text, style, wrap, fit } => {
@@ -982,6 +1000,7 @@ impl Layer {
         alpha: f64,
         asset: &str,
         fit: Fit,
+        camera: Option<&Camera>,
         trim: Option<(Time, Time)>,
         start: Time,
         decode_fps: Option<f64>,
@@ -999,20 +1018,26 @@ impl Layer {
         let Some(frame_px) = clip.frame_at(local.as_secs() + start.as_secs(), mode) else {
             return Ok(());
         };
-        let dst = fit.apply(cw as f64, ch as f64, &box_);
+        // A camera always covers its placement box, the same rule a still's
+        // camera follows; without one, `fit` decides the destination rect.
+        let dst = match camera {
+            Some(_) => box_,
+            None => fit.apply(cw as f64, ch as f64, &box_),
+        };
 
         if let Some(sh) = shadow {
             draw_rect_shadow(canvas, dst, radius, sh, alpha);
         }
-        if radius > 0.5 {
-            if let Some(path) = crate::canvas::round_rect_path(dst, radius)
-                && let Some(mut mask) = tiny_skia::Mask::new(canvas.width(), canvas.height())
-            {
-                mask.fill_path(&path, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity());
-                canvas.draw_pixmap_masked(frame_px, dst, alpha, &mask);
+        let mask = round_mask(canvas, dst, radius);
+        match camera {
+            Some(cam) => {
+                let vp = cam.viewport_at(local, (cw, ch), dst.aspect());
+                canvas.draw_pixmap_cropped(frame_px, vp, dst, alpha, mask.as_ref());
             }
-        } else {
-            canvas.draw_pixmap_rect(frame_px, dst, alpha, tiny_skia::BlendMode::SourceOver);
+            None => match &mask {
+                Some(m) => canvas.draw_pixmap_masked(frame_px, dst, alpha, m),
+                None => canvas.draw_pixmap_rect(frame_px, dst, alpha, tiny_skia::BlendMode::SourceOver),
+            },
         }
         if let Some((c, w)) = border {
             canvas.stroke_round_rect(dst, radius, w, &Paint::Solid(c.opacity(alpha)));
@@ -1544,6 +1569,18 @@ fn align_in(box_: &Rect, layout: &TextLayout, align: Align, placement: &Placemen
     (x, box_.y)
 }
 
+/// A rounded-rect clip mask for `r`, or `None` below the radius that would
+/// need one — the shared basis for a clip's rounded corners, camera or not.
+fn round_mask(canvas: &Canvas, r: Rect, radius: f64) -> Option<tiny_skia::Mask> {
+    if radius <= 0.5 {
+        return None;
+    }
+    let path = crate::canvas::round_rect_path(r, radius)?;
+    let mut mask = tiny_skia::Mask::new(canvas.width(), canvas.height())?;
+    mask.fill_path(&path, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity());
+    Some(mask)
+}
+
 /// A blurred rounded-rect shadow under `r`.
 fn draw_rect_shadow(canvas: &mut Canvas, r: Rect, radius: f64, sh: &Shadow, alpha: f64) {
     let pad = (sh.blur * 3.0).ceil();
@@ -1872,5 +1909,60 @@ mod tests {
 
     fn layout_ref(l: &TextLayout) -> &TextLayout {
         l
+    }
+
+    #[test]
+    fn a_clip_camera_crops_like_a_stills_camera_does() {
+        use crate::assets::clip::Clip;
+        use crate::camera::{Camera, Framing};
+
+        // A 100x200 source, red on top and blue on the bottom.
+        let (w, h) = (100u32, 200u32);
+        let mut frame = tiny_skia::Pixmap::new(w, h).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                let c = if y < h / 2 { Color::rgb(220, 20, 20) } else { Color::rgb(20, 20, 220) };
+                frame.pixels_mut()[(y * w + x) as usize] =
+                    tiny_skia::ColorU8::from_rgba(c.r, c.g, c.b, 255).premultiply();
+            }
+        }
+        let store = AssetStore::new();
+        store.insert_clip("split.mp4", 30.0, clip_max_w(), None, Clip::from_frames(vec![frame], 30.0));
+
+        let theme = crate::theme::Theme::dark();
+        // A square frame, so a 100x100 half-crop needs no reshaping to fill it.
+        let ctx = ctx_for(&theme, &store, 100.0, 100.0);
+        let centre = |cv: &Canvas| {
+            let p = cv.as_ref().pixels()[(50 * 100 + 50) as usize];
+            (p.red(), p.blue())
+        };
+
+        let top = Layer::clip("split.mp4").with_camera(Camera::hold(Framing::rect(0.0, 0.0, 100.0, 100.0)));
+        let mut cv = Canvas::new(100, 100).unwrap();
+        top.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        let (r, b) = centre(&cv);
+        assert!(r > 150 && b < 60, "framed on the top half, expected red: {r},{b}");
+
+        let bottom =
+            Layer::clip("split.mp4").with_camera(Camera::hold(Framing::rect(0.0, 100.0, 100.0, 100.0)));
+        let mut cv2 = Canvas::new(100, 100).unwrap();
+        bottom.draw(&mut cv2, &ctx, Time(0.0), Time(1.0)).unwrap();
+        let (r2, b2) = centre(&cv2);
+        assert!(b2 > 150 && r2 < 60, "framed on the bottom half, expected blue: {r2},{b2}");
+    }
+
+    #[test]
+    fn a_clip_with_no_camera_still_draws() {
+        use crate::assets::clip::Clip;
+        let mut frame = tiny_skia::Pixmap::new(40, 40).unwrap();
+        frame.fill(Color::rgb(10, 200, 10).to_skia());
+        let store = AssetStore::new();
+        store.insert_clip("plain.mp4", 30.0, clip_max_w(), None, Clip::from_frames(vec![frame], 30.0));
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 100.0, 100.0);
+        let mut cv = Canvas::new(100, 100).unwrap();
+        Layer::clip("plain.mp4").draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        let p = cv.as_ref().pixels()[(50 * 100 + 50) as usize];
+        assert!(p.green() > 150 && p.red() < 60, "should show the clip's own colour");
     }
 }

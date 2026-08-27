@@ -171,7 +171,7 @@ fn mean_volume_db(path: &Path) -> Option<f64> {
     let err = String::from_utf8_lossy(&out.stderr);
     err.lines()
         .find_map(|l| l.split("mean_volume:").nth(1))
-        .and_then(|v| v.trim().split_whitespace().next())
+        .and_then(|v| v.split_whitespace().next())
         .and_then(|v| v.parse().ok())
 }
 

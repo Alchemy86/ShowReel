@@ -98,6 +98,23 @@ enum Command {
         /// Only families containing this text.
         filter: Option<String>,
     },
+    /// Open a local browser studio: scrubber, timeline, live reload. Built
+    /// with `--features studio`.
+    #[cfg(feature = "studio")]
+    Studio {
+        film: PathBuf,
+        /// Where to look for assets. Repeatable.
+        #[arg(short = 'A', long = "assets")]
+        asset_roots: Vec<PathBuf>,
+        #[arg(long, default_value_t = 7878)]
+        port: u16,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Render preview frames at this fraction of the film's declared
+        /// size — the same knob `showreel preview` uses.
+        #[arg(long, default_value_t = 1.0)]
+        scale: f64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -118,6 +135,10 @@ fn main() -> Result<()> {
         Command::Info { film } => cmd_info(film),
         Command::Check { film } => cmd_check(film),
         Command::Fonts { filter } => cmd_fonts(filter),
+        #[cfg(feature = "studio")]
+        Command::Studio { film, asset_roots, port, host, scale } => {
+            cmd_studio(film, asset_roots, port, host, scale)
+        }
     }
 }
 
@@ -414,6 +435,20 @@ fn cmd_check(film_path: PathBuf) -> Result<()> {
         eprintln!("error: {e}");
     }
     bail!("{} problem(s)", errs.len());
+}
+
+#[cfg(feature = "studio")]
+fn cmd_studio(
+    film_path: PathBuf,
+    roots: Vec<PathBuf>,
+    port: u16,
+    host: String,
+    scale: f64,
+) -> Result<()> {
+    if !film_path.exists() {
+        bail!("{} does not exist", film_path.display());
+    }
+    showreel::studio::serve(film_path, roots, showreel::studio::StudioOptions { port, host, scale })
 }
 
 fn cmd_fonts(filter: Option<String>) -> Result<()> {
