@@ -33,6 +33,8 @@ Each is documented at the top of its module; read the module rather than duplica
 | The renderer also compiles to `wasm32-unknown-unknown` (no wasm-bindgen — plain `extern "C"` over linear memory, `projects/asciicity`'s pattern) so a film can be scrubbed in someone else's browser with no server. `rayon` and `clap` are optional (`parallel`/`cli` features) so the wasm build pulls in neither; ffmpeg has no browser story, so a clip's frames are pre-decoded natively by `showreel web-pack` and shipped as a `.srclip` JPEG sequence | `src/wasm.rs`, `src/webclip.rs`, `build-wasm.sh` |
 | The browser page (`tools/web/`) is a real editor, not just a scrubber: `editor.js` mutates a film's JSON tree directly (it *is* the wire format — see the sharp edge below) and `main.js` reloads it through the same `sr_load_film`/`sr_add_*` wasm calls the boot sequence uses. Adding a clip from the browser needs no ffmpeg either: `clipimport.js` decodes it via a seeked `<video>` element (the platform decoder, reached through the one API surface that already demuxes for you) and `srclip.js` packs the frames into the exact `.srclip` container `sr_add_clip` already reads — no new wasm surface. Exporting a video uses real WebCodecs (`VideoEncoder`, VP8) plus a hand-rolled, ffprobe-verified WebM muxer (`muxer.js`/`test-muxer.mjs`), since no browser ships a demuxer *or* a muxer | `tools/web/editor.js`, `tools/web/main.js`, `tools/web/clipimport.js`, `tools/web/srclip.js`, `tools/web/export.js`, `tools/web/muxer.js` |
 | The editor is organised around what a person is doing (trim, add an effect, move/change text), not the data model: the inspector shows named presets and drag widgets first and folds the full field vocabulary under "Advanced"/"Exact position"/"Layer JSON" — the reach is never removed, only deferred. Direct manipulation (drag a clip's trim handles, drag a layer on the preview, drag a callout's ring and label) is real dragging against `geometry.js`'s from-scratch JS mirror of `Placement::resolve` and `CalloutSpec`'s target/label_at, not a data-model change — the wasm renderer and wire format are untouched | `tools/web/geometry.js`, `tools/web/editor.js`, `tools/web/index.html`'s `#stage-overlay` |
+| Browser playback has sound via a second, independent Web Audio graph the wasm renderer knows nothing about — see the "Browser playback has sound" sharp edge below for the film-track-vs-clip-audio liveness split | `tools/web/audio.js`, `AudioInput::export_filter` (src/audio.rs), `cmd_web_pack`'s clip-audio extraction (src/bin/showreel.rs) |
+| Thumbnails (scene rows, layer rows, the asset list) are recognition over recall the same way YouCut's filmstrip is — generated once per asset and cached, a still via one scaled `createImageBitmap` decode, a clip via a byte-slice out of its `.srclip`'s first frame (no decode at all) | `tools/web/thumbnails.js`, `main.js`'s `ensureThumbnail` |
 
 ## Considered, not built
 
@@ -287,12 +289,66 @@ got before this round of features touched it.
   still slow. Benchmark real per-frame cost directly instead: call
   `wasm.sr_render_at`/paint back-to-back in a tight loop via `eval`, bypassing
   rAF entirely.
-- **No audio in the browser at all yet** — the wasm renderer only ever
-  produces RGBA pixels; nothing decodes or mixes a film's `Audio` tracks (that
-  is `AudioInput::filter`, native-only, ffmpeg's `amix`). The editor still
-  lets you add/edit audio tracks (their fields round-trip to the JSON
-  correctly), and `export.js`'s WebM output is video-only — both honestly
-  documented gaps, not silent ones.
+- **Browser playback has sound, via a second, independent mixer — not the
+  wasm renderer.** The wasm renderer still only ever produces RGBA pixels;
+  nothing there decodes or mixes audio, and never will (`AudioInput::filter`/
+  `mix_filter`, src/audio.rs, are ffmpeg-filter-based and have no wasm
+  equivalent). `tools/web/audio.js`'s `AudioEngine` is a *separate* Web Audio
+  graph driven by the same film-time clock `main.js`'s `tick()`/`renderAt()`
+  own: scheduled from scratch on every play/scrub/loop, stopped outright on
+  pause. Two different kinds of sound, two different liveness guarantees:
+  a film-level `Audio` track (`film.audio`) ships as its own raw source file
+  (`showreel web-pack` copies it like a still) and is decoded with
+  `decodeAudioData`, with `at`/`from`/duration/gain/fades read live off the
+  film object every reload — editing a track in the browser is heard
+  immediately. A clip's own baked-in soundtrack is pre-extracted by ffmpeg at
+  `web-pack` time (`AudioInput::export_filter`, a no-`adelay` sibling of
+  `AudioInput::filter`) into its own small file, listed in `clip-audio.json`
+  — a snapshot, the same staleness a `.srclip`'s own decode already has:
+  editing a clip's `audio` settings or trim in the browser needs a repackage
+  to be heard. `export.js`'s WebM output is still video-only — real audio
+  muxing into that export was not attempted this round, an honestly
+  documented gap, not a silent one.
+- **A browser-dropped clip (no server `web-pack` behind it) has no audio
+  preview** — `clip-audio.json` only exists for a real `web-pack` output, for
+  the same reason a browser-dropped clip has no `.srclip` either: there is no
+  ffmpeg in the browser to extract it from. The picture still imports fine
+  (`clipimport.js`); only its sound doesn't follow yet.
+- **`timelineEl`'s click listener must check `data-act` before `data-sel`.**
+  Every inline row action (a layer's ↑/↓/✕, a scene's ↑/↓/✕, an audio
+  track's ✕) is a `data-act` button *inside* its row's own `data-sel`
+  element. Checking `data-sel` first lets `e.target.closest('[data-sel]')`
+  match the ancestor row on every button click, so the click just re-selects
+  the row and returns before ever reaching the action — the exact way
+  layer-up/layer-down/layer-del/audio-del silently did nothing for a full
+  session of the redesign before this was caught by trying to give scenes
+  the same inline reorder affordance and finding the copied pattern didn't
+  work either. If a new inline row button is ever added and "does nothing
+  when clicked" — check this ordering first.
+- **The stage canvas is sized by intrinsic size + `max-width`/`max-height`,
+  not `width: 100%; height: 100%; object-fit: contain`.** The latter was
+  tried first and gives the canvas *element's own CSS box* the pane's shape
+  (tall and narrow) rather than the film's; `object-fit` then letterboxes
+  within that wrong-shaped box, leaving the frame small and off-centre with
+  most of the pane empty. Leaving width/height `auto` and clamping with
+  max-width/max-height lets the canvas's intrinsic size (its `width`/
+  `height` attributes, set from the film's own dimensions) drive the aspect
+  ratio, and the flex container's `align-items: center; justify-content:
+  center` centers it properly. `#stage-overlay` (the direct-manipulation hit
+  box) was never sized off the canvas element either way — `stageImageRect()`
+  (main.js) computes its own letterbox rect from the overlay's box and the
+  film's aspect ratio independently, so it already agrees with either.
+- **Thumbnails are generated once per unique asset and cached for the page's
+  lifetime**, not recomputed per render — `main.js`'s `ensureThumbnail`
+  claims the cache key before the (possibly async) work starts, so a
+  debounced reload never redoes it. A still's thumbnail is a real decode
+  (`createImageBitmap` with `resizeWidth`/`resizeHeight`, the browser's own
+  scaled-decode path — never a full-resolution decode then a manual canvas
+  downscale, which matters for something like `kanto.png`'s 48-megapixel
+  atlas). A clip's thumbnail costs nothing extra: its first `.srclip` frame
+  is already a decodable JPEG, so `thumbnails.js`'s `clipThumbnail` just
+  slices those bytes out of the container (`src/webclip.rs`'s layout) rather
+  than decoding anything.
 
 - **`examples/kanto.film.jsonc` is committed and generated.** `kanto_reel.rs` is
   canonical — regenerate with `cargo run --release --example kanto_reel -- -o
