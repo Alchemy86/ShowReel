@@ -123,6 +123,11 @@ instead of rendering three minutes to check four seconds.
 
 ## What ShowReel does with all of this
 
+> **Transitions, seen:** [`docs/gallery/transitions.gif`](gallery/transitions.gif),
+> from [`examples/gallery/transitions.film.jsonc`](../examples/gallery/transitions.film.jsonc)
+> — a cross-blur dissolve then a wipe, each the "presentation × timing" split
+> this table records as taken.
+
 | Idea | Verdict | Where it lives |
 |---|---|---|
 | A video is a function of frames | **Taken wholesale** | `render.rs` |

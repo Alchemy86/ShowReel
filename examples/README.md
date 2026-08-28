@@ -1,5 +1,24 @@
 # Examples
 
+## The gallery — the shortest films here
+
+`gallery.rs` is the source for the README's visual gallery: eight two-to-three
+second films, each showing exactly one capability (camera push, parallax,
+colour grade, animated chart, counter, kinetic captions, transitions,
+callouts). It draws its own procedural stills, so it needs nothing on disk:
+
+```bash
+cargo run --release --example gallery     # writes examples/gallery/*.film.jsonc + assets/
+examples/gallery/render.sh                # renders docs/gallery/*.gif via `showreel gif`
+```
+
+The `.film.jsonc` files are committed and runnable on their own —
+`showreel gif examples/gallery/camera.film.jsonc -o camera.gif` — and they are
+the documentation for *how* each effect is authored, cross-linked from the four
+studies in `docs/`. Unlike `kanto.film.jsonc` they carry no `--check` drift
+guard; the `.rs` is simply the canonical source, and the GIFs are meant to be
+watched back by eye after any change.
+
 ## Making a film without writing Rust
 
 **`kanto.film.jsonc` in this directory is a complete, ready-to-render film**,

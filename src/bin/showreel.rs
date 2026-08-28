@@ -4,7 +4,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use showreel::assets::AssetStore;
 use showreel::audio::AudioInput;
-use showreel::encode::{EncodeOptions, FfmpegSink, MobileOptions, ffmpeg_available, mobile_cut, mobile_path};
+use showreel::encode::{
+    EncodeOptions, FfmpegSink, GifDither, GifOptions, GifSink, GifStats, MobileOptions,
+    ffmpeg_available, mobile_cut, mobile_path,
+};
 use showreel::preview;
 use showreel::render::{FrameSink, PngSequence, Renderer};
 use showreel::scale::scale_film;
@@ -50,6 +53,50 @@ enum Command {
         /// Quality/speed trade-off for the master (lower is better).
         #[arg(long, default_value_t = 17)]
         crf: u8,
+    },
+    /// Render a section of a film to a palette-optimised animated GIF, sized
+    /// for a README or a web page. A GIF is always a *window* of a film, never
+    /// the whole of a long one — pick the moment with `--from`/`--to`.
+    Gif {
+        film: PathBuf,
+        /// Output GIF. Defaults to the film's name with a .gif extension.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Where to look for assets. Repeatable.
+        #[arg(short = 'A', long = "assets")]
+        asset_roots: Vec<PathBuf>,
+        /// Start of the window, e.g. `2s`, `500ms`. Defaults to the start.
+        #[arg(long)]
+        from: Option<String>,
+        /// End of the window, e.g. `5s`. Defaults to the end of the film.
+        #[arg(long)]
+        to: Option<String>,
+        /// Output width in pixels; the height follows the aspect ratio.
+        #[arg(long, default_value_t = 480)]
+        width: u32,
+        /// GIF frame rate. A GIF is not video: keep it low.
+        #[arg(long, default_value_t = 15.0)]
+        fps: f64,
+        /// Dithering: `bayer` (default, stable in a loop), `sierra2` (smoother
+        /// gradients but shimmers when it loops), or `none` (hard banding).
+        #[arg(long, default_value = "bayer")]
+        dither: String,
+        /// Bayer pattern size, 1-5 (only with `--dither bayer`).
+        #[arg(long, default_value_t = 3)]
+        bayer_scale: u8,
+        /// Palette focus: `full` (whole frame — right for a grade or a
+        /// full-frame transition) or `diff` (bias toward what moves — right
+        /// for animation over a static background).
+        #[arg(long, default_value = "full")]
+        palette: String,
+        /// Cap the palette (2-256). Fewer colours, smaller file.
+        #[arg(long, default_value_t = 256)]
+        colors: u16,
+        /// Render the frames at this fraction of the film's declared size
+        /// before the GIF downscale — the same knob `render` uses. Lower it
+        /// for a large film so the source render stays cheap.
+        #[arg(long, default_value_t = 1.0)]
+        scale: f64,
     },
     /// Render a single frame to a PNG.
     Still {
@@ -179,6 +226,23 @@ fn main() -> Result<()> {
         Command::Render { film, out, asset_roots, scale, frames, no_mobile, png, crf } => {
             cmd_render(film, out, asset_roots, scale, frames, no_mobile, png, crf)
         }
+        Command::Gif {
+            film,
+            out,
+            asset_roots,
+            from,
+            to,
+            width,
+            fps,
+            dither,
+            bayer_scale,
+            palette,
+            colors,
+            scale,
+        } => cmd_gif(
+            film, out, asset_roots, from, to, width, fps, dither, bayer_scale, palette, colors,
+            scale,
+        ),
         Command::Still { film, at, out, asset_roots, scale } => {
             cmd_still(film, at, out, asset_roots, scale)
         }
@@ -340,6 +404,111 @@ fn cmd_render(
         println!("  mobile  {} (720w, 30fps, +faststart)", mob.display());
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_gif(
+    film_path: PathBuf,
+    out: Option<PathBuf>,
+    roots: Vec<PathBuf>,
+    from: Option<String>,
+    to: Option<String>,
+    width: u32,
+    fps: f64,
+    dither: String,
+    bayer_scale: u8,
+    palette: String,
+    colors: u16,
+    scale: f64,
+) -> Result<()> {
+    if !ffmpeg_available() {
+        bail!("ffmpeg is not on PATH; ShowReel needs it to encode a GIF");
+    }
+    let dither = match dither.as_str() {
+        "bayer" => GifDither::Bayer { scale: bayer_scale },
+        "sierra2" => GifDither::Sierra2,
+        "none" => GifDither::None,
+        other => bail!("--dither {other:?}: expected one of bayer, sierra2, none"),
+    };
+    let stats = match palette.as_str() {
+        "full" => GifStats::Full,
+        "diff" => GifStats::Diff,
+        other => bail!("--palette {other:?}: expected full or diff"),
+    };
+
+    let assets = store(&film_path, &roots);
+    let declared = load(&film_path)?.expand_plugins(&assets)?;
+    let film = scale_film(&declared, scale);
+    let out = out.unwrap_or_else(|| film_path.with_extension("gif"));
+
+    let fonts = FontDb::shared();
+    let renderer = Renderer::new(&film, &assets, fonts);
+    let total = renderer.frame_count();
+
+    // A GIF is a window of the film. `--from`/`--to` are in the film's own
+    // authoring unit — seconds — resolved to frames once, the same way the
+    // timeline resolves every other second-valued knob.
+    let start_frame = match &from {
+        Some(s) => {
+            let t = parse_time(s).with_context(|| format!("cannot read --from {s:?}"))?;
+            (t.as_secs() * film.fps).round() as u32
+        }
+        None => 0,
+    };
+    let end_frame = match &to {
+        Some(s) => {
+            let t = parse_time(s).with_context(|| format!("cannot read --to {s:?}"))?;
+            (t.as_secs() * film.fps).round() as u32
+        }
+        None => total,
+    };
+    let range = start_frame.min(total)..end_frame.min(total);
+    if range.is_empty() {
+        bail!("empty window: --from is not before --to (0 frames)");
+    }
+
+    let opts = GifOptions {
+        width,
+        fps,
+        dither,
+        stats,
+        loops: 0,
+        max_colors: colors,
+    };
+    println!(
+        "{}: {:.2}s..{:.2}s of {:.2}s — {} source frames -> {}px-wide GIF at {}fps",
+        film_path.display(),
+        range.start as f64 / film.fps,
+        range.end as f64 / film.fps,
+        film.duration().as_secs(),
+        range.end - range.start,
+        width,
+        fps,
+    );
+
+    let mut sink = GifSink::new(&out, film.width, film.height, film.fps, &opts, film.background)?;
+    let stats = renderer.render_range(range, &mut sink)?;
+
+    let bytes = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+    println!("  {stats}");
+    println!("  gif     {} ({})", out.display(), human_bytes(bytes));
+    Ok(())
+}
+
+/// A file size a person can read at a glance.
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut v = n as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u < UNITS.len() - 1 {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[u])
+    }
 }
 
 /// Feeds every frame to two sinks — the encoder and a PNG sequence.

@@ -1,0 +1,416 @@
+{
+  "width": 1280,
+  "height": 720,
+  "fps": 30.0,
+  "title": "Transitions",
+  "background": "#090b11",
+  "theme": {
+    "title": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 800,
+      "italic": false,
+      "size": 104.0,
+      "tracking": -0.018,
+      "line_height": 1.06,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000a5",
+        "blur": 30.0,
+        "dx": 0.0,
+        "dy": 8.0
+      },
+      "case": "as-written",
+      "align": "centre",
+      "tabular": false
+    },
+    "subtitle": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 400,
+      "italic": false,
+      "size": 38.0,
+      "tracking": 0.004,
+      "line_height": 1.35,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000c8",
+        "blur": 5.0,
+        "dx": 0.0,
+        "dy": 2.0
+      },
+      "case": "as-written",
+      "align": "centre",
+      "tabular": false
+    },
+    "caption": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 500,
+      "italic": false,
+      "size": 34.0,
+      "tracking": 0.0,
+      "line_height": 1.4,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000c8",
+        "blur": 5.0,
+        "dx": 0.0,
+        "dy": 2.0
+      },
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "lower_third": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 700,
+      "italic": false,
+      "size": 46.0,
+      "tracking": -0.006,
+      "line_height": 1.1,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "lower_third_detail": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 400,
+      "italic": false,
+      "size": 27.0,
+      "tracking": 0.008,
+      "line_height": 1.3,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "counter": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 700,
+      "italic": false,
+      "size": 82.0,
+      "tracking": -0.01,
+      "line_height": 1.0,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000aa",
+        "blur": 14.0,
+        "dx": 0.0,
+        "dy": 4.0
+      },
+      "case": "as-written",
+      "align": "right",
+      "tabular": true
+    },
+    "counter_label": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 600,
+      "italic": false,
+      "size": 22.0,
+      "tracking": 0.14,
+      "line_height": 1.15,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": {
+        "colour": "#000000c8",
+        "blur": 5.0,
+        "dx": 0.0,
+        "dy": 2.0
+      },
+      "case": "upper",
+      "align": "right",
+      "tabular": false
+    },
+    "callout": {
+      "family": [
+        "Montserrat",
+        "Inter",
+        "Open Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 600,
+      "italic": false,
+      "size": 32.0,
+      "tracking": -0.002,
+      "line_height": 1.2,
+      "fill": "#ffffff",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "callout_detail": {
+      "family": [
+        "Open Sans",
+        "Inter",
+        "Noto Sans",
+        "Liberation Sans",
+        "DejaVu Sans"
+      ],
+      "weight": 400,
+      "italic": false,
+      "size": 24.0,
+      "tracking": 0.0,
+      "line_height": 1.35,
+      "fill": "#c4cbd6",
+      "stroke": null,
+      "shadow": null,
+      "case": "as-written",
+      "align": "left",
+      "tabular": false
+    },
+    "accent": "#ffd147",
+    "background": "#080a0e"
+  },
+  "opening": {
+    "duration": 1.5,
+    "layers": [
+      {
+        "type": "solid",
+        "colour": "#12182e",
+        "from": 0.0,
+        "duration": null,
+        "enter": null,
+        "exit": null,
+        "opacity": 1.0,
+        "z": 0
+      },
+      {
+        "type": "text",
+        "text": "CROSS",
+        "style": {
+          "family": [
+            "Montserrat",
+            "Montserrat",
+            "Open Sans",
+            "DejaVu Sans"
+          ],
+          "weight": 800,
+          "italic": false,
+          "size": 96.0,
+          "tracking": 0.06,
+          "line_height": 1.15,
+          "fill": "#5ad2eb",
+          "stroke": null,
+          "shadow": {
+            "colour": "#000000aa",
+            "blur": 14.0,
+            "dx": 0.0,
+            "dy": 4.0
+          },
+          "case": "as-written",
+          "align": "centre",
+          "tabular": false
+        },
+        "wrap": 1.0,
+        "fit": false,
+        "from": 0.0,
+        "duration": null,
+        "placement": {
+          "fx": 0.05,
+          "fy": 0.36,
+          "fw": 0.9,
+          "fh": 0.3
+        },
+        "enter": null,
+        "exit": null,
+        "opacity": 1.0,
+        "z": 0
+      }
+    ]
+  },
+  "then": [
+    {
+      "transition": {
+        "duration": 0.7,
+        "presentation": {
+          "kind": "cross-blur",
+          "radius": 24.0
+        },
+        "timing": {
+          "kind": "eased",
+          "easing": "in-out-cubic"
+        }
+      },
+      "scene": {
+        "duration": 1.5,
+        "layers": [
+          {
+            "type": "solid",
+            "colour": "#281028",
+            "from": 0.0,
+            "duration": null,
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "text",
+            "text": "BLUR",
+            "style": {
+              "family": [
+                "Montserrat",
+                "Montserrat",
+                "Open Sans",
+                "DejaVu Sans"
+              ],
+              "weight": 800,
+              "italic": false,
+              "size": 96.0,
+              "tracking": 0.06,
+              "line_height": 1.15,
+              "fill": "#ffd147",
+              "stroke": null,
+              "shadow": {
+                "colour": "#000000aa",
+                "blur": 14.0,
+                "dx": 0.0,
+                "dy": 4.0
+              },
+              "case": "as-written",
+              "align": "centre",
+              "tabular": false
+            },
+            "wrap": 1.0,
+            "fit": false,
+            "from": 0.0,
+            "duration": null,
+            "placement": {
+              "fx": 0.05,
+              "fy": 0.36,
+              "fw": 0.9,
+              "fh": 0.3
+            },
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          }
+        ]
+      }
+    },
+    {
+      "transition": {
+        "duration": 0.6,
+        "presentation": {
+          "kind": "wipe",
+          "direction": "left",
+          "softness": 64.0
+        },
+        "timing": {
+          "kind": "eased",
+          "easing": "in-out-cubic"
+        }
+      },
+      "scene": {
+        "duration": 1.5,
+        "layers": [
+          {
+            "type": "solid",
+            "colour": "#0c1e18",
+            "from": 0.0,
+            "duration": null,
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          },
+          {
+            "type": "text",
+            "text": "WIPE",
+            "style": {
+              "family": [
+                "Montserrat",
+                "Montserrat",
+                "Open Sans",
+                "DejaVu Sans"
+              ],
+              "weight": 800,
+              "italic": false,
+              "size": 96.0,
+              "tracking": 0.06,
+              "line_height": 1.15,
+              "fill": "#78e6aa",
+              "stroke": null,
+              "shadow": {
+                "colour": "#000000aa",
+                "blur": 14.0,
+                "dx": 0.0,
+                "dy": 4.0
+              },
+              "case": "as-written",
+              "align": "centre",
+              "tabular": false
+            },
+            "wrap": 1.0,
+            "fit": false,
+            "from": 0.0,
+            "duration": null,
+            "placement": {
+              "fx": 0.05,
+              "fy": 0.36,
+              "fw": 0.9,
+              "fh": 0.3
+            },
+            "enter": null,
+            "exit": null,
+            "opacity": 1.0,
+            "z": 0
+          }
+        ]
+      }
+    }
+  ]
+}

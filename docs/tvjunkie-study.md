@@ -124,6 +124,10 @@ Ranked by how much each would change what the captain can make, most to least.
 
 ### 1. The bankroll counter (both plausible forms) — **ShowReel already does this**
 
+> **Proof:** [`docs/gallery/counter.gif`](gallery/counter.gif), from
+> [`examples/gallery/counter.film.jsonc`](../examples/gallery/counter.film.jsonc)
+> — a bankroll ticking up, tabular figures, grouped thousands.
+
 `Content::Counter` (`src/layer.rs`) is a value that eases from `from` to `to` over `over`
 seconds, with grouping, decimals, and a prefix/suffix — built for exactly "a dollar figure
 that ticks upward," and it already has the one detail that matters for a running-total
@@ -282,6 +286,12 @@ not the thing standing between ShowReel and this look.
    rather than papering over with a new `Content` variant nobody needed.
 
 ## The cheapest wins near the counter and chart work
+
+> **Proof of the chart draw-in:** [`docs/gallery/chart.gif`](gallery/chart.gif),
+> from [`examples/gallery/chart.film.jsonc`](../examples/gallery/chart.film.jsonc)
+> — a plotted function revealing itself left to right. (Still a different job
+> from the bankroll counter, as this section argues — the counter has its own
+> proof under #1 above.)
 
 The brief asked specifically whether this video does anything the recent chart/counter work
 *almost* does but not quite. Two real, cheap observations:

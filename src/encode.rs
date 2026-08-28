@@ -83,6 +83,200 @@ impl EncodeOptions {
     }
 }
 
+/// How a GIF's 256-colour palette is chosen, and how the reduction to it is
+/// hidden. GIF has no truecolour, so this is the whole quality story — a naive
+/// conversion banks gradients and shimmers in a loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GifDither {
+    /// No dithering: flat, hard colour banding. Only right for footage that is
+    /// already near-flat (a few solid fields), where a dither pattern would be
+    /// noise over nothing.
+    None,
+    /// Ordered (Bayer) dithering. The default, because it is **stable frame to
+    /// frame** — the pattern is a fixed function of pixel position, so a static
+    /// background does not crawl the way error-diffusion makes it crawl in a
+    /// loop. `scale` is the pattern size, 1..=5; larger trades a coarser but
+    /// less noticeable texture.
+    Bayer { scale: u8 },
+    /// Error-diffusion (`sierra2_4a`). Smoothest gradients in a *single* frame,
+    /// but the diffused error moves as the image moves, so a looping GIF
+    /// shimmers. Offered for one-frame-ish clips, not the default.
+    Sierra2,
+}
+
+/// Which pixels the palette is optimised for. `Diff` biases the 256 colours
+/// toward regions that change between frames — right for an animation over a
+/// mostly-static background. `Full` weights every pixel equally — right when
+/// the *whole* frame changes (a colour grade, a full-frame transition), where
+/// biasing toward "what moved" would starve the parts that matter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GifStats {
+    Full,
+    Diff,
+}
+
+/// A GIF is a section of a film, palette-optimised, sized for a README or a
+/// web page. Never the whole of a long film — a sixty-second GIF is both
+/// enormous and useless — which is why the CLI takes a `--from`/`--to` window.
+#[derive(Debug, Clone)]
+pub struct GifOptions {
+    /// Output width in pixels; the height follows the source aspect ratio.
+    /// A README column is ~480px wide at most, so that is the default.
+    pub width: u32,
+    /// GIF frame rate. Deliberately low (a GIF is not video): 15fps reads as
+    /// smooth for UI motion and keeps the file honest.
+    pub fps: f64,
+    pub dither: GifDither,
+    pub stats: GifStats,
+    /// libavformat's gif `loop`: 0 loops forever, -1 plays once. A README GIF
+    /// wants to loop.
+    pub loops: i32,
+    /// Cap on palette size, 2..=256. Fewer colours, smaller file.
+    pub max_colors: u16,
+}
+
+impl Default for GifOptions {
+    fn default() -> Self {
+        GifOptions {
+            width: 480,
+            fps: 15.0,
+            // Ordered dithering, because the output loops. See `GifDither`.
+            dither: GifDither::Bayer { scale: 3 },
+            // Weight the whole frame by default: it is the safe choice for the
+            // grade/transition demos this feature exists to show, and costs
+            // an animation over a static background very little.
+            stats: GifStats::Full,
+            loops: 0,
+            max_colors: 256,
+        }
+    }
+}
+
+impl GifOptions {
+    /// The `-vf` filtergraph that turns the piped frames into a well-dithered,
+    /// palette-optimised GIF in a single pass: decimate to the target rate,
+    /// Lanczos-downscale to the target width, then split the stream so one copy
+    /// generates the palette and the other is quantised against it.
+    ///
+    /// `diff_mode=rectangle` restricts each frame's repaint to the rectangle
+    /// that actually changed — smaller files, and no dither churn in the parts
+    /// that held still.
+    fn filtergraph(&self) -> String {
+        let stats = match self.stats {
+            GifStats::Full => "full",
+            GifStats::Diff => "diff",
+        };
+        let use_ = match self.dither {
+            GifDither::None => "dither=none".to_string(),
+            GifDither::Bayer { scale } => {
+                format!("dither=bayer:bayer_scale={}", scale.clamp(1, 5))
+            }
+            GifDither::Sierra2 => "dither=sierra2_4a".to_string(),
+        };
+        format!(
+            "fps={fps},scale={w}:-1:flags=lanczos,split[a][b];\
+             [a]palettegen=max_colors={n}:stats_mode={stats}[p];\
+             [b][p]paletteuse={use_}:diff_mode=rectangle",
+            fps = self.fps,
+            w = self.width,
+            n = self.max_colors.clamp(2, 256),
+        )
+    }
+}
+
+/// An ffmpeg process being fed raw frames that writes an animated GIF.
+///
+/// Mirrors [`FfmpegSink`] exactly — same raw `rgb24`-on-stdin contract, same
+/// `FrameSink` impl — differing only in the output filtergraph. The palette is
+/// generated from *these* frames, not a fixed web palette, which is the whole
+/// reason the result is watchable.
+pub struct GifSink {
+    child: Option<Child>,
+    output: PathBuf,
+    background: Color,
+    frames: u64,
+}
+
+impl GifSink {
+    pub fn new(
+        output: impl AsRef<Path>,
+        width: u32,
+        height: u32,
+        source_fps: f64,
+        opts: &GifOptions,
+        background: Color,
+    ) -> Result<Self> {
+        let output = output.as_ref().to_path_buf();
+        if let Some(dir) = output.parent()
+            && !dir.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(dir).ok();
+        }
+        let mut cmd = Command::new("ffmpeg");
+        cmd.arg("-nostdin")
+            .args(["-loglevel", "error", "-y"])
+            .args(["-f", "rawvideo", "-pix_fmt", "rgb24"])
+            .args(["-s", &format!("{width}x{height}")])
+            // The rate the frames arrive at; the filtergraph's `fps=` decimates
+            // from here to the GIF's own rate.
+            .args(["-r", &format!("{source_fps}")])
+            .args(["-i", "-"])
+            .args(["-vf", &opts.filtergraph()])
+            .args(["-loop", &opts.loops.to_string()])
+            .arg(&output)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("starting ffmpeg to write {}", output.display()))?;
+        Ok(GifSink { child: Some(child), output, background, frames: 0 })
+    }
+
+    pub fn output(&self) -> &Path {
+        &self.output
+    }
+
+    pub fn frames_written(&self) -> u64 {
+        self.frames
+    }
+}
+
+impl FrameSink for GifSink {
+    fn accept(&mut self, _index: u32, canvas: &Canvas) -> Result<()> {
+        let Some(child) = self.child.as_mut() else { bail!("encoder already finished") };
+        let stdin = child.stdin.as_mut().context("ffmpeg stdin closed")?;
+        stdin
+            .write_all(&canvas.to_rgb24(self.background))
+            .context("writing a frame to ffmpeg (it may have exited early)")?;
+        self.frames += 1;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        let Some(mut child) = self.child.take() else { return Ok(()) };
+        drop(child.stdin.take());
+        let out = child.wait_with_output().context("waiting for ffmpeg")?;
+        if !out.status.success() {
+            bail!(
+                "ffmpeg failed writing {}: {}",
+                self.output.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
+    }
+}
+
+impl Drop for GifSink {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            drop(child.stdin.take());
+            let _ = child.wait();
+        }
+    }
+}
+
 /// The mobile delivery cut.
 #[derive(Debug, Clone)]
 pub struct MobileOptions {
@@ -319,5 +513,48 @@ mod tests {
     #[test]
     fn preview_options_trade_quality_for_speed() {
         assert!(EncodeOptions::preview().crf > EncodeOptions::default().crf);
+    }
+
+    #[test]
+    fn a_gif_defaults_to_a_readme_sized_looping_clip() {
+        let g = GifOptions::default();
+        assert_eq!(g.width, 480);
+        assert_eq!(g.loops, 0, "a README GIF must loop forever");
+        // Ordered dithering, because the output loops and error-diffusion
+        // would crawl. See `GifDither`.
+        assert!(matches!(g.dither, GifDither::Bayer { .. }));
+    }
+
+    #[test]
+    fn the_gif_filtergraph_generates_its_palette_from_the_footage() {
+        let f = GifOptions::default().filtergraph();
+        // Two-stage: build a palette from these frames, then quantise against
+        // it — never a fixed web palette.
+        assert!(f.contains("palettegen"), "must generate a palette: {f}");
+        assert!(f.contains("paletteuse"), "must apply it: {f}");
+        // Lanczos downscale and an fps decimation are both in the one pass.
+        assert!(f.contains("scale=480:-1:flags=lanczos"), "{f}");
+        assert!(f.contains("fps=15"), "{f}");
+    }
+
+    #[test]
+    fn dither_and_palette_focus_reach_the_filtergraph() {
+        let none = GifOptions { dither: GifDither::None, ..Default::default() };
+        assert!(none.filtergraph().contains("dither=none"));
+        let bayer = GifOptions { dither: GifDither::Bayer { scale: 4 }, ..Default::default() };
+        assert!(bayer.filtergraph().contains("dither=bayer:bayer_scale=4"));
+        let diff = GifOptions { stats: GifStats::Diff, ..Default::default() };
+        assert!(diff.filtergraph().contains("stats_mode=diff"));
+        let full = GifOptions { stats: GifStats::Full, ..Default::default() };
+        assert!(full.filtergraph().contains("stats_mode=full"));
+    }
+
+    #[test]
+    fn a_gif_palette_is_clamped_to_a_legal_range() {
+        // 256 is the ceiling GIF allows; a bayer scale above 5 is meaningless.
+        let over = GifOptions { max_colors: 999, dither: GifDither::Bayer { scale: 9 }, ..Default::default() };
+        let f = over.filtergraph();
+        assert!(f.contains("max_colors=256"), "{f}");
+        assert!(f.contains("bayer_scale=5"), "{f}");
     }
 }

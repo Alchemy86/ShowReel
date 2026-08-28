@@ -30,6 +30,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | A chart reads its series from an external **CSV/JSON** via `Series::Data { file, x, y, bars }`, resolved through `AssetStore` like a still (`AssetStore::data`, cached `DataTable`) — *not* a second mechanism. `ChartSpec::resolve(assets)` expands every `Data` series into a concrete `Line`/`Bars` (borrowed `Cow` when there is none), so `chart::draw` is unchanged below that one call and stays a pure function of `(spec, assets)`. `chart::draw` therefore returns `Result` and the `Content::Chart` arm propagates `?` — that is what makes a bad file/column/row loud in `still`/`render` (no preload) as well as `check` (`Film::resolve_chart_data`). The film names the columns, so it still reads as *x against y* without opening the data | `src/assets/data.rs`, `src/chart.rs` (`Series::Data`, `resolve`), `src/timeline.rs` (`resolve_chart_data`, `AssetUse::Data`) |
 | A **plugin** is a new layer kind expressed as *data*, not code: `Content::Custom { use, with }` names a `Plugin` (a parameterised template of ordinary layers) in `Film.plugins`, and `Film::expand_plugins(assets)` substitutes `{{param}}` and replaces each `custom` layer with the concrete layers it denotes. Declarative was chosen over a Rust trait (forces compile-against-us, breaks "a film is JSON") and a dynamic library (unsafe, and `wasm32` has no `dlopen` — would split native/browser); the template runs identically in both builds because expansion is pure. It cannot draw a mark the primitives can't, and parameter arithmetic is deliberately unbuilt (direct substitution only) | `src/plugin.rs`, `src/timeline.rs` (`expand_plugins`), `src/layer.rs` (`Content::Custom`) |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
+| GIF export (`showreel gif`) is a `FrameSink` (`GifSink`), not a second render path — the same renderer's raw `rgb24` frames pipe into one ffmpeg `palettegen`/`paletteuse` filtergraph (palette generated *from the footage*, Lanczos downscale, `fps` decimation, all one pass). A subcommand not a `render` flag, because a GIF is a *window* of the film (`--from`/`--to` in seconds) at its own width/fps. Default dither is **ordered (Bayer)**, not error-diffusion: a GIF loops, and ordered dithering is a fixed function of pixel position so a static background does not crawl | `src/encode.rs` (`GifOptions`, `GifSink`), `src/bin/showreel.rs` (`cmd_gif`) |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
 | A clip's own soundtrack (`ClipAudio`, on `Content::Clip`) is a level, not a placement — its `at`/`from`/`duration` are the clip's own timing, so `clip_track` builds its `AudioInput` by delegating to `Audio::resolve` rather than re-deriving fade clamping | `src/audio.rs`, `src/layer.rs` (`Layer::clip_audio_track`), `src/timeline.rs` (`Film::clip_audio`) |
@@ -413,6 +414,19 @@ got before this round of features touched it.
   pixel-art master under ~30 MB). If you edit the film, regenerate both cuts by
   hand and re-verify audio on each — nothing regenerates it for you.
 
+- **`examples/gallery.rs` is the canonical source for the README gallery** —
+  the eight single-idea proof films (`examples/gallery/*.film.jsonc`) and the
+  three procedural stills they need (`examples/gallery/assets/`, ~1.1 MB, kept
+  small on purpose — see the poster's "blocky not hatched" comment). Regenerate
+  with `cargo run --release --example gallery`, then render every GIF with
+  `examples/gallery/render.sh` (needs the release `showreel` binary), which
+  writes `docs/gallery/*.gif` (~2.3 MB total) — the images the README's gallery
+  and the four studies' "proof" pointers link to. Unlike kanto there is no
+  `--check` drift guard; if you edit the `.rs`, rerun both steps and **watch the
+  GIFs back** (this is judged by eye — a badly-dithered or illegible GIF is
+  worse than none). The two full-frame-motion GIFs (camera, parallax) are the
+  only heavy ones and are rendered at 128 colours; the rest are defaults.
+
 - **`examples/data_plugin_demo.film.jsonc` is the proof film for external chart
   data and plugins**, hand-written JSONC with its assets committed beside it
   (`examples/data_plugin_demo/adoption.csv`, `regions.json`; the shareable
@@ -485,6 +499,10 @@ got before this round of features touched it.
   --release` does not rebuild examples, and `--examples` does not rebuild the `showreel`
   binary. Rendering with a stale half of the pair produces output that contradicts the
   source and wastes a debugging cycle — this has happened twice.
+- **Do not run `cargo fmt` on this tree.** It is not rustfmt-formatted (the pre-land
+  check is `cargo clippy`, not `fmt`), so `cargo fmt` reformats ~46 files at once and
+  buries a real change under whole-file churn that conflicts with other worktrees. Match
+  the surrounding style by hand instead; format only the lines you add if you must.
 - `./reel` renders the self-contained tour from a clean clone; it needs no assets.
 - **Use the preview path rather than rendering to judge anything**: `showreel sheet` puts
   the whole film on one page in a couple of seconds, `showreel still --at <t>` is

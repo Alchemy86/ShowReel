@@ -145,6 +145,11 @@ Ranked by how much each would change what the captain can make, most to least.
 
 ### 1. Fake-depth ("parallax") animation of a flat still — **ShowReel could nearly do this**
 
+> **Since built — see the proof.** This verdict is now stale: `Content::Parallax`
+> was built the round after this study. The gallery has it running —
+> [`docs/gallery/parallax.gif`](gallery/parallax.gif), from
+> [`examples/gallery/parallax.film.jsonc`](../examples/gallery/parallax.film.jsonc).
+
 This is the one technique with real evidentiary weight behind it, so it's the one worth
 being most precise about. ShowReel has no dedicated "parallax still" feature, but it has
 every primitive the shot actually needs, because a parallax shot is nothing but several
@@ -176,6 +181,10 @@ are about" — a depth-plane cutout is unavoidably about the specific image).
 
 ### 2. Punch-ins and camera pushes over stills and clips, timed to narration — **ShowReel already does this**
 
+> **Proof:** [`docs/gallery/camera.gif`](gallery/camera.gif), from
+> [`examples/gallery/camera.film.jsonc`](../examples/gallery/camera.film.jsonc)
+> — a push over a still far larger than the frame.
+
 Exactly `Camera`'s job (`src/camera.rs`): keyframed `Shot`s with geometric zoom
 interpolation, described in seconds and resolved to frames. The one caveat already on
 record in `AGENTS.md`: a *clip's* camera (as opposed to a still's) isn't mip-backed, so
@@ -183,6 +192,11 @@ pushing in tight on footage needs `max_width` raised to match or the image goes 
 known, documented limitation, not a gap in this study.
 
 ### 3. Kinetic caption/keyword pop-ins synced to narration — **ShowReel already does this**
+
+> **Proof:** [`docs/gallery/captions.gif`](gallery/captions.gif), from
+> [`examples/gallery/captions.film.jsonc`](../examples/gallery/captions.film.jsonc)
+> — words landing one at a time with a spring overshoot (`Motion::Words` +
+> `Easing::OutBack`).
 
 `Motion::Chars`/`Words` (per-character or per-word staggered entrance,
 `src/motion.rs`) combined with `Easing::OutBack`/`OutElastic`/springs (`src/ease.rs`) is
@@ -196,6 +210,10 @@ above doesn't need mixed styling within a single frame, only staggered timing ac
 whole words, which is already there.
 
 ### 4. Callout/annotation graphics over evidence — **ShowReel already does this**
+
+> **Proof:** [`docs/gallery/callouts.gif`](gallery/callouts.gif), from
+> [`examples/gallery/callouts.film.jsonc`](../examples/gallery/callouts.film.jsonc)
+> — a ring on a target, a leader line, a label.
 
 `CalloutSpec` (`src/layer.rs`) is a ring drawn at a target point plus a connected label —
 the "circle the detail, draw a line to an explanation" idiom this genre uses constantly
@@ -221,6 +239,14 @@ per-track gain plus fades already exists for. No missing capability; this is aut
 same as #5.
 
 ### 7. Colour grade (desaturated, contrast-pushed "documentary" look) — **ShowReel cannot do this**
+
+> **Since built — the verdict below is stale.** This was true when written; the
+> colour grade it identified as the one real gap was then built (`src/grade.rs`,
+> `Grade::documentary()`). The gallery shows it before-and-after —
+> [`docs/gallery/grade.gif`](gallery/grade.gif), from
+> [`examples/gallery/grade.film.jsonc`](../examples/gallery/grade.film.jsonc).
+> The original finding is kept below because a study is only worth reading if it
+> records what was actually true at the time.
 
 Confirmed absent by reading the source, not assumed: there is no global grade, LUT,
 saturation, contrast or vignette pass anywhere in `src/` — `canvas.rs` composites and
