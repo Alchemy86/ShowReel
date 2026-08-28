@@ -896,6 +896,10 @@ is worth doing rather than skipping.
   abandoned
 - [The Remotion study](docs/remotion-study.md) — what their API gets right,
   what it gets wrong, and why ShowReel is a data tree rather than a macro DSL
+- [The TV Junkie study](docs/tvjunkie-study.md) — a captain-named video with a
+  running "bankroll" counter and a split-screen kinetic-caption device used
+  twice: both already authorable, and the one confirmed gap is small
+  (per-layer rotation, for a diagonal stamp graphic)
 - [Does ShowReel need ffmpeg at all?](docs/native-encode-audit.md) — encode,
   mux, decode and audio mixing scored separately, with real rav1e-vs-x264
   numbers
