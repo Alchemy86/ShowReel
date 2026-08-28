@@ -395,6 +395,21 @@ got before this round of features touched it.
   comment cannot trip the drift guard (nor can it catch one gone stale; see
   `src/timeline.rs`).
 
+- **`examples/showreel_demo.film.jsonc` is the demo reel, and unlike the kanto
+  film it is hand-written, not generated.** It is the tool's own showreel — an
+  ~52s film demonstrating the camera, a clip push-in, parallax, the colour
+  grade (shown ungraded-then-graded), kinetic text, callouts and a mixed
+  soundtrack — authored directly as JSONC (there is no `.rs` source and no
+  `--check` drift guard). The rendered cuts are committed at
+  `docs/showreel-reel.mp4` (+ `.mobile.mp4`); its assets are *not* committed
+  (map + one clip from `~/pokemon-run`, plus synthesised audio and
+  ImageMagick-cut parallax/grade stills), and every one is documented with an
+  exact regen command in `examples/showreel_demo.assets.md`. Re-render with
+  `showreel render examples/showreel_demo.film.jsonc -A <assets> --crf 27 -o
+  docs/showreel-reel.mp4` (crf 27, not the default 17, keeps the dithered
+  pixel-art master under ~30 MB). If you edit the film, regenerate both cuts by
+  hand and re-verify audio on each — nothing regenerates it for you.
+
 - **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
   second. Using the first letterboxes a square source into a wide frame — the exact
   opposite of covering it.

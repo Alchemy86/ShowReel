@@ -17,6 +17,15 @@ server at all](#in-the-browser).
 It knows nothing about any subject. Maps, screen captures and video clips are
 *inputs*.
 
+**▶ Watch the reel** — [`docs/showreel-reel.mp4`](docs/showreel-reel.mp4)
+(52 s, [mobile cut](docs/showreel-reel.mobile.mp4)): ShowReel's own demo,
+made with ShowReel. The camera over a 57-megapixel still and a live clip, the
+parallax depth push, a colour grade shown ungraded-then-graded, kinetic text,
+callouts and a mixed soundtrack — all authored as one film file,
+[`examples/showreel_demo.film.jsonc`](examples/showreel_demo.film.jsonc)
+(readable, commented, and [`examples/showreel_demo.assets.md`](examples/showreel_demo.assets.md)
+says where every asset came from).
+
 ![the opening title card](docs/stills/title-card.png)
 
 ## Key details

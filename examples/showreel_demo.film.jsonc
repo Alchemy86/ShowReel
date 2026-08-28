@@ -1,0 +1,548 @@
+// =====================================================================
+//  ShowReel — the demo reel, made with ShowReel
+// =====================================================================
+//
+//  This is ShowReel's own showreel: a ~52-second film about the tool,
+//  authored as a plain film file and rendered with `showreel render`.
+//  It is documentation as much as the README is — read it top to bottom
+//  and you learn how every shot in the reel was made.
+//
+//  RENDER IT
+//    showreel render examples/showreel_demo.film.jsonc \
+//        -A <assets> -o showreel-reel.mp4
+//  (produces the master AND a 720p/30fps mobile cut beside it.)
+//
+//  ASSETS (all resolved by bare name via -A; the film knows no paths):
+//    kanto.png            all 226 Pokémon Blue maps in one 7184×7936
+//                         picture (57.0 MP) — pixelgb atlas, region-tint.
+//    route1.mp4           600 agents playing Route 1 at once, a real
+//                         swarm run of ours (1280×720, colour heatmap).
+//    grade-card.png       a colourful 1920×1080 crop of the same atlas,
+//                         used to show the colour grade honestly:
+//                         the SAME still, ungraded then graded.
+//    px-bg / px-mid /     three depth planes cut from the atlas + our own
+//    px-fg  (.png)        Game Boy player sprite — one flat world, split
+//                         by depth for the parallax push. All 2400×1350.
+//    showreel-bed.wav     a warm ambient pad (synthesised — no source
+//                         music shipped with the tool), the bed.
+//    showreel-shimmer.wav a higher shimmer pad, mixed in over the middle
+//                         to show two tracks mixing without rescaling.
+//
+//  The reel, in order:
+//    1  title card ................ per-CHARACTER pop-in
+//    2  the camera ................ pan+zoom over a 57-megapixel still,
+//                                   with a counter and a lower-third
+//    3  live footage .............. a push-in over a decoded clip, with a
+//                                   callout pointing at the swarm
+//    4  ungraded / 5 graded ....... the same still, wiped from one to the
+//                                   other, so the grade is visible not claimed
+//    6  parallax .................. one flat image, three depth planes,
+//                                   one authored camera move
+//    7  text is geometry .......... a gradient-filled, outlined title with
+//                                   per-WORD pop-in
+//    8  close ..................... call to action; the bed fades out
+//
+//  Transitions are deliberately all different — fade-through-black,
+//  dissolve, hard cut, wipe, cross-blur, push, fade — each chosen for
+//  the beat it serves, never the same dissolve twice.
+// =====================================================================
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "title": "ShowReel — the demo reel",
+  // Dark throughout; the default theme is already the dark one (white
+  // type, amber accent #ffd147), so no `theme` block is needed.
+  "background": "#06080d",
+
+  // ---------------------------------------------------------------
+  //  SOUND — a bed for the whole film, plus a second track mixed in
+  //  over the middle. `at` is where a track lands on the film clock;
+  //  `from` is where to start reading inside the source (different
+  //  words on purpose). An unset duration runs to the end of the film.
+  // ---------------------------------------------------------------
+  "audio": [
+    {
+      // The bed. Fades up under the title, holds under everything,
+      // and fades out over the last 3.5s as the close lands.
+      "asset": "showreel-bed.wav",
+      "at": 0.0,
+      "fade_in": 1.2,
+      "fade_out": 3.5,
+      "gain": 0.85
+    },
+    {
+      // A higher shimmer, quieter, laid over the clip→grade→parallax
+      // middle. It overlaps the bed, so this is the mix doing its job:
+      // amix runs with normalize=0, so adding this does not silently
+      // halve the bed underneath it.
+      "asset": "showreel-shimmer.wav",
+      "at": 18.0,
+      "from": 0.0,
+      "duration": 24.0,
+      "fade_in": 2.5,
+      "fade_out": 4.0,
+      "gain": 0.5
+    }
+  ],
+
+  // ===============================================================
+  //  1 — TITLE CARD.  Per-character pop-in; the name arrives letter
+  //  by letter while the bed fades up.
+  // ===============================================================
+  "opening": {
+    "name": "title card",
+    "duration": 5.0,
+    "background": "#06080d",
+    "layers": [
+      {
+        // A faint top-to-bottom wash so the black isn't dead flat.
+        "type": "gradient",
+        "stops": [ [0.0, "#0d1836"], [1.0, "#05070d"] ],
+        "angle": 90.0,
+        "from": 0.0,
+        "duration": null,
+        "placement": { "fx": 0.0, "fy": 0.0, "fw": 1.0, "fh": 1.0 },
+        "enter": null, "exit": null, "opacity": 1.0, "z": 0
+      },
+      {
+        "type": "title",
+        "text": "ShowReel",
+        "subtitle": "describe a film — render it",
+        "style": null,
+        "subtitle_style": null,
+        "from": 0.5,
+        "duration": null,
+        "placement": { "fx": 0.1, "fy": 0.40, "fw": 0.8, "fh": 0.28 },
+        "enter": {
+          "kind": "chars",
+          "stagger": 0.045,
+          "rise": 30.0,
+          "duration": 0.55,
+          "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+        },
+        "exit": null, "opacity": 1.0, "z": 10
+      }
+    ]
+  },
+
+  "then": [
+
+    // =============================================================
+    //  2 — THE CAMERA.  Open tight on a cluster of towns, hold a
+    //  beat, then pull all the way back until the whole 57-megapixel
+    //  world is in frame — one continuous move, no cut. A counter
+    //  ticks the map count up; a lower-third names the shot.
+    // =============================================================
+    {
+      "transition": {
+        "duration": 0.7,
+        "presentation": { "kind": "fade", "through": "#000000" },
+        "timing": { "kind": "eased", "easing": "in-out-cubic" }
+      },
+      "scene": {
+        "name": "the camera",
+        "duration": 12.0,
+        "background": "#07090e",
+        "layers": [
+          {
+            "type": "still",
+            "asset": "kanto.png",
+            "fit": "cover",
+            // Open on a colourful knot of towns near the atlas centre,
+            // hold, then widen to "whole" — the entire picture fit in
+            // frame. A still is mip-backed, so the far end costs the
+            // same single-digit milliseconds as the near end.
+            "camera": {
+              "shots": [
+                { "at": 0.0,  "framing": { "on": "point", "x": 3606.0, "y": 3560.0, "height": 460.0 }, "ease": "in-out-cubic" },
+                { "at": 1.4,  "framing": { "on": "point", "x": 3606.0, "y": 3560.0, "height": 460.0 }, "ease": "in-out-cubic" },
+                { "at": 11.0, "framing": { "on": "whole" }, "ease": "in-out-cubic" }
+              ],
+              "clamp_to_source": true
+            },
+            "from": 0.0, "duration": null,
+            "enter": null, "exit": null, "opacity": 1.0, "z": 0
+          },
+          {
+            "type": "lower-third",
+            "text": "A camera over 57 megapixels",
+            "detail": "7184 × 7936 px · single-digit milliseconds a frame",
+            "accent": "#ffd147",
+            "style": null, "detail_style": null,
+            "from": 2.0, "duration": 6.5,
+            "enter": {
+              "kind": "slide-in", "dx": -80.0, "dy": 0.0, "duration": 0.55,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": {
+              "kind": "slide-in", "dx": -70.0, "dy": 0.0, "duration": 0.45,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "opacity": 1.0, "z": 20
+          },
+          {
+            "type": "counter",
+            "count": { "from": 0.0, "to": 226.0, "over": 3.4, "easing": "out-expo", "decimals": 0, "group": true, "prefix": "", "suffix": "" },
+            "label": "maps in this picture",
+            "style": null, "label_style": null,
+            "from": 3.4, "duration": null,
+            "enter": {
+              "kind": "rise", "distance": 40.0, "duration": 0.4,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": { "kind": "fade", "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "opacity": 1.0, "z": 20
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  3 — LIVE FOOTAGE.  A decoded clip, full-frame, with a gentle
+    //  camera push-in (max_width raised to keep it sharp), and a
+    //  callout drawing a line to the swarm it points at.
+    // =============================================================
+    {
+      "transition": {
+        "duration": 0.8,
+        "presentation": { "kind": "dissolve" },
+        "timing": { "kind": "eased", "easing": "in-out-cubic" }
+      },
+      "scene": {
+        "name": "live footage",
+        "duration": 10.0,
+        "background": "#05070c",
+        "layers": [
+          {
+            "type": "clip",
+            "asset": "route1.mp4",
+            "fit": "cover",
+            // 24s..34s of the run: Route 1 is thick with agents here.
+            "trim": [24.0, 10.0],
+            "start": 0.0,
+            "decode_fps": 30.0,
+            "mode": "hold",
+            // The clip is 1280 wide; decode at its own width so a modest
+            // push (720→585px tall, ~1.23x) stays crisp. A clip's camera
+            // is NOT mip-backed — push harder than this and it softens.
+            "max_width": 1280,
+            // This source has no audio track of its own (a swarm capture),
+            // so mute its clip audio outright rather than have the mixer
+            // reach for a stream that isn't there. The film's own bed and
+            // shimmer carry the sound here.
+            "audio": { "muted": true },
+            "camera": {
+              "shots": [
+                { "at": 0.0,  "framing": { "on": "point", "x": 640.0, "y": 355.0, "height": 720.0 }, "ease": "in-out-cubic" },
+                { "at": 10.0, "framing": { "on": "point", "x": 640.0, "y": 355.0, "height": 585.0 }, "ease": "in-out-cubic" }
+              ],
+              "clamp_to_source": true
+            },
+            "from": 0.0, "duration": null,
+            "enter": null, "exit": null, "opacity": 1.0, "z": 0
+          },
+          {
+            "type": "lower-third",
+            "text": "…and over live footage",
+            "detail": "a push-in over a clip, decoded frame by frame",
+            "accent": "#ffd147",
+            "style": null, "detail_style": null,
+            "from": 0.6, "duration": 4.6,
+            "enter": {
+              "kind": "slide-in", "dx": -80.0, "dy": 0.0, "duration": 0.55,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": {
+              "kind": "slide-in", "dx": -70.0, "dy": 0.0, "duration": 0.45,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "opacity": 1.0, "z": 20
+          },
+          {
+            // The line is the claim: it draws from a label out to the
+            // knot of agents at frame-centre. Placed in the second half,
+            // once the push has mostly settled, so it points true.
+            "type": "callout",
+            "target": [0.46, 0.55],
+            "label_at": [0.135, 0.30],
+            "text": "600 agents, one policy",
+            "detail": "one cold-booted cartridge each",
+            "accent": "#ffd147",
+            "ring": 30.0,
+            "style": null, "detail_style": null,
+            "from": 4.6, "duration": 4.8,
+            "enter": { "kind": "fade", "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "exit": { "kind": "fade", "duration": 0.4, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "opacity": 1.0, "z": 30
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  4 — UNGRADED.  A colourful still, straight out of the renderer.
+    //  Hard cut in (a cut is still a timeline element), then a WIPE
+    //  across to the graded version so you SEE the difference.
+    // =============================================================
+    {
+      "transition": {
+        "duration": 0.01,
+        "presentation": { "kind": "cut" },
+        "timing": { "kind": "eased", "easing": "linear" }
+      },
+      "scene": {
+        "name": "ungraded",
+        "duration": 3.6,
+        "background": "#05070c",
+        "layers": [
+          {
+            "type": "still",
+            "asset": "grade-card.png",
+            "fit": "cover",
+            "from": 0.0, "duration": null,
+            "enter": null, "exit": null, "opacity": 1.0, "z": 0
+          },
+          {
+            "type": "lower-third",
+            "text": "Straight out of the renderer",
+            "detail": "no grade",
+            "accent": "#ffd147",
+            "style": null, "detail_style": null,
+            "from": 0.3, "duration": 3.2,
+            "enter": {
+              "kind": "slide-in", "dx": -80.0, "dy": 0.0, "duration": 0.5,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": { "kind": "fade", "duration": 0.3, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "opacity": 1.0, "z": 20
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  5 — GRADED.  The SAME still, nothing changed but a scene-level
+    //  `grade`. The wipe from scene 4 makes the before/after literal.
+    // =============================================================
+    {
+      "transition": {
+        "duration": 0.8,
+        "presentation": { "kind": "wipe", "direction": "right", "softness": 6.0 },
+        "timing": { "kind": "eased", "easing": "in-out-cubic" }
+      },
+      "scene": {
+        "name": "graded",
+        "duration": 4.6,
+        "background": "#05070c",
+        // The one difference from scene 4. A named look, one word.
+        "grade": "documentary",
+        "layers": [
+          {
+            "type": "still",
+            "asset": "grade-card.png",
+            "fit": "cover",
+            "from": 0.0, "duration": null,
+            "enter": null, "exit": null, "opacity": 1.0, "z": 0
+          },
+          {
+            "type": "lower-third",
+            "text": "Grade::documentary()",
+            "detail": "one post-composite pass — desaturate · contrast · vignette",
+            "accent": "#ffd147",
+            "style": null, "detail_style": null,
+            "from": 0.9, "duration": 3.5,
+            "enter": {
+              "kind": "slide-in", "dx": -80.0, "dy": 0.0, "duration": 0.5,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": { "kind": "fade", "duration": 0.4, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "opacity": 1.0, "z": 20
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  6 — PARALLAX.  One flat picture of the world, cut into three
+    //  depth planes, driven by a single authored camera move. The
+    //  foreground player overshoots the move; the map barely drifts.
+    //  Cross-blur in — the cinematic dissolve — for the reveal.
+    // =============================================================
+    {
+      "transition": {
+        "duration": 0.9,
+        "presentation": { "kind": "cross-blur", "radius": 24.0 },
+        "timing": { "kind": "eased", "easing": "in-out-cubic" }
+      },
+      "scene": {
+        "name": "parallax",
+        "duration": 9.5,
+        "background": "#05070c",
+        "layers": [
+          {
+            "type": "parallax",
+            "planes": [
+              { "asset": "px-bg.png",  "depth": 0.2 },
+              { "asset": "px-mid.png", "depth": 0.55 },
+              { "asset": "px-fg.png",  "depth": 1.3 }
+            ],
+            "camera": {
+              "shots": [
+                { "at": 0.0, "framing": { "on": "whole" }, "ease": "in-out-cubic" },
+                { "at": 9.0, "framing": { "on": "at", "fx": 0.54, "fy": 0.60, "height": 900.0 }, "ease": "in-out-cubic" }
+              ],
+              "clamp_to_source": true
+            },
+            "from": 0.0, "duration": null,
+            "enter": null, "exit": null, "opacity": 1.0, "z": 0
+          },
+          {
+            // A bottom scrim so the caption stays legible over the art.
+            "type": "gradient",
+            "stops": [ [0.0, "#00000000"], [1.0, "#000000aa"] ],
+            "angle": 90.0,
+            "from": 0.0, "duration": null,
+            "placement": { "fx": 0.0, "fy": 0.55, "fw": 1.0, "fh": 0.45 },
+            "enter": null, "exit": null, "opacity": 1.0, "z": 10
+          },
+          {
+            "type": "lower-third",
+            "text": "One flat image — three depth planes",
+            "detail": "fake depth from a single camera move",
+            "accent": "#ffd147",
+            "style": null, "detail_style": null,
+            "from": 0.7, "duration": 7.0,
+            "enter": {
+              "kind": "slide-in", "dx": -80.0, "dy": 0.0, "duration": 0.55,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": {
+              "kind": "slide-in", "dx": -70.0, "dy": 0.0, "duration": 0.45,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "opacity": 1.0, "z": 20
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  7 — TEXT IS GEOMETRY.  Glyphs are filled vector paths, so a
+    //  title takes a gradient fill, an outline and a drop shadow —
+    //  all three on the word below, arriving one WORD at a time.
+    //  Pushed in from the parallax, matching its motion.
+    // =============================================================
+    {
+      "transition": {
+        "duration": 0.6,
+        "presentation": { "kind": "push", "direction": "left" },
+        "timing": { "kind": "eased", "easing": "in-out-cubic" }
+      },
+      "scene": {
+        "name": "text is geometry",
+        "duration": 6.5,
+        "background": "#06080d",
+        "layers": [
+          {
+            "type": "gradient",
+            "stops": [ [0.0, "#111a34"], [1.0, "#05070d"] ],
+            "angle": 90.0,
+            "from": 0.0, "duration": null,
+            "placement": { "fx": 0.0, "fy": 0.0, "fw": 1.0, "fh": 1.0 },
+            "enter": null, "exit": null, "opacity": 1.0, "z": 0
+          },
+          {
+            "type": "title",
+            "text": "Text is geometry",
+            "subtitle": "filled vector paths · real kerning · tabular figures",
+            // A full style: an amber gradient fill, a dark outline and a
+            // soft shadow — the three things "text as geometry" buys you,
+            // impossible if glyphs were flat font-engine blits.
+            "style": {
+              "family": ["Montserrat", "Inter", "Open Sans", "DejaVu Sans"],
+              "weight": 800,
+              "italic": false,
+              "size": 128.0,
+              "tracking": -0.02,
+              "line_height": 1.05,
+              "fill": { "stops": [ [0.0, "#ffe49a"], [1.0, "#ff9d2f"] ], "angle": 90.0 },
+              "stroke": [ "#140d03", 3.0 ],
+              "shadow": { "colour": "#000000b4", "blur": 26.0, "dx": 0.0, "dy": 10.0 },
+              "case": "as-written",
+              "align": "centre",
+              "tabular": false
+            },
+            "subtitle_style": null,
+            "from": 0.5, "duration": null,
+            "placement": { "fx": 0.08, "fy": 0.36, "fw": 0.84, "fh": 0.30 },
+            "enter": {
+              "kind": "words",
+              "stagger": 0.09,
+              "rise": 34.0,
+              "duration": 0.6,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 18.0, "clamp": false } }
+            },
+            "exit": null, "opacity": 1.0, "z": 10
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  8 — CLOSE.  The name returns, letter by letter; a call to
+    //  action underneath; the bed fades out.
+    // =============================================================
+    {
+      "transition": {
+        "duration": 0.8,
+        "presentation": { "kind": "fade", "through": "#000000" },
+        "timing": { "kind": "eased", "easing": "in-out-cubic" }
+      },
+      "scene": {
+        "name": "close",
+        "duration": 6.0,
+        "background": "#06080d",
+        "layers": [
+          {
+            "type": "gradient",
+            "stops": [ [0.0, "#0d1836"], [1.0, "#05070d"] ],
+            "angle": 90.0,
+            "from": 0.0, "duration": null,
+            "placement": { "fx": 0.0, "fy": 0.0, "fw": 1.0, "fh": 1.0 },
+            "enter": null, "exit": null, "opacity": 1.0, "z": 0
+          },
+          {
+            "type": "title",
+            "text": "ShowReel",
+            "subtitle": "describe a film. render it.",
+            "style": null,
+            "subtitle_style": null,
+            "from": 0.4, "duration": null,
+            "placement": { "fx": 0.1, "fy": 0.38, "fw": 0.8, "fh": 0.28 },
+            "enter": {
+              "kind": "chars", "stagger": 0.05, "rise": 28.0, "duration": 0.55,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": null, "opacity": 1.0, "z": 10
+          },
+          {
+            "type": "lower-third",
+            "text": "github.com/Alchemy86/ShowReel",
+            "detail": "native Rust · deterministic · one crate",
+            "accent": "#ffd147",
+            "style": null, "detail_style": null,
+            "from": 1.7, "duration": 3.6,
+            "enter": {
+              "kind": "slide-in", "dx": -80.0, "dy": 0.0, "duration": 0.55,
+              "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+            },
+            "exit": { "kind": "fade", "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "opacity": 1.0, "z": 20
+          }
+        ]
+      }
+    }
+
+  ]
+}
