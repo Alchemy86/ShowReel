@@ -8,6 +8,7 @@
 
 use crate::color::{Color, Paint};
 use crate::geom::Rect;
+use crate::grade::Grade;
 use anyhow::{Context, Result};
 use tiny_skia::{
     BlendMode, FillRule, FilterQuality, Mask, Paint as SkPaint, PathBuilder, Pixmap, PixmapPaint,
@@ -371,6 +372,78 @@ pub fn blur_rgba(pixmap: &mut Pixmap, radius: f64) {
     }
 }
 
+/// Apply a [`Grade`] to every pixel: lift, then contrast, then saturation,
+/// then a warm/cool tilt, then a vignette.
+///
+/// Unlike [`blur_rgba`] this is a single pass with no second buffer — each
+/// pixel's output depends only on itself and (for the vignette) its own
+/// position, not its neighbours — so the cost is exactly the frame's pixel
+/// count times a handful of multiplies, not a windowed operation. Works in
+/// straight (non-premultiplied) colour: an additive lift or a contrast pivot
+/// is only correct there, the same reason [`Canvas::to_rgb24`] demultiplies
+/// before compositing over a background. A fully transparent pixel has
+/// nothing to grade and is left alone.
+pub fn apply_grade(pixmap: &mut Pixmap, grade: &Grade) {
+    if grade.is_noop() {
+        return;
+    }
+    let (wi, hi) = (pixmap.width(), pixmap.height());
+    let (cx, cy) = (wi as f64 / 2.0, hi as f64 / 2.0);
+    // Squared centre-to-corner distance, so the vignette falloff needs no
+    // per-pixel sqrt.
+    let diag2 = cx * cx + cy * cy;
+    let (contrast, saturation, lift, temperature, vignette) =
+        (grade.contrast, grade.saturation, grade.lift, grade.temperature, grade.vignette);
+
+    let data = pixmap.pixels_mut();
+    let mut row = data.chunks_exact_mut(wi as usize);
+    for y in 0..hi {
+        let dy = y as f64 + 0.5 - cy;
+        let Some(row) = row.next() else { break };
+        for (x, px) in row.iter_mut().enumerate() {
+            let a = px.alpha();
+            if a == 0 {
+                continue;
+            }
+            // Reciprocal once, three multiplies rather than three divides.
+            let inv_a = 255.0 / a as f64;
+            let un = |c: u8| (c as f64 * inv_a / 255.0).min(1.0);
+            let (mut r, mut g, mut b) = (un(px.red()), un(px.green()), un(px.blue()));
+
+            r += lift * (1.0 - r);
+            g += lift * (1.0 - g);
+            b += lift * (1.0 - b);
+
+            r = (r - 0.5) * (1.0 + contrast) + 0.5;
+            g = (g - 0.5) * (1.0 + contrast) + 0.5;
+            b = (b - 0.5) * (1.0 + contrast) + 0.5;
+
+            // Same luma weights as `Color::luminance`, for one consistent
+            // notion of brightness across the crate.
+            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            r = luma + (r - luma) * (1.0 + saturation);
+            g = luma + (g - luma) * (1.0 + saturation);
+            b = luma + (b - luma) * (1.0 + saturation);
+
+            r += temperature * 0.12;
+            b -= temperature * 0.12;
+
+            if vignette != 0.0 {
+                let dx = x as f64 + 0.5 - cx;
+                let d2 = (dx * dx + dy * dy) / diag2;
+                let k = (1.0 - vignette * d2).clamp(0.0, 1.0);
+                r *= k;
+                g *= k;
+                b *= k;
+            }
+
+            let out = |c: f64| (c.clamp(0.0, 1.0) * a as f64).round() as u8;
+            *px = tiny_skia::PremultipliedColorU8::from_rgba(out(r), out(g), out(b), a)
+                .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
+        }
+    }
+}
+
 fn box_blur_pass(src: &[u16], dst: &mut [u16], w: i32, h: i32, r: i32, horizontal: bool) {
     let (outer, inner) = if horizontal { (h, w) } else { (w, h) };
     let win = (2 * r + 1) as u32;
@@ -491,6 +564,58 @@ mod tests {
         // needs to catch the algorithm accidentally going quadratic in the
         // radius, not hold it to a ms budget.
         assert!(elapsed.as_secs() < 5, "blur_rgba got unexpectedly slow: {elapsed:?}");
+    }
+
+    #[test]
+    fn apply_grade_cost_at_1080p() {
+        // Measured, not quoted: `Scene::grade`/`Film::grade` cost this once
+        // per scene per frame, on top of everything else already drawn that
+        // frame. See the "A colour grade" section of README.md for the
+        // number this printed.
+        let mut p = Pixmap::new(1920, 1080).unwrap();
+        for (i, px) in p.pixels_mut().iter_mut().enumerate() {
+            let (x, y) = (i % 1920, i / 1920);
+            *px = tiny_skia::ColorU8::from_rgba((x % 256) as u8, (y % 256) as u8, 128, 255).premultiply();
+        }
+        let grade = crate::grade::Grade::documentary();
+        let started = std::time::Instant::now();
+        apply_grade(&mut p, &grade);
+        let elapsed = started.elapsed();
+        eprintln!("apply_grade at 1920x1080: {:.3}ms", elapsed.as_secs_f64() * 1000.0);
+        // A single per-pixel pass with no second buffer, unlike blur_rgba
+        // above — this only needs to catch an accidental quadratic blowup,
+        // not hold to a tight ms budget.
+        assert!(elapsed.as_secs() < 5, "apply_grade got unexpectedly slow: {elapsed:?}");
+    }
+
+    #[test]
+    fn apply_grade_is_a_no_op_at_default() {
+        let mut p = Pixmap::new(4, 4).unwrap();
+        p.fill(Color::rgb(30, 200, 90).to_skia());
+        let before = p.data().to_vec();
+        apply_grade(&mut p, &crate::grade::Grade::default());
+        assert_eq!(p.data(), before.as_slice());
+    }
+
+    #[test]
+    fn documentary_desaturates_and_darkens_corners() {
+        let mut p = Pixmap::new(64, 64).unwrap();
+        for (i, px) in p.pixels_mut().iter_mut().enumerate() {
+            let (x, y) = (i % 64, i / 64);
+            let _ = (x, y);
+            *px = tiny_skia::ColorU8::from_rgba(220, 40, 40, 255).premultiply();
+        }
+        let centre_before = p.pixels()[32 * 64 + 32];
+        let corner_before = p.pixels()[0];
+        apply_grade(&mut p, &crate::grade::Grade::documentary());
+        let centre_after = p.pixels()[32 * 64 + 32];
+        let corner_after = p.pixels()[0];
+        // Saturated red desaturates: green and blue rise toward red.
+        assert!(centre_after.green() > centre_before.green(), "{centre_after:?}");
+        // The vignette darkens a corner more than the centre.
+        let centre_drop = centre_before.red() as i32 - centre_after.red() as i32;
+        let corner_drop = corner_before.red() as i32 - corner_after.red() as i32;
+        assert!(corner_drop > centre_drop, "corner {corner_drop} vs centre {centre_drop}");
     }
 
     #[test]

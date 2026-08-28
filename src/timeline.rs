@@ -65,6 +65,7 @@
 use crate::audio::Audio;
 use anyhow::Context;
 use crate::color::Color;
+use crate::grade::Grade;
 use crate::layer::Layer;
 use crate::theme::Theme;
 use crate::time::Time;
@@ -79,13 +80,17 @@ pub struct Scene {
     pub duration: Time,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Color>,
+    /// Overrides [`Film::grade`] for this scene only — the same
+    /// override-the-film's-own-default shape `background` already has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<Grade>,
     #[serde(default)]
     pub layers: Vec<Layer>,
 }
 
 impl Scene {
     pub fn new(duration: impl Into<Time>) -> Self {
-        Scene { name: None, duration: duration.into(), background: None, layers: Vec::new() }
+        Scene { name: None, duration: duration.into(), background: None, grade: None, layers: Vec::new() }
     }
 
     pub fn named(mut self, n: impl Into<String>) -> Self {
@@ -95,6 +100,11 @@ impl Scene {
 
     pub fn background(mut self, c: Color) -> Self {
         self.background = Some(c);
+        self
+    }
+
+    pub fn grade(mut self, g: Grade) -> Self {
+        self.grade = Some(g);
         self
     }
 
@@ -329,6 +339,11 @@ pub struct Film {
     /// Overrides the built-in defaults for unstyled text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<Theme>,
+    /// A post-composite colour pass over every scene, applied after that
+    /// scene's own layers have drawn — see [`crate::grade`]. `None` renders
+    /// exactly as before this existed. A [`Scene`] can override it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<Grade>,
     /// Sound under the film, placed on the film's own clock. See
     /// [`crate::audio`] for why this sits here and not on a scene.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -370,6 +385,7 @@ pub struct FilmSpec {
     title: Option<String>,
     background: Color,
     theme: Option<Theme>,
+    grade: Option<Grade>,
 }
 
 impl Film {
@@ -387,6 +403,7 @@ impl Film {
             title: None,
             background: default_bg(),
             theme: None,
+            grade: None,
         }
     }
 
@@ -638,6 +655,11 @@ impl FilmSpec {
         self
     }
 
+    pub fn grade(mut self, g: Grade) -> Self {
+        self.grade = Some(g);
+        self
+    }
+
     /// Give the film its opening scene, producing a [`Film`].
     pub fn open(self, opening: Scene) -> Film {
         Film {
@@ -647,6 +669,7 @@ impl FilmSpec {
             title: self.title,
             background: self.background,
             theme: self.theme,
+            grade: self.grade,
             audio: Vec::new(),
             timeline: Timeline::new(opening),
         }

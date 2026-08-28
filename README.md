@@ -33,10 +33,107 @@ It knows nothing about any subject. Maps, screen captures and video clips are
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
 | **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
+| **A colour grade** | a post-composite lift/contrast/saturation/vignette pass, `"documentary"` in one word or five raw knobs, over a still, a clip or a parallax stack alike — see [below](#a-colour-grade) |
 
-## Render a film
+## Everything that's here
 
-One command, from nothing to a finished mp4:
+A feature list, not a pitch — every line below is something a test or a
+render exercises today, not a plan. Organised by what it's for rather than
+which module it lives in.
+
+**Describing a film**
+- A timeline of `Scene`s joined by `Transition`s — `Scene (Transition Scene)*`,
+  a shape that makes "transition first" or "two transitions in a row"
+  unwritable rather than a runtime error (`src/timeline.rs`)
+- 13 layer content kinds: solid fill, linear gradient, edge scrim, still image,
+  video clip, plain text, title (+ subtitle), lower-third (+ detail), counter,
+  callout, pull-up, the fake-depth parallax stack, and a progress bar
+  (`src/layer.rs`)
+- 9 transition presentations — cut, dissolve, fade-through-colour, wipe,
+  slide, push, iris, zoom-in, cross-blur — each independent of how it's
+  *paced*: any easing curve or a physical spring (`src/transition.rs`, `src/ease.rs`)
+- 8 entrance motions — fade, rise, drop, slide-in, scale, and per-character or
+  per-word staggered pop-ins, plus none (`src/motion.rs`)
+- A camera: keyframed pan/zoom over a mip-backed still (geometric zoom
+  interpolation, so a 48-megapixel source renders to 1080p in single-digit
+  milliseconds — [what a frame costs](docs/performance.md)) or over a
+  decoded clip frame (`src/camera.rs`)
+- A colour grade: a named look or five raw knobs, once per scene, over
+  everything already drawn — the newest capability, see
+  [below](#a-colour-grade) (`src/grade.rs`)
+- JSON film files with a deliberately narrow JSONC allowance — `//`/`/* */`
+  comments and trailing commas, nothing else — so a plain `.json` still loads
+  unchanged (`src/timeline.rs`)
+- A Rust builder API that produces the exact same tree as the JSON — write a
+  film by hand, generate one from a program, or load one from disk, with no
+  special case for any of the three (`src/prelude.rs`)
+
+**Sound**
+- Film-level audio tracks: placed and trimmed on the film's own clock, with
+  independent fade-in/fade-out and gain, several tracks mixed without
+  quietly rescaling anyone's volume (`src/audio.rs`)
+- A clip's own baked-in soundtrack joins the mix automatically — gain, fades
+  and a mute, all without a separate `Audio` entry (`src/audio.rs`, `src/layer.rs`)
+- Both the full-quality master and the 720p/30fps mobile cut carry audio —
+  checked by an ffprobe-driven test, not assumed (`tests/render_pipeline.rs`)
+
+**Delivery**
+- `showreel render` — full master plus the mobile cut, from one command
+  (`src/encode.rs`)
+- `showreel still` / `sheet` / `preview` — a single frame, a labelled contact
+  sheet of the whole film, or a fast low-resolution pass, all far cheaper
+  than a full render (`src/preview.rs`)
+- Deterministic rendering, parallelised across every core when the
+  `parallel` feature is on, one frame at a time otherwise (`src/render.rs`)
+- `showreel new` — a small, working, commented starter film, so the first
+  render needs no schema lookup
+
+**The studio and its API** (`--features studio`)
+- `showreel studio` — a scrubber, live reload on file save, the film's
+  structure, and parse/validation errors shown in the page itself
+  (`src/studio.rs`)
+- A local HTTP API riding that same running studio: `/api/info`,
+  `/api/check`, `/api/still`, `/api/render` — see [below](#api-access)
+
+**MCP** (`--features mcp`)
+- `showreel mcp` — five tools (`new_film`, `check_film`, `film_info`,
+  `render_still`, `render_film`) over the official `rmcp` SDK, proven against
+  a real stdio JSON-RPC round trip, not just the tool functions in isolation
+  (`src/mcp.rs`, `tests/mcp_server.rs`) — see [below](#mcp-support)
+
+**In the browser** (`--features wasm`)
+- The renderer itself compiles to `wasm32-unknown-unknown` — no server, no
+  plugin (`src/wasm.rs`)
+- A real editor, not just a scrubber: add a clip or a still, set a trim, pick
+  a transition, retype text, reorder scenes, drag a layer/clip trim/callout
+  directly on the preview, save the film back out as JSON
+  (`tools/web/editor.js`, `tools/web/geometry.js`)
+- A dropped video clip decodes client-side with no ffmpeg, via a seeked
+  `<video>` element (`tools/web/clipimport.js`)
+- Real audio in the browser preview, via a second Web Audio graph the wasm
+  renderer itself knows nothing about (`tools/web/audio.js`)
+- Export to a real `.webm`: WebCodecs `VideoEncoder` plus a hand-rolled muxer
+  verified against `ffprobe` (`tools/web/muxer.js`, `tools/web/export.js`)
+- Thumbnails for every asset (scaled-decode for a still, a byte-slice out of
+  a clip's own container for a clip — no extra decode) (`tools/web/thumbnails.js`)
+- `showreel web-pack` packages a film plus its assets (clips pre-decoded by
+  ffmpeg, natively, ahead of time) into a directory any static host can serve
+
+## Getting started
+
+**Prerequisites**
+
+- A Rust toolchain — the crate uses the 2024 edition, so a recent stable
+  compiler. If you don't have one:
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+- `ffmpeg` and `ffprobe` on `PATH` — needed for `showreel render`/`preview`
+  and for pre-decoding clips for the browser build. Not needed for
+  `showreel still`/`sheet`/`check`/`info`, which never touch ffmpeg.
+  (`apt install ffmpeg`, `brew install ffmpeg`, or your platform's equivalent)
+
+**The fastest way to something rendered**, from nothing:
 
 ```bash
 git clone https://github.com/Alchemy86/ShowReel.git && cd ShowReel && ./reel
@@ -48,7 +145,35 @@ a 30-second tour of the toolset that needs **no assets at all**. It draws its
 own 25-megapixel poster for the camera to move over, using ShowReel's own
 drawing API. Anything you pass goes straight to the CLI: `./reel sheet …`.
 
-Needs `ffmpeg` and `ffprobe` on `PATH`.
+**Building the CLI yourself**, and starting a film from a blank page:
+
+```bash
+cargo build --release --features cli --bin showreel
+./target/release/showreel new film.jsonc --title "My Demo"
+./target/release/showreel still film.jsonc --at 2s -o still.png   # milliseconds
+./target/release/showreel render film.jsonc -o film.mp4           # the real encode
+```
+
+`cli` is a Cargo feature, not the default — a library consumer who only wants
+`showreel` as a dependency doesn't pay for `clap`. `render`/`preview`/`web-pack`
+need `ffmpeg`/`ffprobe` on `PATH`; `still`/`sheet`/`new`/`check`/`info`/`fonts`
+don't touch it at all. Add `--features parallel` to spread a full render
+across every core (`rayon`) — without it, frames render one at a time, which
+is still fine for `still`/`sheet` and for trying things out.
+
+**The browser build** needs one extra Rust target, once:
+
+```bash
+rustup target add wasm32-unknown-unknown
+./build-wasm.sh                                             # -> tools/web/showreel.wasm
+cargo build --release --features wasm --bin showreel
+./target/release/showreel web-pack film.jsonc -o dist        # needs ffmpeg for any clips
+python3 -m http.server -d dist                               # or any static file host
+```
+
+Open the printed URL and you have the same scrubbable, editable studio as
+`showreel studio`, with no server needed once `dist/` is built — see
+["In the browser"](#in-the-browser) for what it can and can't do.
 
 ## The worked example
 
@@ -295,6 +420,64 @@ Rendering the worked example itself (`examples/parallax_demo.rs`, three
 whole clip, because most of it spends time at the wide end of the push, where
 every plane's mip pyramid picks a small, cheap level.
 
+### A colour grade
+
+The desaturated, contrast-pushed "serious documentary" look
+`docs/anarchist-study.md` names as the one genuine capability gap in that
+study — everything else on its technique list turned out to already exist
+somewhere in the crate. A `Grade` is a post-composite pass applied once per
+scene, after every layer has drawn, so it composes with a still, a clip, a
+parallax stack or any mix of them with zero special-casing — the same idiom
+`Content::Parallax` set: a convenience, not a new render path.
+
+The named look, in one line:
+
+```rust
+Film::new(1920, 1080, 30.0)
+    .grade(Grade::documentary())
+    // ...
+```
+
+Or as JSON, on the film or on one scene (a scene's own grade overrides the
+film's):
+
+```jsonc
+"grade": "documentary"
+```
+
+The five raw knobs are there too, for anyone who wants a different look
+rather than this one:
+
+```rust
+Grade::default()
+    .contrast(0.22)      // -1..1, pushes tones away from mid-grey
+    .saturation(-0.35)   // -1..1, -1 is greyscale
+    .lift(0.04)          // -1..1, raises the black point (a faded shadow)
+    .temperature(-0.07)  // -1..1, negative tilts cool
+    .vignette(0.22)      // 0..1, corner darkening strength
+```
+
+Same still, same scene, only `.grade(...)` added or removed:
+
+| ungraded | `Grade::documentary()` |
+|---|---|
+| ![a colourful synthetic evidence card, saturated and flat](docs/stills/grade-before.png) | ![the same still, desaturated, more contrast, cooler, corners darkened](docs/stills/grade-after.png) |
+
+Produced by [`examples/grade_demo.rs`](examples/grade_demo.rs), which draws
+its own colourful backdrop and renders the identical scene twice — nothing
+else about the film changes between the two stills.
+
+**Measured, not quoted: ~34-40ms a call at 1920×1080**
+(`canvas::tests::apply_grade_cost_at_1080p`, release build), once per scene
+per frame a grade is set on — real, but well under the ~170ms
+`Presentation::CrossBlur` above costs, because a grade is one pass with no
+second buffer (each pixel's output depends only on itself and, for the
+vignette, its own position) where a box blur needs several. Against the
+whole example film's own 12ms/frame average, a graded scene costs on the
+order of 3-4× its own draw time on top. `Grade::default()` — every film's
+default, since grading is opt-in — short-circuits before touching a pixel,
+so a film with no grade set pays nothing for the feature existing.
+
 ## Look before you render
 
 Rendering a film to judge its timing is the slow way round.
@@ -470,22 +653,71 @@ Dropping a video clip in decodes it there and then, in the tab, with no
 ffmpeg — a seeked `<video>` element reaches the browser's own decoder, the
 frames get packed into the same `.srclip` container `web-pack` already
 produces natively, and the wasm build reads it back exactly as it would a
-pre-packaged one. Exporting a video is real `VideoEncoder` (WebCodecs) plus a
-hand-rolled WebM muxer verified against `ffprobe`. See
-[`AGENTS.md`](AGENTS.md) for what that build cannot do yet (no audio, no
-arbitrary-container demuxing) and
+pre-packaged one. Editing has sound too: a real, independent Web Audio graph
+plays film tracks and a clip's own soundtrack in sync with the preview — but
+**exporting** a video is real `VideoEncoder` (WebCodecs) plus a hand-rolled
+WebM muxer verified against `ffprobe`, and that exported file is video-only
+today; the audio graph was not wired into it this round. See
+[`AGENTS.md`](AGENTS.md) for that and the rest of what the browser build
+cannot do yet (arbitrary-container demuxing, direct-manipulation of a
+camera's own framing, no colour-grade widget) and
 [the ffmpeg audit](docs/native-encode-audit.md) for why it still leans on
 ffmpeg natively rather than a from-scratch encoder.
 
-## Deeper
+## Known limits
 
-- [What a frame costs](docs/performance.md) — the measurements, and how the
-  camera is fast
+Named plainly, not buried in `AGENTS.md`'s longer sharp-edges list:
+
+- **`Presentation::CrossBlur`** costs ~170ms a frame at 1080p, independent of
+  its radius — fine for a sub-second transition, not for a film-length one.
+- **A colour grade** costs ~34-40ms a frame at 1080p once set — see
+  ["A colour grade"](#a-colour-grade) above.
+- **A clip's camera isn't mip-backed** the way a still's is — push in tight
+  on footage and raise `max_width` to match, or it goes soft.
+- **No rich text runs**: a `Text`/`Title`/`LowerThird` is one style for its
+  whole string — no bolding or colouring a single word mid-line. Investigated
+  and deliberately declined rather than half-landed; see `AGENTS.md`.
+- **The browser build cannot decode video or mux audio on its own** — clips
+  are pre-decoded natively (`showreel web-pack`, needs ffmpeg) or decoded
+  client-side from a dropped file via `<video>`; a browser export is
+  video-only, no audio track.
+- **A camera's own framing has no direct-manipulation UI in the browser
+  editor yet** — everything else (layer position, clip trim, callout
+  target/label) drags on the preview; a camera move is still Advanced-JSON
+  or Rust-only. Deliberately paused, not forgotten — see "Studies" below.
+- **`/api/render` runs ffmpeg and writes a file for whoever can reach the
+  port.** It defaults to `127.0.0.1` for exactly that reason; `--host
+  0.0.0.0` prints a startup warning naming the risk rather than doing it
+  quietly.
+
+## Studies, and what drives the roadmap
+
+Before a capability gets built, there's usually a study asking what the gap
+actually is rather than guessing. Each one ends in a concrete verdict, not
+just observations — `docs/anarchist-study.md`'s technique-by-technique
+ranking is what identified the colour grade above as the one real capability
+gap in that editing style (and named the parallax shot, built the round
+before, as the other one). Reading a study before adding a feature it covers
+is worth doing rather than skipping.
+
+- [The Internet Anarchist study](docs/anarchist-study.md) — the "display
+  style" the captain named directly: what's already covered by the camera,
+  motion and callout primitives, and what genuinely wasn't (this session's
+  colour grade, and the parallax shot before it)
+- [The YouCut study](docs/youcut-study.md) — why a competing editor "feels
+  obvious": recognition over recall, direct manipulation, one-tool-one-screen
+  — the browser editor redesign this drove is deliberately paused, not
+  abandoned
 - [The Remotion study](docs/remotion-study.md) — what their API gets right,
   what it gets wrong, and why ShowReel is a data tree rather than a macro DSL
 - [Does ShowReel need ffmpeg at all?](docs/native-encode-audit.md) — encode,
   mux, decode and audio mixing scored separately, with real rav1e-vs-x264
   numbers
+- [What a frame costs](docs/performance.md) — the measurements, and how the
+  camera is fast
+
+## Deeper
+
 - [The example, in detail](examples/README.md) — the assets, and what the
   footage placements actually claim
 - [Brand](docs/brand/README.md) — the mark, and how to regenerate it

@@ -161,6 +161,13 @@ impl<'a> Renderer<'a> {
         for layer in scene.draw_order() {
             layer.draw(into, &ctx, local, scene.duration)?;
         }
+        // Post-composite, after every layer — a scene's own grade wins over
+        // the film's, the same override shape `background` already has. This
+        // runs per scene (rather than once over a transition's final blend)
+        // so a mid-transition crossfade reads each side with its own look.
+        if let Some(grade) = scene.grade.as_ref().or(self.film.grade.as_ref()) {
+            crate::canvas::apply_grade(&mut into.pixmap, grade);
+        }
         Ok(())
     }
 
@@ -259,6 +266,7 @@ impl<'a> Renderer<'a> {
 mod tests {
     use super::*;
     use crate::color::Color;
+    use crate::grade::Grade;
     use crate::layer::Layer;
     use crate::motion::Motion;
     use crate::timeline::Scene;
@@ -411,5 +419,43 @@ mod tests {
         let r = Renderer::new(&f, &store, FontDb::shared());
         assert_eq!(centre(&r.render_frame(0).unwrap()).0, 255);
         assert_eq!(centre(&r.render_frame(3).unwrap()).0, 0);
+    }
+
+    #[test]
+    fn a_films_grade_desaturates_every_scene_that_does_not_override_it() {
+        // The grade is a post-composite pass, not a special case: it has to
+        // land on a plain Solid layer with no idea what a "grade" is.
+        let f = Film::new(64, 36, 10.0)
+            .background(Color::BLACK)
+            .grade(Grade::documentary())
+            .open(Scene::new(1.0).layer(Layer::solid(RED)));
+        let store = AssetStore::new();
+        let r = Renderer::new(&f, &store, FontDb::shared());
+        let (r8, g8, b8) = centre(&r.render_frame(0).unwrap());
+        // Documentary desaturates a pure red toward grey: green and blue
+        // rise off zero, and the channel spread shrinks.
+        assert!(g8 > 0 && b8 > 0, "expected desaturation, got rgb({r8},{g8},{b8})");
+        assert!((r8 as i32 - g8 as i32) < 255, "still fully saturated: rgb({r8},{g8},{b8})");
+    }
+
+    #[test]
+    fn a_scenes_grade_overrides_the_films() {
+        let f = Film::new(64, 36, 10.0)
+            .background(Color::BLACK)
+            .grade(Grade::documentary())
+            .open(Scene::new(1.0).layer(Layer::solid(RED)).grade(Grade::default()));
+        let store = AssetStore::new();
+        let r = Renderer::new(&f, &store, FontDb::shared());
+        // Grade::default() is a no-op, so the scene's own override wins and
+        // the red stays pure despite the film-level documentary grade.
+        assert_eq!(centre(&r.render_frame(0).unwrap()), (255, 0, 0));
+    }
+
+    #[test]
+    fn no_grade_renders_exactly_as_before_the_feature_existed() {
+        let f = film();
+        let store = AssetStore::new();
+        let r = Renderer::new(&f, &store, FontDb::shared());
+        assert_eq!(centre(&r.render_at(Time(0.2)).unwrap()), (255, 0, 0));
     }
 }

@@ -43,6 +43,7 @@ pub mod text;
 pub mod transition;
 pub mod motion;
 pub mod layer;
+pub mod grade;
 pub mod theme;
 pub mod timeline;
 pub mod scale;
