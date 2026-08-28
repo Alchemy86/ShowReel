@@ -667,6 +667,37 @@ fn clip_srclip_name(asset: &str, max_width: u32, fps: f64, trim: Option<(f64, f6
     }
 }
 
+/// Render one [`AudioInput`]'s trimmed/gained/faded window to its own small
+/// file — the audio counterpart of a `.srclip`: ffmpeg (unavailable in the
+/// browser) runs once, natively, here, and the browser only ever plays back
+/// what this wrote. Positioning (`AudioInput::at`) is deliberately not baked
+/// in — see [`AudioInput::export_filter`] — the browser scheduler places it,
+/// the same way `.srclip`'s frames carry no notion of where the clip sits on
+/// the film's clock.
+#[cfg(feature = "wasm")]
+fn extract_audio_window(input: &AudioInput, dest: &Path) -> Result<()> {
+    use std::process::Command;
+    let out = Command::new("ffmpeg")
+        .arg("-nostdin")
+        .args(["-loglevel", "error", "-y"])
+        .arg("-i")
+        .arg(&input.path)
+        .args(["-filter_complex", &input.export_filter(0)])
+        .args(["-map", "[a]"])
+        .args(["-c:a", "libmp3lame", "-q:a", "4"])
+        .arg(dest)
+        .output()
+        .with_context(|| format!("running ffmpeg to extract audio from {}", input.path.display()))?;
+    if !out.status.success() {
+        bail!(
+            "ffmpeg failed extracting audio from {}: {}",
+            input.path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
 /// Prepare a self-contained directory a static file host can serve as the
 /// whole shareable page: the wasm build (already produced by
 /// `build-wasm.sh`), the bundled fonts, and this film's own assets — stills
@@ -714,6 +745,8 @@ fn cmd_web_pack(
         "srclip.js",
         "clipimport.js",
         "export.js",
+        "audio.js",
+        "geometry.js",
     ] {
         std::fs::copy(web_root.join(module), out.join(module))
             .with_context(|| format!("copying {module}"))?;
@@ -758,6 +791,58 @@ fn cmd_web_pack(
             }
         }
     }
+
+    // Film-level audio tracks (`Film::audio`, e.g. music) ship as the raw
+    // source file, copied as-is like a still — the browser decodes it itself
+    // (`AudioContext.decodeAudioData`) and applies `at`/`from`/gain/fades
+    // live from the film JSON it already has, so editing a track's timing in
+    // the browser is heard immediately, no repackage needed.
+    let mut audio_seen = std::collections::HashSet::new();
+    for name in film.audio_assets() {
+        if !audio_seen.insert(name.to_string()) {
+            continue;
+        }
+        let bytes = std::fs::read(assets.resolve(name)?)?;
+        let dest = out.join("assets").join(name);
+        if let Some(dir) = dest.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&dest, &bytes)?;
+        asset_bytes += bytes.len() as u64;
+        println!("  audio  {name}  {:.0} KB", bytes.len() as f64 / 1024.0);
+    }
+
+    // A clip's own soundtrack is baked into its source video, which the
+    // browser never has (only the pre-decoded `.srclip` frames — see
+    // `src/wasm.rs`'s module doc). Extract exactly the window each clip layer
+    // actually draws for, gain/fades already applied (`Film::clip_audio`
+    // already resolved those from each layer's `ClipAudio`), as its own
+    // small file; `at`/`duration` are recorded so the browser can position
+    // it without recomputing scene/layer timing in JS. Unlike the live
+    // film-level tracks above, this is a snapshot: editing a clip's `audio`
+    // settings or trim in the browser needs a repackage to be heard, the
+    // same staleness a `.srclip`'s own trim already carries.
+    let mut clip_audio_manifest = Vec::new();
+    for (i, input) in film.clip_audio(&assets)?.iter().enumerate() {
+        let name = format!("clip-audio-{i}.mp3");
+        let dest = out.join("assets").join(&name);
+        extract_audio_window(input, &dest)?;
+        let bytes = std::fs::metadata(&dest)?.len();
+        asset_bytes += bytes;
+        println!(
+            "  clip audio  {} — {:.2}s..{:.2}s, {:.0} KB",
+            input.path.display(),
+            input.at,
+            input.at + input.duration,
+            bytes as f64 / 1024.0
+        );
+        clip_audio_manifest.push(serde_json::json!({
+            "file": format!("assets/{name}"),
+            "at": input.at,
+            "duration": input.duration,
+        }));
+    }
+    std::fs::write(out.join("clip-audio.json"), serde_json::to_string(&clip_audio_manifest)?)?;
 
     let wasm_bytes = std::fs::metadata(&wasm_src)?.len();
     let font_bytes: u64 = std::fs::read_dir(out.join("fonts"))?

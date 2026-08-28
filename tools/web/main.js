@@ -16,6 +16,7 @@ import { createEditor, newFilm, newLayer, getScene, layerDisplayName } from './e
 import { importClip } from './clipimport.js';
 import { exportWebM, webCodecsAvailable } from './export.js';
 import { layerFrameRect, pointInRect, rectToFrac, calloutPins, fracFromFrame, calloutHit } from './geometry.js';
+import { AudioEngine } from './audio.js';
 
 const WASM = './showreel.wasm';
 const FONTS = [
@@ -54,6 +55,12 @@ let wasm, bridge;
 let film = null;
 let duration = 0, fps = 30, currentT = 0, playing = false, playAnchorWall = 0, playAnchorT = 0;
 let reloadTimer = null;
+// Web Audio playback — see audio.js's module doc for what plays live versus
+// what needs a repackage. `clipAudioManifest` is `showreel web-pack`'s
+// `clip-audio.json`, `[]` when this page was never packaged (a plain
+// `tools/web/` dev serve).
+const audioEngine = new AudioEngine();
+let clipAudioManifest = [];
 // Rolling window of recent per-frame render+paint times, the same shape
 // `src/studio/page.js`'s `recordFrameTime` uses, so the browser build is
 // honest about achieved playback rate the same way the native studio is —
@@ -281,6 +288,8 @@ async function doReload() {
   } catch (e) {
     fail(String(e && e.stack || e));
   }
+  await audioEngine.rebuild(film, duration, clipAudioManifest);
+  if (playing) audioEngine.start(Math.min(currentT, duration));
   renderAt(Math.min(currentT, duration));
   editor.render();
 }
@@ -318,6 +327,7 @@ seek.addEventListener('input', () => {
   playBtn.textContent = '▶';
   wasm.sr_set_draft_scale(1.0);
   fpsReadout.textContent = '';
+  audioEngine.stop(); // a scrub is silent — see audio.js's module doc
   renderAt(parseFloat(seek.value));
 });
 playBtn.addEventListener('click', () => {
@@ -328,8 +338,10 @@ playBtn.addEventListener('click', () => {
   wasm.sr_set_draft_scale(playing ? PLAYBACK_DRAFT_SCALE : 1.0);
   if (playing) {
     frameTimes = [];
+    audioEngine.start(currentT);
   } else {
     fpsReadout.textContent = '';
+    audioEngine.stop();
     renderAt(currentT); // land back on the same frame at full quality
   }
 });
@@ -342,7 +354,12 @@ function tick(now) {
   requestAnimationFrame(tick);
   if (!playing) return;
   let t = playAnchorT + (now - playAnchorWall) / 1000;
-  if (t >= duration) { t = 0; playAnchorT = 0; playAnchorWall = now; }
+  if (t >= duration) {
+    t = 0;
+    playAnchorT = 0;
+    playAnchorWall = now;
+    audioEngine.start(0); // looped back to the top — reschedule from t=0
+  }
   renderAt(t);
 }
 requestAnimationFrame(tick);
@@ -624,6 +641,7 @@ exportForm.addEventListener('click', async (e) => {
   if (act === 'start') {
     const wasPlaying = playing;
     playing = false;
+    audioEngine.stop();
     // Export always reads full quality, regardless of whether playback left
     // the draft scale engaged.
     wasm.sr_set_draft_scale(1.0);
@@ -659,6 +677,7 @@ exportForm.addEventListener('click', async (e) => {
         wasm.sr_set_draft_scale(PLAYBACK_DRAFT_SCALE);
         playAnchorWall = performance.now();
         playAnchorT = currentT;
+        audioEngine.start(currentT);
       }
     }
   }
@@ -683,6 +702,11 @@ async function boot() {
   } else {
     film = newFilm();
   }
+
+  // `showreel web-pack`'s manifest of pre-extracted clip-audio windows — see
+  // audio.js's module doc. Absent on a plain `tools/web/` dev serve.
+  const res3 = await fetch('./clip-audio.json').catch(() => null);
+  clipAudioManifest = res3 && res3.ok ? await res3.json().catch(() => []) : [];
 
   await doReload();
   splash.hidden = true;

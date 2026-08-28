@@ -316,14 +316,16 @@ pub struct AudioInput {
 }
 
 impl AudioInput {
-    /// This track's ffmpeg filter chain, reading ffmpeg input `index` and
-    /// producing the named label `[a{slot}]`.
+    /// The trim/gain/fade stages shared by [`filter`](Self::filter) and
+    /// [`export_filter`](Self::export_filter) — everything except the
+    /// `at`-positioned delay, which only `filter` (mixing straight into a
+    /// render) needs; a caller of `export_filter` positions the result itself.
     ///
     /// Built as a `Vec` of links and joined, so that a stage which would be a
     /// no-op is *absent* rather than present-with-neutral-parameters:
     /// `afade` with `d=0` is not a silent no-op in ffmpeg, it is a zero-length
     /// fade that mutes the first sample.
-    pub fn filter(&self, index: usize, slot: usize) -> String {
+    fn link_chain(&self) -> Vec<String> {
         let mut links: Vec<String> = Vec::new();
         links.push(format!("atrim=start={}:duration={}", self.from, self.duration));
         // atrim leaves the timestamps where they were in the source; without
@@ -341,12 +343,28 @@ impl AudioInput {
         }
         // Mixing needs one common layout and rate; sources vary.
         links.push("aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo".into());
+        links
+    }
+
+    /// This track's ffmpeg filter chain, reading ffmpeg input `index` and
+    /// producing the named label `[a{slot}]`, positioned at [`Self::at`] via
+    /// a trailing `adelay`.
+    pub fn filter(&self, index: usize, slot: usize) -> String {
+        let mut links = self.link_chain();
         if self.at > 0.0 {
             // adelay is integer milliseconds; `all=1` applies it to every
             // channel, which is what the bare `N|N` form was always meant to say.
             links.push(format!("adelay={}:all=1", (self.at * 1000.0).round() as i64));
         }
         format!("[{index}:a]{}[a{slot}]", links.join(","))
+    }
+
+    /// The trimmed, gained, faded audio for this track alone, with no
+    /// `adelay` — for pre-rendering one track to its own small file (`showreel
+    /// web-pack`, ahead of a browser that has no ffmpeg to mix with) whose
+    /// caller positions the result itself, at [`Self::at`] on its own clock.
+    pub fn export_filter(&self, index: usize) -> String {
+        format!("[{index}:a]{}[a]", self.link_chain().join(","))
     }
 }
 
@@ -436,6 +454,15 @@ mod tests {
         let chain = r.filter(1, 0);
         assert!(chain.contains("atrim=start=12:duration=4"), "{chain}");
         assert!(chain.contains("adelay=2000"), "{chain}");
+    }
+
+    #[test]
+    fn export_filter_carries_gain_and_fades_but_never_a_delay() {
+        let t = Audio::track("t.wav").at(2.0).gain(0.5).fades(0.5, 0.5).resolve("/tmp/t.wav", Time(5.0));
+        let f = t.export_filter(0);
+        assert!(f.contains("volume=0.5") && f.contains("afade=t=in") && f.contains("afade=t=out"), "{f}");
+        assert!(!f.contains("adelay"), "{f}");
+        assert!(f.starts_with("[0:a]") && f.ends_with("[a]"), "{f}");
     }
 
     #[test]
