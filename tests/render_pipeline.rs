@@ -330,6 +330,54 @@ fn a_muted_clip_layer_adds_no_audio_stream() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A clip's `speed` picks a different, later decoded frame for the same
+/// on-screen moment — proven by comparing what actually renders, not just the
+/// arithmetic. `testsrc2` keeps changing throughout its length, so two
+/// different source instants render two different frames.
+#[test]
+fn a_clip_at_double_speed_renders_a_later_source_frame() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg is not on PATH");
+        return;
+    }
+    let dir = std::env::temp_dir().join("showreel-clip-speed-e2e");
+    std::fs::create_dir_all(&dir).unwrap();
+    let fps = 10.0;
+    tone_clip(&dir, "clip.mp4", 4.0, 64, 36, fps);
+    let store = AssetStore::rooted(&dir);
+
+    let normal = Film::new(64, 36, fps)
+        .open(Scene::new(2.0).layer(Layer::clip("clip.mp4").trim(0.0, 4.0)));
+    let doubled = Film::new(64, 36, fps)
+        .open(Scene::new(2.0).layer(Layer::clip("clip.mp4").trim(0.0, 4.0).speed(2.0)));
+
+    let at = Time(1.0);
+    let still_normal = showreel::preview::still_at(&normal, &store, FontDb::shared(), at).unwrap();
+    let still_doubled = showreel::preview::still_at(&doubled, &store, FontDb::shared(), at).unwrap();
+    assert_ne!(
+        still_normal.data(),
+        still_doubled.data(),
+        "1s in, speed 2.0 should already be showing a different source frame than speed 1.0"
+    );
+
+    // And the frames it picked are exactly the ones a plain decode says they
+    // should be: local time × speed, same as `Layer::draw_clip`.
+    let clip = showreel::assets::Clip::load(dir.join("clip.mp4"), fps, 1920, Some((0.0, 4.0))).unwrap();
+    let expected_normal = clip.frame_at(1.0, ClipLoop::Hold).unwrap().data().to_vec();
+    let expected_doubled = clip.frame_at(2.0, ClipLoop::Hold).unwrap().data().to_vec();
+    assert_ne!(expected_normal, expected_doubled, "the source itself must differ at these two instants");
+    assert_eq!(still_normal.data(), expected_normal.as_slice());
+    assert_eq!(still_doubled.data(), expected_doubled.as_slice());
+
+    // A clip played back off-speed has no correctly-paced soundtrack — see
+    // `Content::Clip`'s `speed` field — so it is silently dropped from the mix
+    // rather than played back wrong.
+    assert_eq!(normal.clip_audio(&store).unwrap().len(), 1, "an unmuted, real-speed clip still mixes");
+    assert!(doubled.clip_audio(&store).unwrap().is_empty(), "a sped-up clip must not contribute audio");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_track_survives_the_json_round_trip_with_its_placement() {
     let film = Film::new(64, 36, 10.0)

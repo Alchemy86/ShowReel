@@ -385,6 +385,19 @@ pub enum Content {
         /// into a 60fps film at 60 doubles the memory for no more detail.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         decode_fps: Option<f64>,
+        /// Playback rate: `2.0` covers the decoded window twice as fast
+        /// (slow-mo in reverse — a highlight reached sooner), `0.5` half as
+        /// fast (real slow motion). Only ever picks a different *already
+        /// decoded* frame — see `trim` above — so a large speed still needs a
+        /// wide enough `trim`/`decode_fps` to have somewhere to go. Does not
+        /// touch the clip's own soundtrack: playing audio at a different rate
+        /// needs pitch/tempo correction (`ffmpeg`'s `atempo`) this crate does
+        /// not do, so a clip's own audio is silently omitted from the mix
+        /// while `speed != 1.0` rather than played back wrong — the same
+        /// "narrow the claim rather than half-implement it" call as
+        /// `ClipLoop::Loop`'s audio (see `AGENTS.md`).
+        #[serde(default = "one")]
+        speed: f64,
         #[serde(default)]
         mode: ClipLoop,
         /// Cap the decode width. Keeps a 4K source from being held in memory
@@ -620,6 +633,7 @@ impl Layer {
             trim: None,
             start: Time::ZERO,
             decode_fps: None,
+            speed: 1.0,
             mode: ClipLoop::Hold,
             max_width: clip_max_w(),
             radius: 0.0,
@@ -945,6 +959,16 @@ impl Layer {
         self
     }
 
+    /// Play this clip's decoded window at a different rate: `2.0` for
+    /// double speed, `0.5` for half. Silences the clip's own soundtrack
+    /// while active — see [`Content::Clip`]'s `speed` field.
+    pub fn speed(mut self, s: f64) -> Self {
+        if let Content::Clip { speed, .. } = &mut self.content {
+            *speed = s;
+        }
+        self
+    }
+
     /// Cap the decoded width.
     pub fn decode_width(mut self, w: u32) -> Self {
         if let Content::Clip { max_width, .. } = &mut self.content {
@@ -1019,10 +1043,12 @@ impl Layer {
         scene_duration: Time,
         assets: &AssetStore,
     ) -> Result<Option<AudioInput>> {
-        let Content::Clip { asset, trim, start, audio, .. } = &self.content else {
+        let Content::Clip { asset, trim, start, speed, audio, .. } = &self.content else {
             return Ok(None);
         };
-        if audio.muted {
+        // A sped-up or slowed-down clip has no correctly-paced soundtrack to
+        // pull in — see the `speed` field's doc comment on `Content::Clip`.
+        if audio.muted || (speed - 1.0).abs() > 1e-9 {
             return Ok(None);
         }
         let span = self.span(scene_duration);
@@ -1137,12 +1163,12 @@ impl Layer {
                 }
             }
             Content::Clip {
-                asset, fit, camera, trim, start, decode_fps, mode, max_width, radius, border, shadow,
-                audio: _,
+                asset, fit, camera, trim, start, decode_fps, speed, mode, max_width, radius, border,
+                shadow, audio: _,
             } => {
                 self.draw_clip(
                     canvas, ctx, local, state, alpha, asset, *fit, camera.as_ref(), *trim, *start,
-                    *decode_fps, *mode, *max_width, *radius, *border, shadow.as_ref(),
+                    *decode_fps, *speed, *mode, *max_width, *radius, *border, shadow.as_ref(),
                 )?;
             }
             Content::Text { text, style, wrap, fit } => {
@@ -1212,6 +1238,7 @@ impl Layer {
         trim: Option<(Time, Time)>,
         start: Time,
         decode_fps: Option<f64>,
+        speed: f64,
         mode: ClipLoop,
         max_width: u32,
         radius: f64,
@@ -1223,7 +1250,7 @@ impl Layer {
         let clip = ctx.assets.clip(asset, fps, max_width, trim)?;
         let (cw, ch) = clip.size();
         let box_ = shift_scaled(self.placement().resolve(&ctx.frame, (cw as f64, ch as f64)), state);
-        let Some(frame_px) = clip.frame_at(local.as_secs() + start.as_secs(), mode) else {
+        let Some(frame_px) = clip.frame_at(local.as_secs() * speed + start.as_secs(), mode) else {
             return Ok(());
         };
         // A camera always covers its placement box, the same rule a still's
@@ -2172,6 +2199,55 @@ mod tests {
         Layer::clip("plain.mp4").draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
         let p = cv.as_ref().pixels()[(50 * 100 + 50) as usize];
         assert!(p.green() > 150 && p.red() < 60, "should show the clip's own colour");
+    }
+
+    #[test]
+    fn clip_speed_picks_a_proportionally_later_decoded_frame() {
+        use crate::assets::clip::Clip;
+        let red = {
+            let mut p = tiny_skia::Pixmap::new(4, 4).unwrap();
+            p.fill(Color::rgb(220, 20, 20).to_skia());
+            p
+        };
+        let blue = {
+            let mut p = tiny_skia::Pixmap::new(4, 4).unwrap();
+            p.fill(Color::rgb(20, 20, 220).to_skia());
+            p
+        };
+        let store = AssetStore::new();
+        // A 1fps clip, so `frame_at` indexes directly by seconds: frame 0 is
+        // red, frame 1 is blue. The cache key's fps must match `ctx_for`'s 30,
+        // since that is what `draw_clip` looks the decode up by — the `Clip`
+        // itself carries its own, unrelated, internal frame rate.
+        store.insert_clip("plain.mp4", 30.0, clip_max_w(), None, Clip::from_frames(vec![red, blue], 1.0));
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 10.0, 10.0);
+
+        // At 0.5s in, default speed (1.0) has not reached frame 1 yet.
+        let mut normal = Canvas::new(10, 10).unwrap();
+        Layer::clip("plain.mp4").draw(&mut normal, &ctx, Time(0.5), Time(2.0)).unwrap();
+        let p = normal.as_ref().pixels()[0];
+        assert!(p.red() > 150 && p.blue() < 60, "speed 1.0 at 0.5s should still show frame 0 (red)");
+
+        // The same 0.5s, at speed 2.0, has reached 1.0s of source — frame 1.
+        let mut doubled = Canvas::new(10, 10).unwrap();
+        Layer::clip("plain.mp4").speed(2.0).draw(&mut doubled, &ctx, Time(0.5), Time(2.0)).unwrap();
+        let p = doubled.as_ref().pixels()[0];
+        assert!(p.blue() > 150 && p.red() < 60, "speed 2.0 at 0.5s should already show frame 1 (blue)");
+    }
+
+    #[test]
+    fn a_sped_up_clip_layer_contributes_no_audio_track() {
+        let (dir, store) = rooted_with_dummy_clip("sped-up", "clip.mp4");
+        let layer = Layer::clip("clip.mp4").speed(1.5);
+        assert!(
+            layer.clip_audio_track(Time(0.0), Time(5.0), &store).unwrap().is_none(),
+            "off-speed playback has no correctly-paced soundtrack to mix"
+        );
+        // Real-speed playback is unaffected.
+        let normal = Layer::clip("clip.mp4");
+        assert!(normal.clip_audio_track(Time(0.0), Time(5.0), &store).unwrap().is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// No decode happens here — `clip_audio_track` only resolves the source

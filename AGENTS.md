@@ -106,6 +106,15 @@ got before this round of features touched it.
   default gain reached the master at −24.1 dB mean, `.clip_gain(0.3)` at
   −34.6 dB (≈ 20·log₁₀(0.3) quieter, as it should be), `.mute()` produced no
   audio stream at all. See the "A clip's own audio" section of `README.md`.
+- **`Content::Clip.speed` picks a scaled *decoded* frame index
+  (`local × speed`); it does not touch the clip's own audio.** Same call as
+  the loop/hold gap directly above: pitch/tempo-correcting audio for a
+  different playback rate needs `ffmpeg`'s `atempo`, which this crate does not
+  wire up, so `Layer::clip_audio_track` drops a clip's own soundtrack entirely
+  while `speed != 1.0` rather than mix it out of sync with what is on screen.
+  A large speed still only ever reaches frames the `trim`/`decode_fps` window
+  actually decoded — it does not decode further on its own. See the "A clip's
+  own speed" section of `README.md`.
 - **A clip's camera is not mip-backed the way a still's is.** `Content::Clip.camera`
   reuses `Camera`'s framing maths (`src/camera.rs`'s `Canvas::draw_pixmap_cropped`),
   but a clip frame is decoded once at `max_width` and a tight framing just

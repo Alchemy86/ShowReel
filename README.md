@@ -164,6 +164,30 @@ This does not loop a clip's audio to match `ClipLoop::Loop` — a looping
 decoded source does, the same way a video frozen on its last frame does not
 keep making noise. See `AGENTS.md` for the full reasoning.
 
+### A clip's own speed
+
+`Layer::clip(...).speed(2.0)` plays the decoded window at a different rate —
+double speed reaches a highlight sooner, `0.5` is real slow motion:
+
+```rust
+Layer::clip("burst.mp4").trim(0.0, 6.0)              // plays at 1x
+Layer::clip("burst.mp4").trim(0.0, 6.0).speed(3.0)   // the same window, 3x through
+```
+
+Same on-screen moment — one second into the layer — two different points in
+the source, because speed only changes *which decoded frame* is picked:
+
+| `speed(1.0)` (default) | `speed(3.0)` |
+|---|---|
+| ![one second in, still the clip's first colour](docs/stills/clip-speed-1x.png) | ![the same one second in, three seconds into the source](docs/stills/clip-speed-3x.png) |
+
+It does not touch the clip's own soundtrack. Playing audio at a different rate
+needs pitch/tempo correction ffmpeg can do (`atempo`) but this crate does not
+attempt, so — the same call as `ClipLoop::Loop`'s audio above — a clip's own
+audio is silently dropped from the mix while `speed != 1.0`, rather than
+played back out of sync with what is on screen. Add a separate `Audio` track
+if the moment needs sound.
+
 ### A cross-blur dissolve
 
 `Presentation::CrossBlur` softens both frames toward the transition's
