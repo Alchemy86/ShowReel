@@ -26,6 +26,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | `Content::Bar`'s `BarSpec` (`from`/`to`/`over`/`easing`) deliberately mirrors `CounterSpec` rather than reusing it — a bar has no digits, grouping or prefix/suffix, and nests under `"progress"` for the same `from`-collides-with-`Layer::from` reason `CounterSpec` nests under `"count"` | `src/layer.rs` |
 | `Content::Parallax` (the fake-depth "screenshot" shot, `docs/anarchist-study.md`) is a composition convenience, not new render machinery: one authored `Camera` move, and each plane's own viewport is `Camera::viewport_at`'s *result* blended toward its resting framing by `ParallaxPlane::depth` — position linearly, height geometrically, the same reasoning `Camera::viewport_at` itself uses for zoom | `src/layer.rs` (`draw_parallax`, `parallax_viewport`) |
 | `Grade` (the colour-grade pass, `docs/anarchist-study.md`'s other confirmed gap) follows the same idiom as `Content::Parallax`: a composition convenience, not a new render path. It is `Film.grade`/`Scene.grade` — an `Option`, the same override shape `background` already has — applied once per scene by `Renderer::draw_scene` *after* every layer has drawn, so it composes with a still, a clip or a parallax stack with zero knowledge of what any of them contain. Written as a bare word (`"documentary"`) or a full object, the same untagged shorthand `Placement` uses | `src/grade.rs`, `src/canvas.rs` (`apply_grade`), `src/render.rs` |
+| `Content::Chart` (animated charts — a plotted function/line or growing bars) is one layer content kind, not a parallel system: `ChartSpec` is data like every other layer, and its one animation is a **reveal sweep** — a single eased 0..1 crossing the plot left-to-right on the film clock, the same `value_at(local)` idiom `BarSpec`/`CounterSpec` use, not a private animation vocabulary. A function series is a string (`"40*log(x+1)"`) parsed once by `src/expr.rs` (a tiny arithmetic evaluator — the four ops, `^`, `x`, a fixed function set, `pi`/`tau`/`e`; anything else is a `validate()` error, never a silent zero). Composition is inherited, not built: the grade lands on the finished pixels, a callout/title is a higher-`z` layer, and "push in on a chart" is `PullUp` (a bitmap lift of the drawn region) — the showreel `Camera` is a still/clip mip feature and is deliberately *not* bolted onto procedural drawing. Audio-mapped-to-curve (the reference short does it) was deliberately **not** started | `src/chart.rs`, `src/expr.rs`, `src/layer.rs` (`Content::Chart`, `draw_content`) |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
@@ -413,6 +414,26 @@ got before this round of features touched it.
 - **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
   second. Using the first letterboxes a square source into a wide frame — the exact
   opposite of covering it.
+
+- **A `Content::Chart` is either xy or categorical, never both.** The moment any
+  series is `Series::Bars` the whole chart is a bar chart — its x-axis is the bars'
+  categories — and any non-bar series in it is ignored and flagged by
+  `ChartSpec::problems`. A line and bars share no x coordinate system; mixing them
+  is an authoring mistake to split into two charts, not a combo to support
+  (`src/chart.rs`, `ChartSpec::is_categorical`).
+
+- **A `Series::Function` has no domain of its own** — a string like `"sin(x)"`
+  does not say *over what x*. So a function chart with `x.min`/`x.max` unset is a
+  `validate()` error, not a guess; `Layer::chart_function(expr, x0, x1)` sets the
+  range for you. Explicit `Series::Line` points carry their own x, so they need no
+  range (`src/chart.rs`).
+
+- **Chart tick labels are laid out with `TextLayout::build` every frame**, the
+  same as `Counter`/`Title` — there is no cross-frame label cache, on purpose
+  (frames render in parallel and out of order; a chart must stay a pure function
+  of its frame). It is most of the chart's ~9ms/frame at 1080p; a 240-sample
+  gradient-stroked filled curve on its own is cheap. Don't reach for a cache
+  without solving the determinism/ordering it would break first (`src/chart.rs`).
 
 ## Working on it
 

@@ -114,6 +114,25 @@ fn scale_layer(l: &mut Layer, k: f64) {
                 *r *= k;
             }
         }
+        Content::Chart { spec } => {
+            // The plot geometry is derived from the placement box, already
+            // scaled above; only the pixel-space line, marker and label sizes
+            // need it.
+            scale_opt(&mut spec.label_style, k);
+            for s in &mut spec.series {
+                match s {
+                    crate::chart::Series::Line { style, .. }
+                    | crate::chart::Series::Function { style, .. } => style.width *= k,
+                    crate::chart::Series::Bars { .. } => {}
+                }
+            }
+            for m in &mut spec.markers {
+                match m {
+                    crate::chart::Marker::VLine { width, .. }
+                    | crate::chart::Marker::HLine { width, .. } => *width *= k,
+                }
+            }
+        }
         // A camera's framings are in the *source* image's pixels, which do not
         // change when the output frame does.
         Content::Still { .. }

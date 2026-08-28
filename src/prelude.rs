@@ -3,6 +3,7 @@
 pub use crate::assets::{AssetStore, ClipLoop};
 pub use crate::audio::{Audio, AudioInput};
 pub use crate::camera::{Camera, Framing, Shot};
+pub use crate::chart::{Axis, ChartSpec, LineStyle, Marker, Reveal, Series};
 pub use crate::canvas::Canvas;
 pub use crate::color::{Color, Paint};
 pub use crate::ease::{Easing, Spring};

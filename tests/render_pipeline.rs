@@ -31,11 +31,39 @@ fn kitchen_sink() -> Film {
                 .detail("a thing worth naming")
                 .from(0.5),
         )
-        .layer(Layer::text("Plain text, wrapped and fitted.").frac(0.1, 0.75, 0.5, 0.15).from(0.6));
+        .layer(Layer::text("Plain text, wrapped and fitted.").frac(0.1, 0.75, 0.5, 0.15).from(0.6))
+        // A function chart drawing in — the xy path, at a tiny frame on purpose.
+        .layer(
+            Layer::chart_function("sin(x)", 0.0, std::f64::consts::TAU)
+                .chart_marker(Marker::VLine { x: std::f64::consts::PI, colour: None, label: Some("π".into()), width: 2.0 })
+                .frac(0.55, 0.08, 0.42, 0.6)
+                .drawing_in(1.5)
+                .from(0.4),
+        );
 
     let scene_c = Scene::new(2.0)
         .named("c")
         .layer(Layer::gradient(vec![(0.0, Color::WHITE), (1.0, Color::rgb(120, 130, 150))], 0.0))
+        // A grouped-bar chart — the categorical path.
+        .layer(
+            Layer::chart(vec![
+                Series::Bars {
+                    values: vec![3.0, 5.0, 4.0],
+                    labels: vec!["a".into(), "b".into(), "c".into()],
+                    paint: None,
+                    name: Some("one".into()),
+                },
+                Series::Bars {
+                    values: vec![4.0, 2.0, 6.0],
+                    labels: vec![],
+                    paint: None,
+                    name: Some("two".into()),
+                },
+            ])
+            .frac(0.05, 0.3, 0.5, 0.6)
+            .drawing_in(1.2)
+            .from(0.1),
+        )
         .layer(Layer::pull_up((0.3, 0.3, 0.3, 0.3)).label("lifted").from(0.2));
 
     Film::new(320, 180, 30.0)

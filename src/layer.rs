@@ -536,6 +536,15 @@ pub enum Content {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         radius: Option<f64>,
     },
+    /// A chart whose data arrives over time: a plotted function or line, or
+    /// bars that grow. The whole thing is [`crate::chart::ChartSpec`] — see
+    /// that module for the mental model. Nested under `"chart"` for the same
+    /// reason a counter nests under `"count"`: its own fields (`series`, `x`,
+    /// `y`) would otherwise crowd the layer's own vocabulary.
+    Chart {
+        #[serde(rename = "chart")]
+        spec: crate::chart::ChartSpec,
+    },
 }
 
 impl Content {
@@ -565,7 +574,8 @@ impl Content {
             | Content::Callout { .. }
             | Content::PullUp { .. }
             | Content::Parallax { .. }
-            | Content::Bar { .. } => Placement::Full,
+            | Content::Bar { .. }
+            | Content::Chart { .. } => Placement::Full,
         }
     }
 }
@@ -777,6 +787,90 @@ impl Layer {
         self
     }
 
+    /// A chart from a list of series. Animates by default — the reveal sweeps
+    /// over 2s; call [`Layer::drawing_in`] to change it, or
+    /// [`Layer::chart_static`] for a chart that is drawn from its first frame.
+    /// Size it with `.frac()` rather than leaving it full-frame.
+    pub fn chart(series: Vec<crate::chart::Series>) -> Self {
+        Layer::new(Content::Chart {
+            spec: crate::chart::ChartSpec {
+                series,
+                x: crate::chart::Axis::default(),
+                y: crate::chart::Axis::default(),
+                reveal: crate::chart::Reveal::over(2.0),
+                markers: Vec::new(),
+                grid: true,
+                axis_colour: None,
+                label_style: None,
+            },
+        })
+    }
+
+    /// A chart drawn in full from its first frame — no reveal sweep.
+    pub fn chart_static(series: Vec<crate::chart::Series>) -> Self {
+        let mut l = Layer::chart(series);
+        if let Content::Chart { spec } = &mut l.content {
+            spec.reveal = crate::chart::Reveal::default();
+        }
+        l
+    }
+
+    /// A single plotted function over `[x0, x1]` — the reference film's shot.
+    pub fn chart_function(expr: impl Into<String>, x0: f64, x1: f64) -> Self {
+        let mut l = Layer::chart(vec![crate::chart::Series::Function {
+            expr: expr.into(),
+            samples: 240,
+            style: crate::chart::LineStyle::default(),
+        }]);
+        if let Content::Chart { spec } = &mut l.content {
+            spec.x.min = Some(x0);
+            spec.x.max = Some(x1);
+        }
+        l
+    }
+
+    /// Change how long the chart's reveal sweep takes.
+    pub fn drawing_in(mut self, over: impl Into<Time>) -> Self {
+        if let Content::Chart { spec } = &mut self.content {
+            spec.reveal = crate::chart::Reveal::over(over);
+        }
+        self
+    }
+
+    /// Set the x-axis range (and, with [`Layer::chart_y`], the y-axis).
+    pub fn chart_x(mut self, min: f64, max: f64) -> Self {
+        if let Content::Chart { spec } = &mut self.content {
+            spec.x.min = Some(min);
+            spec.x.max = Some(max);
+        }
+        self
+    }
+
+    pub fn chart_y(mut self, min: f64, max: f64) -> Self {
+        if let Content::Chart { spec } = &mut self.content {
+            spec.y.min = Some(min);
+            spec.y.max = Some(max);
+        }
+        self
+    }
+
+    /// Label the axes.
+    pub fn chart_axes(mut self, x: impl Into<String>, y: impl Into<String>) -> Self {
+        if let Content::Chart { spec } = &mut self.content {
+            spec.x.label = Some(x.into());
+            spec.y.label = Some(y.into());
+        }
+        self
+    }
+
+    /// Add a reference line at a data value — see [`crate::chart::Marker`].
+    pub fn chart_marker(mut self, marker: crate::chart::Marker) -> Self {
+        if let Content::Chart { spec } = &mut self.content {
+            spec.markers.push(marker);
+        }
+        self
+    }
+
     pub fn callout(
         text: impl Into<String>,
         target: (f64, f64),
@@ -923,6 +1017,16 @@ impl Layer {
             Content::Counter { label, .. } => *label = Some(l.into()),
             Content::PullUp { spec, .. } => spec.label = Some(l.into()),
             _ => {}
+        }
+        self
+    }
+
+    /// For a pull-up: where the lifted region lands, in fractions of the frame.
+    /// Its aspect ratio is kept, so this box is a bound, not an exact rect.
+    /// Without it a pull-up lands centred — see [`PullUpSpec::to`].
+    pub fn landing(mut self, fx: f64, fy: f64, fw: f64, fh: f64) -> Self {
+        if let Content::PullUp { spec, .. } = &mut self.content {
+            spec.to = Some((fx, fy, fw, fh));
         }
         self
     }
@@ -1242,6 +1346,10 @@ impl Layer {
             }
             Content::Bar { spec, track, fill, radius } => {
                 self.draw_bar(canvas, spec, *track, fill, *radius, state, alpha, local);
+            }
+            Content::Chart { spec } => {
+                let box_ = shift(self.placement().resolve(&frame, (frame.w, frame.h)), state);
+                crate::chart::draw(canvas, ctx, spec, box_, local, alpha);
             }
         }
         Ok(())

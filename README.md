@@ -43,6 +43,7 @@ says where every asset came from).
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
 | **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
 | **A colour grade** | a post-composite lift/contrast/saturation/vignette pass, `"documentary"` in one word or five raw knobs, over a still, a clip or a parallax stack alike — see [below](#a-colour-grade) |
+| **Animated charts** | a plotted function or line, or bars that grow, on deliberate axes — drawn in over the film's own clock — see [below](#an-animated-chart) |
 
 ## Everything that's here
 
@@ -54,10 +55,10 @@ which module it lives in.
 - A timeline of `Scene`s joined by `Transition`s — `Scene (Transition Scene)*`,
   a shape that makes "transition first" or "two transitions in a row"
   unwritable rather than a runtime error (`src/timeline.rs`)
-- 13 layer content kinds: solid fill, linear gradient, edge scrim, still image,
+- 14 layer content kinds: solid fill, linear gradient, edge scrim, still image,
   video clip, plain text, title (+ subtitle), lower-third (+ detail), counter,
-  callout, pull-up, the fake-depth parallax stack, and a progress bar
-  (`src/layer.rs`)
+  callout, pull-up, the fake-depth parallax stack, a progress bar, and an
+  animated chart (`src/layer.rs`, `src/chart.rs`)
 - 9 transition presentations — cut, dissolve, fade-through-colour, wipe,
   slide, push, iris, zoom-in, cross-blur — each independent of how it's
   *paced*: any easing curve or a physical spring (`src/transition.rs`, `src/ease.rs`)
@@ -379,6 +380,74 @@ when the filled portion is narrower than the radius, the same
 `Layer::bar_fixed(v)` holds at a constant level with no animation at all —
 useful for a static indicator rather than a fill.
 
+### An animated chart
+
+`Content::Chart` is data that arrives over time: a plotted function or line, or
+bars that grow, on axes that look deliberate. Like every other layer it is
+pure data — series, axes and a reveal — so it can be written in Rust, loaded
+from JSON, or emitted by a tool over MCP. Nothing in the crate knows what the
+numbers *are*; a growth curve, a poll and a benchmark are all the same layer.
+
+The one animation is a **reveal sweep**: a single eased 0..1 that crosses the
+plot left to right on the film's own clock, the same way `Counter` and the
+progress bar ease a value over `over` seconds. A line is drawn only up to the
+swept x (its leading segment interpolated, so the tip advances smoothly rather
+than a point at a time); bars pop in as the sweep passes their slot.
+
+A function, sampled over its x-range and drawn in over 3 seconds — the
+treatment of the reference short this feature was built from:
+
+```rust
+Layer::chart_function("40*log(x+1)", 0.0, 80.0)   // ln, sampled across [0, 80]
+    .chart_axes("age (years)", "how fast a year feels")
+    .chart_marker(Marker::VLine { x: 40.0, colour: Some(green), label: Some("midpoint".into()), width: 3.0 })
+    .drawing_in(3.0)
+    .frac(0.10, 0.26, 0.82, 0.60)   // sized like a bar: you place it
+```
+
+The expression grammar (`src/expr.rs`) is deliberately small — the four
+operators plus `^`, one variable `x`, `sin`/`cos`/`exp`/`log`/`sqrt`/… and the
+constants `pi`/`tau`/`e`. A malformed expression, or a function chart with no
+x-range, is a `validate()` error caught by `showreel check`, not a silent
+blank. An explicit line takes points instead:
+`Series::Line { points: vec![[0.0, 0.0], [1.0, 3.0], …], .. }`.
+
+Bars grow to their values, and several series cluster into groups:
+
+```rust
+Layer::chart(vec![
+    Series::Bars { values: vec![32.0, 48.0, 61.0, 74.0], labels: vec!["Q1".into(), "Q2".into(), "Q3".into(), "Q4".into()], paint: Some(cyan.into()), name: Some("2023".into()) },
+    Series::Bars { values: vec![40.0, 55.0, 70.0, 92.0], labels: vec![],           paint: Some(magenta.into()), name: Some("2024".into()) },
+])
+.chart_axes("quarter", "revenue (£k)")
+.drawing_in(2.8)
+```
+
+Three moments of the worked example (`examples/chart_demo.rs`, which needs
+nothing on disk — `cargo run --release --example chart_demo`, then `showreel
+render examples/chart.film.jsonc -o out/chart_demo.mp4`):
+
+![a function drawing in, grouped bars, and the chart composed with a grade, callout and pull-up](docs/stills/chart-demo-sheet.png)
+
+**It composes with the rest of the crate without knowing it does.** The third
+scene above is the same curve with a `Grade` over it (a post-composite pass on
+the finished pixels), a `Callout` pointing into it, and a `PullUp` enlarging a
+corner of it — none of them chart-aware, because the grade lands on pixels, a
+callout is just another layer with a higher `z`, and a pull-up lifts a region
+of *whatever* is beneath it. The showreel `Camera` is a still/clip feature
+over a mip pyramid, so "push in on a chart" is `PullUp` (a bitmap lift of the
+drawn region), not a camera bolted onto procedural drawing.
+
+**The cost is a single ordinary draw, not an expensive one.** Measured
+in-process (release, single-threaded), a full animated function chart at
+1920×1080 — a 240-sample gradient-stroked curve, filled underneath, with axes,
+ticks, a marker and per-frame tick-label layout — added **~9ms/frame** over the
+same scene without it. That is below the colour grade's ~34–40ms and far below
+`CrossBlur`'s ~170ms; bars are cheaper still. Comfortably real-time.
+
+Audio mapped to the curve — the reference short also plays each function as a
+sound — is a separate feature, deliberately not started here.
+
 ### A parallax shot
 
 `Content::Parallax` turns one flat image, cut into a handful of depth planes,
@@ -681,6 +750,10 @@ Named plainly, not buried in `AGENTS.md`'s longer sharp-edges list:
   its radius — fine for a sub-second transition, not for a film-length one.
 - **A colour grade** costs ~34-40ms a frame at 1080p once set — see
   ["A colour grade"](#a-colour-grade) above.
+- **An animated chart** adds ~9ms a frame at 1080p (a full gradient-stroked,
+  filled function curve with axis labels) — see ["An animated
+  chart"](#an-animated-chart) above. **Charts do not map data to audio** — the
+  reference short does; that is a separate, deliberately un-started feature.
 - **A clip's camera isn't mip-backed** the way a still's is — push in tight
   on footage and raise `max_width` to match, or it goes soft.
 - **No rich text runs**: a `Text`/`Title`/`LowerThird` is one style for its

@@ -599,6 +599,18 @@ impl Film {
             };
             errs.extend(a.validate(&label, total));
         }
+        // Chart layers carry their own well-formedness rules (a function needs
+        // an x range, an expression must parse) — surface them here, so a bad
+        // chart is caught by `showreel check` rather than drawing empty.
+        for si in 0..self.timeline.scene_count() {
+            for (li, l) in self.timeline.scene(si).layers.iter().enumerate() {
+                if let crate::layer::Content::Chart { spec } = &l.content {
+                    for p in spec.problems() {
+                        errs.push(format!("scene {si} layer {li} (chart): {p}"));
+                    }
+                }
+            }
+        }
         errs
     }
 

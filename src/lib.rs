@@ -35,6 +35,7 @@
 pub mod canvas;
 pub mod color;
 pub mod ease;
+pub mod expr;
 pub mod geom;
 pub mod time;
 pub mod assets;
@@ -43,6 +44,7 @@ pub mod text;
 pub mod transition;
 pub mod motion;
 pub mod layer;
+pub mod chart;
 pub mod grade;
 pub mod theme;
 pub mod timeline;
