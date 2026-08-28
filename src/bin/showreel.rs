@@ -89,6 +89,25 @@ enum Command {
         #[arg(long, default_value_t = 0.35)]
         scale: f64,
     },
+    /// Write a starter film: a two-scene example that needs no assets, ready
+    /// to edit and render. The fastest way to have something working rather
+    /// than a blank page.
+    New {
+        /// Where to write it. Defaults to `film.jsonc`.
+        #[arg(default_value = "film.jsonc")]
+        out: PathBuf,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long, default_value_t = 1920)]
+        width: u32,
+        #[arg(long, default_value_t = 1080)]
+        height: u32,
+        #[arg(long, default_value_t = 30.0)]
+        fps: f64,
+        /// Overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+    },
     /// Describe a film without rendering it.
     Info { film: PathBuf },
     /// Check a film for the mistakes a type cannot catch.
@@ -115,6 +134,11 @@ enum Command {
         #[arg(long, default_value_t = 1.0)]
         scale: f64,
     },
+    /// Run an MCP server over stdio: build, render, still and inspect a
+    /// film through typed tool calls instead of shelling out to this CLI
+    /// and parsing its output. Built with `--features mcp`.
+    #[cfg(feature = "mcp")]
+    Mcp,
     /// Package a film to run in a browser with no server: the wasm build
     /// (`build-wasm.sh`) plus this film's assets, clips pre-decoded (needs
     /// ffmpeg — see `src/wasm.rs`). Built with `--features wasm`.
@@ -152,6 +176,9 @@ fn main() -> Result<()> {
         Command::Preview { film, out, asset_roots, scale } => {
             cmd_render(film, Some(out), asset_roots, scale, None, true, None, 26)
         }
+        Command::New { out, title, width, height, fps, force } => {
+            cmd_new(out, title, width, height, fps, force)
+        }
         Command::Info { film } => cmd_info(film),
         Command::Check { film } => cmd_check(film),
         Command::Fonts { filter } => cmd_fonts(filter),
@@ -159,6 +186,8 @@ fn main() -> Result<()> {
         Command::Studio { film, asset_roots, port, host, scale } => {
             cmd_studio(film, asset_roots, port, host, scale)
         }
+        #[cfg(feature = "mcp")]
+        Command::Mcp => cmd_mcp(),
         #[cfg(feature = "wasm")]
         Command::WebPack { film, asset_roots, out, scale, clip_quality } => {
             cmd_web_pack(film, asset_roots, out, scale, clip_quality)
@@ -189,7 +218,7 @@ fn load(path: &Path) -> Result<Film> {
         for e in &errs {
             eprintln!("error: {e}");
         }
-        bail!("{} problem(s) in {}", errs.len(), path.display());
+        bail!("{} in {}", showreel::timeline::describe_problem_count(errs.len()), path.display());
     }
     Ok(film)
 }
@@ -261,7 +290,9 @@ fn cmd_render(
         range.end - range.start
     );
 
-    let tracks = resolve_audio(&film, &assets)?;
+    let mut tracks = resolve_audio(&film, &assets)?;
+    let clip_tracks = film.clip_audio(&assets).context("resolving a clip's own audio")?;
+    tracks.extend(clip_tracks);
     for t in &tracks {
         println!(
             "  sound   {} — {:.2}s..{:.2}s of the film, from {:.2}s in, fade {}s/{}s",
@@ -406,6 +437,37 @@ fn cmd_info(film_path: PathBuf) -> Result<()> {
             );
         }
     }
+    let mut clip_audio_lines = Vec::new();
+    for p in film.timeline.placements() {
+        let scene = film.timeline.scene(p.index);
+        for l in &scene.layers {
+            let showreel::layer::Content::Clip { asset, audio, .. } = &l.content else { continue };
+            let span = l.span(scene.duration);
+            let at = (p.start + span.start).as_secs();
+            let note = if audio.muted {
+                "muted".to_string()
+            } else {
+                let gain = if (audio.gain - 1.0).abs() < 1e-9 {
+                    String::new()
+                } else {
+                    format!(", gain {}", audio.gain)
+                };
+                format!(
+                    "{:.2}s, fade {}s/{}s{gain}",
+                    span.duration.as_secs(),
+                    audio.fade_in.as_secs(),
+                    audio.fade_out.as_secs()
+                )
+            };
+            clip_audio_lines.push(format!("    {at:>7.2}s  {asset:<28} {note}"));
+        }
+    }
+    if !clip_audio_lines.is_empty() {
+        println!("  clip audio:");
+        for l in clip_audio_lines {
+            println!("{l}");
+        }
+    }
     let used = film.assets_used();
     if !used.is_empty() {
         println!("  assets:");
@@ -444,8 +506,129 @@ fn presentation_name(t: &showreel::transition::Transition) -> String {
         Push { .. } => "push",
         Iris { .. } => "iris",
         ZoomIn { .. } => "zoom-in",
+        CrossBlur { .. } => "cross-blur",
     }
     .to_string()
+}
+
+/// A two-scene, asset-free starter film, as JSONC — commented so a first-time
+/// reader can see the shape of the format (`opening`/`then`, a layer's `type`
+/// tag) without cross-referencing the docs. Every value here is something
+/// `showreel render` can turn into a video with no `-A` at all: solid and
+/// gradient backgrounds, a title, a lower-third, a counter and plain text.
+/// `examples/kanto.film.jsonc` is the fuller worked example, once this one
+/// stops being a blank page.
+fn starter_jsonc(title: &str, width: u32, height: u32, fps: f64) -> String {
+    // JSON-escaped (and already quoted) so a title with a `"` or a backslash
+    // in it — plausible for anything typed on a command line — still lands in
+    // valid JSON rather than corrupting the file it is interpolated into.
+    let title = serde_json::to_string(title).unwrap();
+    format!(
+        r##"// A ShowReel film. This is JSONC: `//` comments and a trailing comma on the
+// last item of a list are both fine — see `AGENTS.md` if you want to know why
+// only those two, and not the rest of JSON5.
+//
+// The shape: one required opening scene, then any number of (transition,
+// scene) pairs. Every layer needs a "type" — see `examples/kanto.film.jsonc`
+// for the fuller vocabulary (a camera move over a still, video clips, sound).
+//
+// Try it now:
+//   showreel check film.jsonc
+//   showreel still film.jsonc --at 2s -o still.png
+//   showreel sheet film.jsonc -o sheet.png
+//   showreel render film.jsonc -o out.mp4
+{{
+  "width": {width},
+  "height": {height},
+  "fps": {fps},
+  "title": {title},
+
+  "opening": {{
+    "duration": 4.0,
+    "layers": [
+      {{ "type": "gradient", "stops": [[0.0, "#1c2438"], [1.0, "#07090e"]], "angle": 110.0 }},
+      {{
+        "type": "title",
+        "text": {title},
+        "subtitle": "describe a film and render it",
+        // Every character arrives in turn — see `src/motion.rs` for the rest
+        // of the entrance vocabulary (fade, rise, slide, scale, words...).
+        "enter": {{ "kind": "chars", "stagger": 0.03, "rise": 26.0, "duration": 0.6 }}
+      }}
+    ]
+  }},
+
+  "then": [
+    {{
+      "transition": {{ "duration": 0.8, "presentation": {{ "kind": "dissolve" }} }},
+      "scene": {{
+        "duration": 5.0,
+        "layers": [
+          {{ "type": "solid", "colour": "#0d1016" }},
+          {{
+            "type": "lower-third",
+            "text": "Made with ShowReel",
+            "detail": "edit this file to make it yours",
+            "from": 0.3
+          }},
+          {{
+            "type": "counter",
+            "count": {{ "from": 0.0, "to": 100.0, "over": 2.0 }},
+            "label": "% of the way to a real film",
+            "from": 0.6
+          }},
+          {{
+            "type": "text",
+            "text": "A film is a value: a Rust builder or this JSON,\nthe same tree either way.",
+            // A box in fractions of the frame — the placement to reach for,
+            // since it survives a resolution change. See `src/layer.rs`'s
+            // `Placement` for the other kinds (an anchor, an exact rect).
+            // Kept clear of the counter (top right) and the lower-third
+            // (bottom left, below).
+            "placement": {{ "fx": 0.1, "fy": 0.32, "fw": 0.6, "fh": 0.2 }},
+            "from": 1.4
+          }}
+        ]
+      }}
+    }}
+  ]
+}}
+"##
+    )
+}
+
+fn cmd_new(
+    out: PathBuf,
+    title: Option<String>,
+    width: u32,
+    height: u32,
+    fps: f64,
+    force: bool,
+) -> Result<()> {
+    if out.exists() && !force {
+        bail!("{} already exists; pass --force to overwrite", out.display());
+    }
+    let title = title.unwrap_or_else(|| "A New Film".to_string());
+    let jsonc = starter_jsonc(&title, width, height, fps);
+    // Fail loudly here rather than write something `showreel check` would
+    // then also reject — a scaffold that does not itself validate is worse
+    // than no scaffold.
+    let film = Film::from_json(&jsonc).context("the starter template failed to parse")?;
+    let errs = film.validate();
+    if !errs.is_empty() {
+        for e in &errs {
+            eprintln!("error: {e}");
+        }
+        bail!("the starter template does not validate — this is a bug in `showreel new` itself");
+    }
+    if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&out, jsonc)?;
+    println!("{} — {:.1}s, {width}x{height} at {fps}fps, no assets needed", out.display(), film.duration().as_secs());
+    println!("  showreel still {} --at 2s -o still.png", out.display());
+    println!("  showreel render {} -o out.mp4", out.display());
+    Ok(())
 }
 
 fn cmd_check(film_path: PathBuf) -> Result<()> {
@@ -458,7 +641,7 @@ fn cmd_check(film_path: PathBuf) -> Result<()> {
     for e in &errs {
         eprintln!("error: {e}");
     }
-    bail!("{} problem(s)", errs.len());
+    bail!("{}", showreel::timeline::describe_problem_count(errs.len()));
 }
 
 #[cfg(feature = "studio")]
@@ -475,6 +658,18 @@ fn cmd_studio(
     showreel::studio::serve(film_path, roots, showreel::studio::StudioOptions { port, host, scale })
 }
 
+#[cfg(feature = "mcp")]
+fn cmd_mcp() -> Result<()> {
+    // `enable_time` is not optional: rmcp uses a timer internally (request
+    // timeouts, shutdown draining), and omitting it panics on the first path
+    // that needs one rather than failing at startup.
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_time()
+        .build()
+        .context("starting the MCP server's async runtime")?
+        .block_on(showreel::mcp::serve())
+}
+
 /// Where a clip's `.srclip` container lands under `assets/`, given the exact
 /// parameters it was decoded with. A bare `{asset}.srclip` would collide the
 /// moment the same source file is used twice at two different trims — kanto's
@@ -489,6 +684,37 @@ fn clip_srclip_name(asset: &str, max_width: u32, fps: f64, trim: Option<(f64, f6
         Some((start, dur)) => format!("{asset}@{max_width}x{fps:.3}_{start:.3}-{dur:.3}.srclip"),
         None => format!("{asset}@{max_width}x{fps:.3}_full.srclip"),
     }
+}
+
+/// Render one [`AudioInput`]'s trimmed/gained/faded window to its own small
+/// file — the audio counterpart of a `.srclip`: ffmpeg (unavailable in the
+/// browser) runs once, natively, here, and the browser only ever plays back
+/// what this wrote. Positioning (`AudioInput::at`) is deliberately not baked
+/// in — see [`AudioInput::export_filter`] — the browser scheduler places it,
+/// the same way `.srclip`'s frames carry no notion of where the clip sits on
+/// the film's clock.
+#[cfg(feature = "wasm")]
+fn extract_audio_window(input: &AudioInput, dest: &Path) -> Result<()> {
+    use std::process::Command;
+    let out = Command::new("ffmpeg")
+        .arg("-nostdin")
+        .args(["-loglevel", "error", "-y"])
+        .arg("-i")
+        .arg(&input.path)
+        .args(["-filter_complex", &input.export_filter(0)])
+        .args(["-map", "[a]"])
+        .args(["-c:a", "libmp3lame", "-q:a", "4"])
+        .arg(dest)
+        .output()
+        .with_context(|| format!("running ffmpeg to extract audio from {}", input.path.display()))?;
+    if !out.status.success() {
+        bail!(
+            "ffmpeg failed extracting audio from {}: {}",
+            input.path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
 }
 
 /// Prepare a self-contained directory a static file host can serve as the
@@ -538,6 +764,9 @@ fn cmd_web_pack(
         "srclip.js",
         "clipimport.js",
         "export.js",
+        "audio.js",
+        "geometry.js",
+        "thumbnails.js",
     ] {
         std::fs::copy(web_root.join(module), out.join(module))
             .with_context(|| format!("copying {module}"))?;
@@ -583,6 +812,58 @@ fn cmd_web_pack(
         }
     }
 
+    // Film-level audio tracks (`Film::audio`, e.g. music) ship as the raw
+    // source file, copied as-is like a still — the browser decodes it itself
+    // (`AudioContext.decodeAudioData`) and applies `at`/`from`/gain/fades
+    // live from the film JSON it already has, so editing a track's timing in
+    // the browser is heard immediately, no repackage needed.
+    let mut audio_seen = std::collections::HashSet::new();
+    for name in film.audio_assets() {
+        if !audio_seen.insert(name.to_string()) {
+            continue;
+        }
+        let bytes = std::fs::read(assets.resolve(name)?)?;
+        let dest = out.join("assets").join(name);
+        if let Some(dir) = dest.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&dest, &bytes)?;
+        asset_bytes += bytes.len() as u64;
+        println!("  audio  {name}  {:.0} KB", bytes.len() as f64 / 1024.0);
+    }
+
+    // A clip's own soundtrack is baked into its source video, which the
+    // browser never has (only the pre-decoded `.srclip` frames — see
+    // `src/wasm.rs`'s module doc). Extract exactly the window each clip layer
+    // actually draws for, gain/fades already applied (`Film::clip_audio`
+    // already resolved those from each layer's `ClipAudio`), as its own
+    // small file; `at`/`duration` are recorded so the browser can position
+    // it without recomputing scene/layer timing in JS. Unlike the live
+    // film-level tracks above, this is a snapshot: editing a clip's `audio`
+    // settings or trim in the browser needs a repackage to be heard, the
+    // same staleness a `.srclip`'s own trim already carries.
+    let mut clip_audio_manifest = Vec::new();
+    for (i, input) in film.clip_audio(&assets)?.iter().enumerate() {
+        let name = format!("clip-audio-{i}.mp3");
+        let dest = out.join("assets").join(&name);
+        extract_audio_window(input, &dest)?;
+        let bytes = std::fs::metadata(&dest)?.len();
+        asset_bytes += bytes;
+        println!(
+            "  clip audio  {} — {:.2}s..{:.2}s, {:.0} KB",
+            input.path.display(),
+            input.at,
+            input.at + input.duration,
+            bytes as f64 / 1024.0
+        );
+        clip_audio_manifest.push(serde_json::json!({
+            "file": format!("assets/{name}"),
+            "at": input.at,
+            "duration": input.duration,
+        }));
+    }
+    std::fs::write(out.join("clip-audio.json"), serde_json::to_string(&clip_audio_manifest)?)?;
+
     let wasm_bytes = std::fs::metadata(&wasm_src)?.len();
     let font_bytes: u64 = std::fs::read_dir(out.join("fonts"))?
         .filter_map(|e| e.ok())
@@ -620,3 +901,27 @@ fn cmd_fonts(filter: Option<String>) -> Result<()> {
     Ok(())
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every value `showreel new` might plausibly be asked for — including a
+    /// title with the exact characters that would break naive JSON string
+    /// interpolation — must still produce a film that parses and validates.
+    #[test]
+    fn the_starter_template_always_parses_and_validates() {
+        for (title, w, h, fps) in [
+            ("A New Film", 1920, 1080, 30.0),
+            ("Quotes \"and\" \\backslashes\\", 640, 360, 24.0),
+            ("", 320, 180, 60.0),
+        ] {
+            let jsonc = starter_jsonc(title, w, h, fps);
+            let film = Film::from_json(&jsonc)
+                .unwrap_or_else(|e| panic!("starter for {title:?} failed to parse: {e}\n{jsonc}"));
+            let errs = film.validate();
+            assert!(errs.is_empty(), "starter for {title:?}: {errs:?}");
+            assert_eq!((film.width, film.height, film.fps), (w, h, fps));
+        }
+    }
+}

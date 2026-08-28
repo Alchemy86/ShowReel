@@ -109,9 +109,18 @@ fn scale_layer(l: &mut Layer, k: f64) {
             // biggest waste in a preview pass.
             *max_width = ((*max_width as f64 * k).round() as u32).max(16);
         }
+        Content::Bar { radius, .. } => {
+            if let Some(r) = radius {
+                *r *= k;
+            }
+        }
         // A camera's framings are in the *source* image's pixels, which do not
         // change when the output frame does.
-        Content::Still { .. } | Content::Solid { .. } | Content::Gradient { .. } | Content::Scrim { .. } => {}
+        Content::Still { .. }
+        | Content::Parallax { .. }
+        | Content::Solid { .. }
+        | Content::Gradient { .. }
+        | Content::Scrim { .. } => {}
     }
 }
 

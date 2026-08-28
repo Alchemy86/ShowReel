@@ -56,6 +56,8 @@ pub mod preview;
 pub mod prelude;
 #[cfg(feature = "studio")]
 pub mod studio;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 // The .srclip container is used natively by `showreel web-pack` (encode) and
 // in the browser by src/wasm.rs (decode), so it is not itself wasm32-only.
 #[cfg(feature = "wasm")]

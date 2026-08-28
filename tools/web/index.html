@@ -51,11 +51,50 @@ button, input, select { font-family: inherit; font-size: inherit; color: inherit
 
 #stage-wrap { flex: 1; display: flex; align-items: center; justify-content: center;
   background: #000; min-height: 0; padding: 10px; position: relative; }
-#view { max-width: 100%; max-height: 100%; display: block; background: #000; }
+/* Scale-to-fit via intrinsic size + max-width/max-height, not `width: 100%;
+   height: 100%; object-fit: contain`, which was tried first: stretching the
+   canvas element's own CSS box to fill the flex container gave it a box
+   shaped like the pane (tall and narrow), not like the film, and object-fit
+   letterboxed *within* that wrong-shaped box rather than filling the pane —
+   the frame ended up small and off-centre with most of the pane empty
+   (docs/youcut-study.md's "the stage doesn't fill the stage"). Leaving
+   width/height auto lets the canvas's own intrinsic size (its `width`/
+   `height` attributes, set from the film's own dimensions in main.js) drive
+   the aspect ratio, and max-width/max-height clamp it to whichever axis of
+   `#stage-wrap` binds first — the same "big as it can be, never distorted"
+   result object-fit was reaching for, without needing the canvas's CSS box
+   to already be the right shape. Playback renders into a smaller backing
+   buffer (see main.js's draft scale) and this scales that up to fill the
+   same on-screen size, exactly as before. */
+#view { width: auto; height: auto; max-width: 100%; max-height: 100%; display: block; background: #000; }
 #splash { position: absolute; inset: 0; display: grid; place-items: center; background: var(--bg);
   color: var(--muted); font-family: var(--mono); font-size: 13px; text-align: center; }
 #splash b { color: var(--ink); }
 #splash[hidden] { display: none; }
+
+/* Sits over the canvas at exactly its `object-fit: contain` box (the same
+   10px inset `#stage-wrap`'s padding gives the canvas) — see main.js's
+   `stageImageRect` for the letterbox math that places `#sel-box` within it. */
+#stage-overlay { position: absolute; inset: 10px; cursor: default; }
+#sel-box { position: absolute; border: 2px solid var(--accent); border-radius: 3px; cursor: move;
+  background: rgba(255, 209, 71, .08); }
+#sel-box[hidden] { display: none; }
+.sel-label { position: absolute; top: -22px; left: -2px; background: var(--accent); color: var(--accent-ink);
+  font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px 4px 4px 0; white-space: nowrap;
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+
+/* ---- callout pins: a ring at the target, a tag at the label, a line between ---- */
+#sel-line { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+#sel-line[hidden] { display: none; }
+#sel-line line { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 5 4; }
+.sel-pin { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 2px solid var(--accent);
+  border-radius: 50%; background: rgba(255, 209, 71, .15); cursor: grab; }
+.sel-pin:active { cursor: grabbing; }
+.sel-pin[hidden] { display: none; }
+.sel-pin-label { width: auto; height: auto; margin: -14px 0 0 -14px; border-radius: 6px; padding: 4px 9px;
+  background: var(--accent); border-color: var(--accent); display: flex; align-items: center; }
+.sel-pin-label .pin-text { color: var(--accent-ink); font-size: 11px; font-weight: 700; white-space: nowrap;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 
 #transport { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
   border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
@@ -64,6 +103,7 @@ button, input, select { font-family: inherit; font-size: inherit; color: inherit
 .icon-btn:hover { border-color: var(--accent); }
 .icon-btn:disabled { opacity: .4; cursor: default; }
 #timecode { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 13ch; }
+#fps-readout { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 
 #scrubber-wrap { padding: 5px 16px 9px; background: var(--panel); border-top: 1px solid var(--border); flex-shrink: 0; }
 #scrubber { position: relative; height: 24px; }
@@ -96,6 +136,12 @@ button, input, select { font-family: inherit; font-size: inherit; color: inherit
 .chip-row.selected { background: var(--panel-3); border-color: var(--accent); }
 .chip-row .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-row .meta { color: var(--dim); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
+/* A filmstrip thumbnail: recognise a scene/layer/asset by what's in it
+   rather than reading its filename — see docs/youcut-study.md. */
+.thumb { width: 36px; height: 20px; object-fit: cover; border-radius: 3px; flex-shrink: 0;
+  background: var(--panel-2); border: 1px solid var(--border); }
+.thumb-lg { width: 64px; height: 36px; }
+.thumb-placeholder { display: inline-block; }
 .chip-row .drag-handle { color: var(--dim); cursor: grab; flex-shrink: 0; }
 .chip-row[draggable="true"]:active { cursor: grabbing; }
 .transition-chip { display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin: 2px 0;
@@ -128,6 +174,39 @@ textarea { font-family: var(--mono); font-size: 11.5px; resize: vertical; min-he
   color: var(--ink); padding: 6px 9px; border-radius: 4px; cursor: pointer; }
 .add-menu-list button:hover { background: var(--panel-2); }
 .add-menu-list[hidden] { display: none; }
+.add-menu-sep { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+  padding: 6px 9px 3px; border-top: 1px solid var(--border); margin-top: 3px; }
+
+/* ---- effect preset grid (replaces a raw Motion-kind dropdown) ---- */
+.effect-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.effect-btn { background: var(--panel-2); border: 1px solid var(--border); color: var(--ink);
+  padding: 7px 4px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600; text-align: center; }
+.effect-btn:hover { border-color: var(--accent); }
+.effect-btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+/* ---- 3x3 anchor quick-pick, in front of the exact placement editor ---- */
+.anchor-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; width: 108px; margin: 6px 0; }
+.anchor-btn { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; cursor: pointer;
+  width: 32px; height: 32px; display: grid; place-items: center; padding: 0; }
+.anchor-btn:hover { border-color: var(--accent); }
+.anchor-btn span { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+.anchor-btn.active { border-color: var(--accent); background: var(--panel-3); }
+.anchor-btn.active span { background: var(--accent); }
+
+/* ---- clip trim widget: drag the ends instead of typing seconds ---- */
+.trim-track { position: relative; height: 28px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; margin: 4px 0 2px; }
+.trim-window { position: absolute; top: 3px; bottom: 3px; background: rgba(255, 209, 71, .22);
+  border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent); }
+.trim-handle { position: absolute; top: 0; bottom: 0; width: 14px; margin-left: -7px; cursor: ew-resize;
+  display: flex; align-items: center; justify-content: center; touch-action: none; }
+.trim-handle::before { content: ''; width: 4px; height: 18px; border-radius: 2px; background: var(--accent); }
+.trim-handle:hover::before { background: var(--ink); }
+
+.pane-adv { padding: 0; border-bottom: 1px solid var(--border); }
+.pane-adv > summary { cursor: pointer; color: var(--dim); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .08em; padding: 10px 12px; }
+.pane-adv .pane { border-bottom: none; padding-top: 0; }
 
 .asset-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; font-size: 12px; }
 .asset-row .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--dim); }
@@ -178,12 +257,19 @@ details.adv summary { cursor: pointer; color: var(--muted); font-size: 11.5px; m
     <main id="center-col">
       <div id="stage-wrap">
         <canvas id="view"></canvas>
+        <div id="stage-overlay">
+          <svg id="sel-line" hidden><line x1="0" y1="0" x2="0" y2="0"/></svg>
+          <div id="sel-box" hidden><div class="sel-label"></div></div>
+          <div id="sel-pin-target" class="sel-pin" hidden title="Drag to what it points at"></div>
+          <div id="sel-pin-label" class="sel-pin sel-pin-label" hidden title="Drag to where it sits"><span class="pin-text"></span></div>
+        </div>
         <div id="splash">loading…</div>
       </div>
 
       <div id="transport">
         <button id="btn-play" class="icon-btn" title="Play / pause (space)" disabled>▶</button>
         <div id="timecode">0:00.0 / 0:00.0</div>
+        <div id="fps-readout" title="Achieved playback rate — best effort, not guaranteed real time"></div>
       </div>
 
       <div id="scrubber-wrap">

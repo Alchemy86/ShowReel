@@ -13,6 +13,7 @@
 //! bring it forward, enlarged and annotated).
 
 use crate::assets::{AssetStore, ClipLoop};
+use crate::audio::{AudioInput, ClipAudio};
 use crate::camera::Camera;
 use crate::canvas::Canvas;
 use crate::color::{Color, Paint};
@@ -21,7 +22,7 @@ use crate::geom::{Anchor, Fit, Rect};
 use crate::motion::{Motion, MotionState};
 use crate::text::{Align, FontDb, GlyphTransform, Plate, Shadow, TextLayout, TextStyle};
 use crate::time::Time;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// What the renderer needs to draw a layer.
@@ -229,6 +230,42 @@ fn group_thousands(digits: &str, negative: bool) -> String {
     if negative { format!("-{out}") } else { out }
 }
 
+/// A value that fills a bar, the same way [`CounterSpec`] animates a number.
+///
+/// Not [`CounterSpec`] itself: a bar has no digits, grouping or prefix/suffix
+/// to carry, and `from`/`to` here are a 0..1 fraction rather than an arbitrary
+/// counted quantity. Nested under `"progress"` on [`Content::Bar`] for the
+/// same reason `CounterSpec` nests under `"count"` — its own `from` is a
+/// value, not the layer's *time* `from`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BarSpec {
+    pub from: f64,
+    pub to: f64,
+    /// How long the fill takes. Shorter than the layer means it lands early
+    /// and holds, the same convention `CounterSpec::over` uses.
+    pub over: Time,
+    #[serde(default)]
+    pub easing: Easing,
+}
+
+impl BarSpec {
+    pub fn new(from: f64, to: f64, over: impl Into<Time>) -> Self {
+        BarSpec { from, to, over: over.into(), easing: Easing::OutExpo }
+    }
+
+    /// A bar that just holds at a fixed level — no animation, an author
+    /// setting a static value rather than describing a fill.
+    pub fn fixed(value: f64) -> Self {
+        BarSpec::new(value, value, Time::ZERO)
+    }
+
+    pub fn value_at(&self, t: f64) -> f64 {
+        let d = self.over.as_secs();
+        let p = if d <= 0.0 { 1.0 } else { (t / d).clamp(0.0, 1.0) };
+        self.from + (self.to - self.from) * self.easing.apply(p)
+    }
+}
+
 /// A label that points at something.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CalloutSpec {
@@ -298,6 +335,26 @@ fn border_w_default() -> f64 {
     3.0
 }
 
+/// One depth-plane image in a [`Content::Parallax`] stack.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParallaxPlane {
+    pub asset: String,
+    /// How far this plane departs from the stack's one authored camera move:
+    /// `0.0` sits still (as far from camera as it gets), `1.0` follows the
+    /// move exactly, and a foreground cutout typically wants somewhat past
+    /// `1.0` to sell the depth. Scales the *offset* from the move's first
+    /// shot, not the framing itself, so every plane starts framed together
+    /// and only diverges as the move plays out.
+    #[serde(default = "one")]
+    pub depth: f64,
+}
+
+impl ParallaxPlane {
+    pub fn new(asset: impl Into<String>, depth: f64) -> Self {
+        ParallaxPlane { asset: asset.into(), depth }
+    }
+}
+
 /// The content of a layer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -348,6 +405,19 @@ pub enum Content {
         /// into a 60fps film at 60 doubles the memory for no more detail.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         decode_fps: Option<f64>,
+        /// Playback rate: `2.0` covers the decoded window twice as fast
+        /// (slow-mo in reverse — a highlight reached sooner), `0.5` half as
+        /// fast (real slow motion). Only ever picks a different *already
+        /// decoded* frame — see `trim` above — so a large speed still needs a
+        /// wide enough `trim`/`decode_fps` to have somewhere to go. Does not
+        /// touch the clip's own soundtrack: playing audio at a different rate
+        /// needs pitch/tempo correction (`ffmpeg`'s `atempo`) this crate does
+        /// not do, so a clip's own audio is silently omitted from the mix
+        /// while `speed != 1.0` rather than played back wrong — the same
+        /// "narrow the claim rather than half-implement it" call as
+        /// `ClipLoop::Loop`'s audio (see `AGENTS.md`).
+        #[serde(default = "one")]
+        speed: f64,
         #[serde(default)]
         mode: ClipLoop,
         /// Cap the decode width. Keeps a 4K source from being held in memory
@@ -361,6 +431,10 @@ pub enum Content {
         border: Option<(Color, f64)>,
         #[serde(default)]
         shadow: Option<Shadow>,
+        /// The clip's own soundtrack, pulled into the mix — see
+        /// [`crate::audio::ClipAudio`].
+        #[serde(default, skip_serializing_if = "is_default_clip_audio")]
+        audio: ClipAudio,
     },
     /// A block of text.
     Text {
@@ -427,6 +501,41 @@ pub enum Content {
         #[serde(default)]
         style: Option<TextStyle>,
     },
+    /// A flat image split into depth planes and shot with one camera move —
+    /// the fake-3D technique of pushing a camera across a still screenshot
+    /// that has been cut into background/subject/foreground layers.
+    ///
+    /// Every plane must be the same pixel size as the first: a depth plane is
+    /// a cutout of one shared canvas (typically with alpha where a nearer
+    /// plane covers it), not an independently sized image, and mixing sizes
+    /// would leave the "same camera move" premise with no shared coordinate
+    /// space to apply it in. Checked at render time. Splitting a source image
+    /// into those planes is a rotoscoping/cutout step outside the crate's own
+    /// rule ("nothing in the crate may know what its films are about") — this
+    /// only composes planes that already exist.
+    Parallax {
+        /// Back to front — a nearer plane's alpha is what lets a farther one
+        /// show through.
+        planes: Vec<ParallaxPlane>,
+        /// The move, authored exactly like [`Content::Still`]'s camera. It is
+        /// the path a `depth: 1.0` plane follows exactly; every other plane's
+        /// [`ParallaxPlane::depth`] scales how far it departs from it.
+        camera: Camera,
+    },
+    /// A progress bar: a track and a fill that animates like a counter, with
+    /// no digits — purely decorative, the way a loading or scrub indicator is.
+    Bar {
+        #[serde(rename = "progress")]
+        spec: BarSpec,
+        #[serde(default = "bar_track_default")]
+        track: Color,
+        #[serde(default = "bar_fill_default")]
+        fill: Paint,
+        /// Corner radius in pixels. `None` is a pill: half the bar's own
+        /// height, recomputed against whatever placement box it draws into.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<f64>,
+    },
 }
 
 impl Content {
@@ -445,14 +554,18 @@ impl Content {
             }
             Content::LowerThird { .. } => Placement::Anchored { anchor: BottomLeft, pad: 96.0 },
             Content::Counter { .. } => Placement::Anchored { anchor: TopRight, pad: default_pad() },
-            // These carry their own coordinates, so the frame is the box.
+            // These carry their own coordinates, or (Bar, like Solid/Gradient)
+            // have no natural size of their own to anchor against — the frame
+            // is the box, and the author sizes it with `.frac()`/`.rect()`.
             Content::Solid { .. }
             | Content::Gradient { .. }
             | Content::Scrim { .. }
             | Content::Still { .. }
             | Content::Clip { .. }
             | Content::Callout { .. }
-            | Content::PullUp { .. } => Placement::Full,
+            | Content::PullUp { .. }
+            | Content::Parallax { .. }
+            | Content::Bar { .. } => Placement::Full,
         }
     }
 }
@@ -475,6 +588,18 @@ fn clip_max_w() -> u32 {
 
 fn one() -> f64 {
     1.0
+}
+
+fn is_default_clip_audio(a: &ClipAudio) -> bool {
+    *a == ClipAudio::default()
+}
+
+fn bar_track_default() -> Color {
+    Color::rgba(255, 255, 255, 40)
+}
+
+fn bar_fill_default() -> Paint {
+    Paint::Solid(accent_default())
 }
 
 /// A layer: content, when it is on screen, and how it arrives and leaves.
@@ -542,6 +667,11 @@ impl Layer {
         Layer::new(Content::Still { asset: asset.into(), fit: Fit::Cover, camera: Some(camera) })
     }
 
+    /// A flat image shot as fake-3D depth planes — see [`Content::Parallax`].
+    pub fn parallax(planes: Vec<ParallaxPlane>, camera: Camera) -> Self {
+        Layer::new(Content::Parallax { planes, camera })
+    }
+
     pub fn clip(asset: impl Into<String>) -> Self {
         Layer::new(Content::Clip {
             asset: asset.into(),
@@ -550,11 +680,13 @@ impl Layer {
             trim: None,
             start: Time::ZERO,
             decode_fps: None,
+            speed: 1.0,
             mode: ClipLoop::Hold,
             max_width: clip_max_w(),
             radius: 0.0,
             border: None,
             shadow: None,
+            audio: ClipAudio::default(),
         })
     }
 
@@ -597,6 +729,52 @@ impl Layer {
             label_style: None,
         })
         .entering(Motion::rise(0.4))
+    }
+
+    /// A progress bar filling from `from` to `to` (both 0..1) over `over`.
+    /// Sized wherever the layer is placed — see [`Content::default_placement`]
+    /// — so give it a box with `.frac()` or `.rect()` rather than leaving it
+    /// full-frame.
+    pub fn bar(from: f64, to: f64, over: impl Into<Time>) -> Self {
+        Layer::new(Content::Bar {
+            spec: BarSpec::new(from, to, over),
+            track: bar_track_default(),
+            fill: bar_fill_default(),
+            radius: None,
+        })
+    }
+
+    /// A bar that just holds at a fixed level rather than filling.
+    pub fn bar_fixed(value: f64) -> Self {
+        Layer::new(Content::Bar {
+            spec: BarSpec::fixed(value),
+            track: bar_track_default(),
+            fill: bar_fill_default(),
+            radius: None,
+        })
+    }
+
+    pub fn bar_track(mut self, c: Color) -> Self {
+        if let Content::Bar { track, .. } = &mut self.content {
+            *track = c;
+        }
+        self
+    }
+
+    pub fn bar_fill(mut self, p: impl Into<Paint>) -> Self {
+        if let Content::Bar { fill, .. } = &mut self.content {
+            *fill = p.into();
+        }
+        self
+    }
+
+    /// Square corners, or an explicit radius — the default is a pill (half
+    /// the bar's own height).
+    pub fn bar_radius(mut self, r: f64) -> Self {
+        if let Content::Bar { radius, .. } = &mut self.content {
+            *radius = Some(r);
+        }
+        self
     }
 
     pub fn callout(
@@ -828,6 +1006,16 @@ impl Layer {
         self
     }
 
+    /// Play this clip's decoded window at a different rate: `2.0` for
+    /// double speed, `0.5` for half. Silences the clip's own soundtrack
+    /// while active — see [`Content::Clip`]'s `speed` field.
+    pub fn speed(mut self, s: f64) -> Self {
+        if let Content::Clip { speed, .. } = &mut self.content {
+            *speed = s;
+        }
+        self
+    }
+
     /// Cap the decoded width.
     pub fn decode_width(mut self, w: u32) -> Self {
         if let Content::Clip { max_width, .. } = &mut self.content {
@@ -839,6 +1027,34 @@ impl Layer {
     pub fn looping(mut self) -> Self {
         if let Content::Clip { mode, .. } = &mut self.content {
             *mode = ClipLoop::Loop;
+        }
+        self
+    }
+
+    /// Mute this clip's own soundtrack — it still draws, but contributes no
+    /// sound to the mix.
+    pub fn mute(mut self) -> Self {
+        if let Content::Clip { audio, .. } = &mut self.content {
+            audio.muted = true;
+        }
+        self
+    }
+
+    /// Level for this clip's own soundtrack in the mix. `1.0` leaves it
+    /// alone; a value under that is how a clip's sound is ducked under a
+    /// voice-over rather than muted outright.
+    pub fn clip_gain(mut self, g: f64) -> Self {
+        if let Content::Clip { audio, .. } = &mut self.content {
+            audio.gain = g;
+        }
+        self
+    }
+
+    /// Fade this clip's own soundtrack in and out, in the mix.
+    pub fn clip_fades(mut self, in_: impl Into<Time>, out: impl Into<Time>) -> Self {
+        if let Content::Clip { audio, .. } = &mut self.content {
+            audio.fade_in = in_.into();
+            audio.fade_out = out.into();
         }
         self
     }
@@ -857,6 +1073,40 @@ impl Layer {
         // Inclusive of the final instant so the last frame of a scene is not
         // silently empty.
         t >= s.start && t <= s.end()
+    }
+
+    /// The mix input for this layer's own soundtrack, if it is a clip with
+    /// unmuted audio and an on-screen window at all.
+    ///
+    /// `scene_start` places the scene on the film's clock (from
+    /// [`crate::timeline::Placed`]); the window is this layer's [`span`],
+    /// clamped to what is left of the scene, so a layer whose declared
+    /// `duration` overruns its scene cannot pull audio past where it is ever
+    /// actually drawn. See [`crate::audio::clip_track`] for why this does not
+    /// loop the audio to match [`ClipLoop::Loop`].
+    pub fn clip_audio_track(
+        &self,
+        scene_start: Time,
+        scene_duration: Time,
+        assets: &AssetStore,
+    ) -> Result<Option<AudioInput>> {
+        let Content::Clip { asset, trim, start, speed, audio, .. } = &self.content else {
+            return Ok(None);
+        };
+        // A sped-up or slowed-down clip has no correctly-paced soundtrack to
+        // pull in — see the `speed` field's doc comment on `Content::Clip`.
+        if audio.muted || (speed - 1.0).abs() > 1e-9 {
+            return Ok(None);
+        }
+        let span = self.span(scene_duration);
+        let remaining = (scene_duration - self.from).max(Time::ZERO);
+        let window = if span.duration.as_secs() < remaining.as_secs() { span.duration } else { remaining };
+        let source_from = trim.map(|(s, _)| s).unwrap_or(Time::ZERO) + *start;
+        let film_at = scene_start + self.from;
+        let path = assets
+            .resolve(asset)
+            .with_context(|| format!("clip {asset:?}: cannot find it for its own audio"))?;
+        Ok(crate::audio::clip_track(path, audio, film_at, source_from, window))
     }
 
     /// The whole-layer motion state at scene time `t`.
@@ -960,11 +1210,12 @@ impl Layer {
                 }
             }
             Content::Clip {
-                asset, fit, camera, trim, start, decode_fps, mode, max_width, radius, border, shadow,
+                asset, fit, camera, trim, start, decode_fps, speed, mode, max_width, radius, border,
+                shadow, audio: _,
             } => {
                 self.draw_clip(
                     canvas, ctx, local, state, alpha, asset, *fit, camera.as_ref(), *trim, *start,
-                    *decode_fps, *mode, *max_width, *radius, *border, shadow.as_ref(),
+                    *decode_fps, *speed, *mode, *max_width, *radius, *border, shadow.as_ref(),
                 )?;
             }
             Content::Text { text, style, wrap, fit } => {
@@ -986,8 +1237,90 @@ impl Layer {
             Content::PullUp { spec, style } => {
                 self.draw_pull_up(canvas, ctx, spec, style.as_ref(), state, alpha);
             }
+            Content::Parallax { planes, camera } => {
+                self.draw_parallax(canvas, ctx, planes, camera, local, state, alpha)?;
+            }
+            Content::Bar { spec, track, fill, radius } => {
+                self.draw_bar(canvas, spec, *track, fill, *radius, state, alpha, local);
+            }
         }
         Ok(())
+    }
+
+    /// Draw a [`Content::Parallax`] stack: one shared camera move, applied to
+    /// each plane scaled by its own depth.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_parallax(
+        &self,
+        canvas: &mut Canvas,
+        ctx: &RenderCtx<'_>,
+        planes: &[ParallaxPlane],
+        camera: &Camera,
+        local: Time,
+        state: &MotionState,
+        alpha: f64,
+    ) -> Result<()> {
+        let Some(first) = planes.first() else { return Ok(()) };
+        let base = ctx.assets.still(&first.asset)?;
+        let source = base.size();
+        let box_ = shift_scaled(
+            self.placement().resolve(&ctx.frame, (source.0 as f64, source.1 as f64)),
+            state,
+        );
+        let frame_aspect = box_.aspect();
+        let bounds = Rect::from_size(source.0 as f64, source.1 as f64);
+        // What a depth-0 plane shows: wherever the move starts, i.e. before
+        // any of it has played out.
+        let rest = camera
+            .shots
+            .first()
+            .map(|s| s.framing.resolve(source, frame_aspect))
+            .unwrap_or_else(|| bounds.to_aspect(frame_aspect));
+        let target = camera.viewport_at(local, source, frame_aspect);
+
+        for plane in planes {
+            let still = ctx.assets.still(&plane.asset)?;
+            if still.size() != source {
+                let (w, h) = still.size();
+                anyhow::bail!(
+                    "parallax plane {:?} is {w}x{h}, but the first plane {:?} is {}x{} — every depth plane must share one canvas",
+                    plane.asset,
+                    first.asset,
+                    source.0,
+                    source.1
+                );
+            }
+            let vp = parallax_viewport(&rest, &target, plane.depth, &bounds, camera.clamp_to_source);
+            crate::camera::draw_viewport(canvas, &still, vp, box_, alpha);
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_bar(
+        &self,
+        canvas: &mut Canvas,
+        spec: &BarSpec,
+        track: Color,
+        fill: &Paint,
+        radius: Option<f64>,
+        state: &MotionState,
+        alpha: f64,
+        local: Time,
+    ) {
+        let frame = canvas.rect();
+        let box_ = shift(self.placement().resolve(&frame, (frame.w, frame.h)), state);
+        if box_.w <= 0.0 || box_.h <= 0.0 {
+            return;
+        }
+        let r = radius.unwrap_or(box_.h / 2.0);
+        canvas.fill_round_rect(box_, r, &Paint::Solid(track.opacity(alpha)));
+        let value = spec.value_at(local.as_secs()).clamp(0.0, 1.0);
+        if value <= 0.0 {
+            return;
+        }
+        let filled = Rect::new(box_.x, box_.y, box_.w * value, box_.h);
+        canvas.fill_round_rect(filled, r, &fill.opacity(alpha));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1004,6 +1337,7 @@ impl Layer {
         trim: Option<(Time, Time)>,
         start: Time,
         decode_fps: Option<f64>,
+        speed: f64,
         mode: ClipLoop,
         max_width: u32,
         radius: f64,
@@ -1015,7 +1349,7 @@ impl Layer {
         let clip = ctx.assets.clip(asset, fps, max_width, trim)?;
         let (cw, ch) = clip.size();
         let box_ = shift_scaled(self.placement().resolve(&ctx.frame, (cw as f64, ch as f64)), state);
-        let Some(frame_px) = clip.frame_at(local.as_secs() + start.as_secs(), mode) else {
+        let Some(frame_px) = clip.frame_at(local.as_secs() * speed + start.as_secs(), mode) else {
             return Ok(());
         };
         // A camera always covers its placement box, the same rule a still's
@@ -1546,6 +1880,28 @@ fn viewport_for_fit(src: &Rect, box_: &Rect, fit: Fit) -> Rect {
     }
 }
 
+/// A parallax plane's own viewport: `rest` scaled toward `target` by `depth`.
+///
+/// `depth` 0 stays at `rest`, 1 matches `target` exactly, and values outside
+/// 0..1 over- or undershoot it — that departure, different per plane, is what
+/// reads as depth. Centre blends linearly; height blends geometrically, the
+/// same reasoning [`Camera::viewport_at`] uses for zoom, so a depth of 2 does
+/// not zoom twice as far in raw pixels but twice as far on the same
+/// perceptual curve the base move itself already respects.
+fn parallax_viewport(rest: &Rect, target: &Rect, depth: f64, bounds: &Rect, clamp: bool) -> Rect {
+    let (rcx, rcy) = rest.centre();
+    let (tcx, tcy) = target.centre();
+    let cx = rcx + (tcx - rcx) * depth;
+    let cy = rcy + (tcy - rcy) * depth;
+    let h = if rest.h <= 0.0 || target.h <= 0.0 {
+        rest.h + (target.h - rest.h) * depth
+    } else {
+        rest.h * (target.h / rest.h).powf(depth)
+    };
+    let r = Rect::centred(cx, cy, h * target.aspect(), h);
+    if clamp { r.clamp_within(bounds) } else { r }
+}
+
 fn shift(r: Rect, s: &MotionState) -> Rect {
     Rect { x: r.x + s.dx, y: r.y + s.dy, ..r }
 }
@@ -1647,6 +2003,8 @@ fn stagger_units(layout: &TextLayout, kind: crate::motion::MotionKind) -> Vec<us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::Still;
+    use crate::camera::Framing;
 
     /// Solid ink touching each edge of the canvas. A plate that ran off the
     /// frame leaves its cut edge — opaque background and half a glyph —
@@ -1964,5 +2322,301 @@ mod tests {
         Layer::clip("plain.mp4").draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
         let p = cv.as_ref().pixels()[(50 * 100 + 50) as usize];
         assert!(p.green() > 150 && p.red() < 60, "should show the clip's own colour");
+    }
+
+    #[test]
+    fn clip_speed_picks_a_proportionally_later_decoded_frame() {
+        use crate::assets::clip::Clip;
+        let red = {
+            let mut p = tiny_skia::Pixmap::new(4, 4).unwrap();
+            p.fill(Color::rgb(220, 20, 20).to_skia());
+            p
+        };
+        let blue = {
+            let mut p = tiny_skia::Pixmap::new(4, 4).unwrap();
+            p.fill(Color::rgb(20, 20, 220).to_skia());
+            p
+        };
+        let store = AssetStore::new();
+        // A 1fps clip, so `frame_at` indexes directly by seconds: frame 0 is
+        // red, frame 1 is blue. The cache key's fps must match `ctx_for`'s 30,
+        // since that is what `draw_clip` looks the decode up by — the `Clip`
+        // itself carries its own, unrelated, internal frame rate.
+        store.insert_clip("plain.mp4", 30.0, clip_max_w(), None, Clip::from_frames(vec![red, blue], 1.0));
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 10.0, 10.0);
+
+        // At 0.5s in, default speed (1.0) has not reached frame 1 yet.
+        let mut normal = Canvas::new(10, 10).unwrap();
+        Layer::clip("plain.mp4").draw(&mut normal, &ctx, Time(0.5), Time(2.0)).unwrap();
+        let p = normal.as_ref().pixels()[0];
+        assert!(p.red() > 150 && p.blue() < 60, "speed 1.0 at 0.5s should still show frame 0 (red)");
+
+        // The same 0.5s, at speed 2.0, has reached 1.0s of source — frame 1.
+        let mut doubled = Canvas::new(10, 10).unwrap();
+        Layer::clip("plain.mp4").speed(2.0).draw(&mut doubled, &ctx, Time(0.5), Time(2.0)).unwrap();
+        let p = doubled.as_ref().pixels()[0];
+        assert!(p.blue() > 150 && p.red() < 60, "speed 2.0 at 0.5s should already show frame 1 (blue)");
+    }
+
+    #[test]
+    fn a_sped_up_clip_layer_contributes_no_audio_track() {
+        let (dir, store) = rooted_with_dummy_clip("sped-up", "clip.mp4");
+        let layer = Layer::clip("clip.mp4").speed(1.5);
+        assert!(
+            layer.clip_audio_track(Time(0.0), Time(5.0), &store).unwrap().is_none(),
+            "off-speed playback has no correctly-paced soundtrack to mix"
+        );
+        // Real-speed playback is unaffected.
+        let normal = Layer::clip("clip.mp4");
+        assert!(normal.clip_audio_track(Time(0.0), Time(5.0), &store).unwrap().is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No decode happens here — `clip_audio_track` only resolves the source
+    /// path and does timing arithmetic, so a placeholder file is enough. The
+    /// directory is unique per test and removed at the end, since tests run
+    /// concurrently.
+    fn rooted_with_dummy_clip(unique: &str, name: &str) -> (std::path::PathBuf, AssetStore) {
+        let dir = std::env::temp_dir().join(format!("showreel-clip-audio-test-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), b"").unwrap();
+        let store = AssetStore::rooted(&dir);
+        (dir, store)
+    }
+
+    #[test]
+    fn clip_audio_track_uses_the_layers_own_window_and_source_offset() {
+        let (dir, store) = rooted_with_dummy_clip("window", "clip.mp4");
+        let layer = Layer::clip("clip.mp4").trim(1.0, 4.0).clip_start(0.5).from(2.0).clip_gain(0.5);
+        // As if this were a later scene, starting at 10s on the film's clock.
+        let t = layer.clip_audio_track(Time(10.0), Time(6.0), &store).unwrap().unwrap();
+        assert_eq!(t.at, 12.0, "scene start + layer.from");
+        assert_eq!(t.from, 1.5, "trim start + the clip's own playhead offset");
+        assert_eq!(t.duration, 4.0, "scene_duration - layer.from, duration unset");
+        assert_eq!(t.gain, 0.5);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_muted_clip_layer_contributes_no_audio_track() {
+        let (dir, store) = rooted_with_dummy_clip("muted", "clip.mp4");
+        let layer = Layer::clip("clip.mp4").mute();
+        assert!(layer.clip_audio_track(Time(0.0), Time(5.0), &store).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_clips_declared_duration_cannot_pull_audio_past_its_scene() {
+        let (dir, store) = rooted_with_dummy_clip("overrun", "clip.mp4");
+        // A 10s declared duration inside a 3s scene, one second in.
+        let layer = Layer::clip("clip.mp4").from(1.0).lasting(10.0);
+        let t = layer.clip_audio_track(Time(0.0), Time(3.0), &store).unwrap().unwrap();
+        assert_eq!(t.duration, 2.0, "clamped to what is left of the scene, not the declared duration");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- Content::Bar ------------------------------------------------------
+
+    #[test]
+    fn bar_spec_value_at_matches_counter_specs_semantics() {
+        let spec = BarSpec::new(0.0, 1.0, 2.0);
+        assert_eq!(spec.value_at(-1.0), 0.0, "before it starts, holds at from");
+        assert_eq!(spec.value_at(100.0), 1.0, "after it ends, holds at to");
+        // OutExpo is front-loaded, so it must be well past the linear halfway
+        // point by the halfway mark.
+        assert!(spec.value_at(1.0) > 0.9, "{}", spec.value_at(1.0));
+    }
+
+    #[test]
+    fn a_fixed_bar_holds_at_its_value_regardless_of_time() {
+        let spec = BarSpec::fixed(0.42);
+        assert_eq!(spec.value_at(0.0), 0.42);
+        assert_eq!(spec.value_at(50.0), 0.42);
+    }
+
+    #[test]
+    fn a_bar_fills_the_fraction_of_its_box_the_value_says() {
+        let store = AssetStore::new();
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 100.0, 20.0);
+        let layer = Layer::bar_fixed(0.5).bar_track(Color::BLACK).bar_fill(Color::WHITE).bar_radius(0.0);
+        let mut cv = Canvas::new(100, 20).unwrap();
+        layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        let px = |x: u32| cv.as_ref().pixels()[(10 * 100 + x) as usize].red();
+        assert!(px(20) > 200, "well inside the filled half, expected white");
+        assert!(px(80) < 40, "well inside the unfilled half, expected black track");
+    }
+
+    #[test]
+    fn a_bars_default_radius_is_a_pill_that_scales_with_the_box() {
+        let store = AssetStore::new();
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 100.0, 40.0);
+        // A no-op check that a default (None) radius does not panic and still
+        // draws something visible — the pill math lives in draw_bar directly.
+        let layer = Layer::bar_fixed(1.0);
+        let mut cv = Canvas::new(100, 40).unwrap();
+        layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        assert!(cv.as_ref().pixels()[(20 * 100 + 50) as usize].alpha() > 0);
+    }
+
+    #[test]
+    fn bar_content_round_trips_through_json_and_stays_terse() {
+        let l = Layer::bar(0.0, 1.0, 2.0);
+        let s = serde_json::to_string(&l.content).unwrap();
+        assert_eq!(serde_json::from_str::<Content>(&s).unwrap(), l.content);
+        assert!(s.contains("\"progress\""), "{s}");
+        assert!(!s.contains("\"radius\""), "a default radius should not be written: {s}");
+    }
+
+    // -----------------------------------------------------------------
+    // Content::Parallax
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parallax_viewport_at_depth_zero_stays_put_and_one_matches_the_move() {
+        let rest = Rect::centred(500.0, 500.0, 1000.0, 500.0);
+        let target = Rect::centred(800.0, 500.0, 200.0, 100.0);
+        let bounds = Rect::from_size(2000.0, 2000.0);
+        let still = parallax_viewport(&rest, &target, 0.0, &bounds, false);
+        assert_eq!(still, rest, "depth 0 must not move at all");
+        let moving = parallax_viewport(&rest, &target, 1.0, &bounds, false);
+        assert_eq!(moving, target, "depth 1 must follow the move exactly");
+    }
+
+    #[test]
+    fn parallax_viewport_overshoots_past_depth_one() {
+        // A foreground plane (depth > 1) should end up centred *beyond* the
+        // move's own target, and zoomed in tighter than it — that departure
+        // is what reads as depth.
+        let rest = Rect::centred(500.0, 500.0, 1000.0, 500.0);
+        let target = Rect::centred(700.0, 500.0, 500.0, 250.0);
+        let bounds = Rect::from_size(4000.0, 4000.0);
+        let over = parallax_viewport(&rest, &target, 2.0, &bounds, false);
+        assert!(over.centre().0 > target.centre().0, "{over:?}");
+        assert!(over.h < target.h, "a depth-2 plane should have zoomed in past the target: {over:?}");
+    }
+
+    #[test]
+    fn parallax_viewport_clamps_within_bounds_when_asked() {
+        let rest = Rect::centred(50.0, 50.0, 1000.0, 500.0);
+        let target = Rect::centred(-500.0, 50.0, 200.0, 100.0);
+        let bounds = Rect::from_size(2000.0, 2000.0);
+        let clamped = parallax_viewport(&rest, &target, 1.0, &bounds, true);
+        assert!(clamped.x >= -1e-9, "{clamped:?}");
+        let free = parallax_viewport(&rest, &target, 1.0, &bounds, false);
+        assert!(free.x < 0.0, "unclamped must be free to hang off the source: {free:?}");
+    }
+
+    #[test]
+    fn a_parallax_stack_renders_every_plane_back_to_front() {
+        let store = AssetStore::new();
+        store.insert_still("bg", Still::solid(200, 100, Color::rgb(20, 20, 200)).unwrap());
+        store.insert_still("fg", Still::solid(200, 100, Color::rgb(220, 30, 30)).unwrap());
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 200.0, 100.0);
+        let mut cv = Canvas::new(200, 100).unwrap();
+        let cam = Camera::hold(Framing::Whole);
+        let layer = Layer::parallax(
+            vec![ParallaxPlane::new("bg", 0.4), ParallaxPlane::new("fg", 1.2)],
+            cam,
+        );
+        layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        // The foreground plane is opaque and drawn last, so it must win.
+        let centre = cv.as_ref().pixels()[(50 * 200 + 100) as usize];
+        assert!(centre.red() > 150 && centre.blue() < 100, "expected the foreground colour on top: {centre:?}");
+    }
+
+    #[test]
+    fn mismatched_plane_sizes_are_a_clear_render_error() {
+        let store = AssetStore::new();
+        store.insert_still("bg", Still::solid(400, 200, Color::WHITE).unwrap());
+        store.insert_still("fg", Still::solid(40, 20, Color::BLACK).unwrap());
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 400.0, 200.0);
+        let mut cv = Canvas::new(400, 200).unwrap();
+        let layer = Layer::parallax(
+            vec![ParallaxPlane::new("bg", 0.0), ParallaxPlane::new("fg", 1.0)],
+            Camera::hold(Framing::Whole),
+        );
+        let err = layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap_err().to_string();
+        assert!(err.contains("fg"), "{err}");
+        assert!(err.contains("40x20"), "{err}");
+        assert!(err.contains("400x200"), "{err}");
+    }
+
+    #[test]
+    fn parallax_draw_cost_at_1080p() {
+        // Measured, not quoted: draw_parallax is exactly N ordinary mip-backed
+        // draws (see camera::draw_viewport, already the crate's fast path for
+        // a still under a camera), so the extra cost of a 3-plane parallax
+        // shot over one ordinary Still+camera layer should be close to
+        // linear in the plane count, not a new expensive operation like
+        // `Presentation::CrossBlur`'s blur (~170ms/frame at 1080p, measured
+        // in `canvas::tests::blur_rgba_cost_at_1080p`). See AGENTS.md for the
+        // number this printed.
+        fn synth(w: u32, h: u32, base: Color) -> Still {
+            let img = image::RgbaImage::from_fn(w, h, |x, y| {
+                let t = ((x ^ y) % 251) as u8;
+                image::Rgba([base.r.wrapping_add(t), base.g, base.b, 255])
+            });
+            Still::from_rgba(img)
+        }
+        let store = AssetStore::new();
+        let (sw, sh) = (4000u32, 2500u32);
+        for (name, c) in [
+            ("bg", Color::rgb(10, 20, 40)),
+            ("mid", Color::rgb(20, 80, 40)),
+            ("fg", Color::rgb(160, 60, 30)),
+        ] {
+            store.insert_still(name, synth(sw, sh, c));
+        }
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 1920.0, 1080.0);
+        let layer = Layer::parallax(
+            vec![
+                ParallaxPlane::new("bg", 0.2),
+                ParallaxPlane::new("mid", 0.6),
+                ParallaxPlane::new("fg", 1.3),
+            ],
+            Camera::push_in(Framing::at(0.5, 0.5, sh as f64 * 0.3), 4.0),
+        );
+        let single = Layer::camera("bg", Camera::push_in(Framing::at(0.5, 0.5, sh as f64 * 0.3), 4.0));
+        let mut cv = Canvas::new(1920, 1080).unwrap();
+
+        // One call each, like `canvas::tests::blur_rgba_cost_at_1080p` — a
+        // loop here would multiply an already-slow, unoptimised debug build
+        // (measured well over a second a frame) into a test that dominates
+        // the whole suite's run time for a number release builds already
+        // answer far more precisely.
+        let started = std::time::Instant::now();
+        layer.draw(&mut cv, &ctx, Time(2.0), Time(4.0)).unwrap();
+        let parallax_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let started = std::time::Instant::now();
+        single.draw(&mut cv, &ctx, Time(2.0), Time(4.0)).unwrap();
+        let single_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        eprintln!(
+            "parallax draw (3 planes) at 1920x1080: {parallax_ms:.3}ms/frame vs {single_ms:.3}ms/frame for one Still+camera layer"
+        );
+        // A generous regression guard, not a tight budget — the same call
+        // `blur_rgba_cost_at_1080p` makes, and for the same reason: an
+        // unoptimised debug build here measured well over a second a frame,
+        // several times the ~45ms/~15ms `cargo test --release` gives (see
+        // AGENTS.md). This only needs to catch the draw path accidentally
+        // going quadratic, not hold it to a ms budget.
+        assert!(parallax_ms < 30_000.0, "parallax draw got unexpectedly slow: {parallax_ms}ms");
+    }
+
+    #[test]
+    fn a_parallax_layer_round_trips_through_json() {
+        let l = Layer::parallax(
+            vec![ParallaxPlane::new("bg.png", 0.3), ParallaxPlane::new("fg.png", 1.4)],
+            Camera::push_in(Framing::at(0.5, 0.5, 400.0), 2.0),
+        );
+        let s = serde_json::to_string(&l.content).unwrap();
+        assert_eq!(serde_json::from_str::<Content>(&s).unwrap(), l.content);
     }
 }

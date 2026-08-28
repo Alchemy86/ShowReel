@@ -63,6 +63,7 @@
 //! reasoning and its trade-off.
 
 use crate::audio::Audio;
+use anyhow::Context;
 use crate::color::Color;
 use crate::layer::Layer;
 use crate::theme::Theme;
@@ -276,6 +277,44 @@ impl Timeline {
     }
 }
 
+/// One scene in a [`FilmSummary`] — see [`Film::summary`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneSummary<'a> {
+    pub index: usize,
+    pub name: Option<&'a str>,
+    pub start: f64,
+    pub duration: f64,
+    pub layers: usize,
+    pub transition_in: Option<&'a Transition>,
+}
+
+/// One track in a [`FilmSummary`] — see [`Film::summary`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioTrackSummary<'a> {
+    pub asset: &'a str,
+    pub at: f64,
+    pub duration: f64,
+    pub gain: f64,
+}
+
+/// A film's structure, in the shape every "inspect a film" surface (the CLI's
+/// `info`, the studio's `/api/info`, the MCP server's `film_info`) answers
+/// with — see [`Film::summary`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilmSummary<'a> {
+    pub title: Option<&'a str>,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub duration: f64,
+    pub frame_count: u32,
+    pub scenes: Vec<SceneSummary<'a>>,
+    pub audio: Vec<AudioTrackSummary<'a>>,
+}
+
 /// A complete film.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Film {
@@ -380,12 +419,90 @@ impl Film {
         self.audio.iter().map(|a| a.asset.as_str()).collect()
     }
 
+    /// Every [`Film::audio`] track, located and resolved against this film's
+    /// own duration — same as [`Film::clip_audio`], but for the tracks
+    /// authored on the film rather than baked into a clip.
+    pub fn resolve_audio_tracks(
+        &self,
+        assets: &crate::assets::AssetStore,
+    ) -> anyhow::Result<Vec<crate::audio::AudioInput>> {
+        let total = self.duration();
+        self.audio
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let path = assets.resolve(&a.asset).with_context(|| {
+                    format!("audio track {}: cannot find {}", i + 1, a.asset)
+                })?;
+                Ok(a.resolve(path, total))
+            })
+            .collect()
+    }
+
+    /// Every clip layer's own soundtrack, ready to join the mix alongside
+    /// [`Film::audio`] — see [`crate::audio::clip_track`].
+    pub fn clip_audio(&self, assets: &crate::assets::AssetStore) -> anyhow::Result<Vec<crate::audio::AudioInput>> {
+        let mut out = Vec::new();
+        for p in self.timeline.placements() {
+            let scene = self.timeline.scene(p.index);
+            for l in &scene.layers {
+                if let Some(t) = l.clip_audio_track(p.start, scene.duration, assets)? {
+                    out.push(t);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn duration(&self) -> Time {
         self.timeline.duration()
     }
 
     pub fn frame_count(&self) -> u32 {
         self.duration().frame_count(self.fps).max(1)
+    }
+
+    /// This film's structure — the JSON shape `showreel info`, the studio's
+    /// `/api/info` and the MCP server's `film_info` tool all describe it in.
+    /// One method, so those three surfaces cannot quietly drift apart.
+    pub fn summary(&self) -> FilmSummary<'_> {
+        let total = self.duration();
+        let scenes = self
+            .timeline
+            .placements()
+            .iter()
+            .map(|p| {
+                let s = self.timeline.scene(p.index);
+                SceneSummary {
+                    index: p.index,
+                    name: s.name.as_deref(),
+                    start: p.start.as_secs(),
+                    duration: s.duration.as_secs(),
+                    layers: s.layers.len(),
+                    transition_in: self.timeline.transition_into(p.index),
+                }
+            })
+            .collect();
+        let audio = self
+            .audio
+            .iter()
+            .map(|a| AudioTrackSummary {
+                asset: a.asset.as_str(),
+                at: a.at.as_secs(),
+                duration: a.resolve_duration(total).as_secs(),
+                gain: a.gain,
+            })
+            .collect();
+        FilmSummary {
+            title: self.title.as_deref(),
+            width: self.width,
+            height: self.height,
+            fps: self.fps,
+            duration: total.as_secs(),
+            frame_count: self.frame_count(),
+            scenes,
+            audio,
+        }
     }
 
     pub fn frame_rect(&self) -> crate::geom::Rect {
@@ -406,26 +523,31 @@ impl Film {
     /// worker threads discover the same file at the same moment.
     pub fn assets_used(&self) -> Vec<AssetUse> {
         let mut seen = Vec::new();
+        let mut push = |u: AssetUse| {
+            if !seen.contains(&u) {
+                seen.push(u);
+            }
+        };
         for i in 0..self.timeline.scene_count() {
             for l in &self.timeline.scene(i).layers {
-                let u = match &l.content {
+                match &l.content {
                     crate::layer::Content::Still { asset, .. } => {
-                        Some(AssetUse::Still(asset.clone()))
+                        push(AssetUse::Still(asset.clone()));
+                    }
+                    crate::layer::Content::Parallax { planes, .. } => {
+                        for p in planes {
+                            push(AssetUse::Still(p.asset.clone()));
+                        }
                     }
                     crate::layer::Content::Clip { asset, max_width, trim, decode_fps, .. } => {
-                        Some(AssetUse::Clip {
+                        push(AssetUse::Clip {
                             asset: asset.clone(),
                             max_width: *max_width,
                             trim: trim.map(|(a, b)| (a.as_secs(), b.as_secs())),
                             decode_fps: *decode_fps,
-                        })
+                        });
                     }
-                    _ => None,
-                };
-                if let Some(u) = u
-                    && !seen.contains(&u)
-                {
-                    seen.push(u);
+                    _ => {}
                 }
             }
         }
@@ -450,7 +572,15 @@ impl Film {
         }
         let total = self.duration();
         for (i, a) in self.audio.iter().enumerate() {
-            errs.extend(a.validate(&format!("audio {i} ({})", a.asset), total));
+            // An empty `asset` is itself one of the errors `a.validate` is
+            // about to report — parenthesising it as `audio 2 ()` reads as
+            // unfinished rather than as the missing-asset error it already is.
+            let label = if a.asset.trim().is_empty() {
+                format!("audio {i}")
+            } else {
+                format!("audio {i} ({})", a.asset)
+            };
+            errs.extend(a.validate(&label, total));
         }
         errs
     }
@@ -476,6 +606,13 @@ impl Film {
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
         Film::from_json(&s).map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))
     }
+}
+
+/// "1 problem" / "N problems" — proper pluralisation for a
+/// [`Film::validate`] error count, shared by the CLI's error output and the
+/// browser editor's error banner so neither says "1 problem(s)".
+pub fn describe_problem_count(n: usize) -> String {
+    if n == 1 { "1 problem".to_string() } else { format!("{n} problems") }
 }
 
 /// An asset reference, with how it will be decoded.

@@ -19,6 +19,8 @@
 // calls back in here only to hand over a freshly loaded film or a
 // freshly-imported asset-backed layer.
 
+import { DRAGGABLE_KINDS } from './geometry.js';
+
 const ACCENT = '#ffd147';
 
 const SPRING_GENTLE = { mass: 1, stiffness: 120, damping: 20, clamp: false };
@@ -32,17 +34,71 @@ const EASINGS = [
   'in-back', 'out-back', 'in-out-back', 'out-elastic', 'out-bounce', 'step',
 ];
 const PRESENTATIONS = ['cut', 'dissolve', 'fade', 'wipe', 'slide', 'push', 'iris', 'zoom-in'];
-const MOTION_KINDS = ['none', 'fade', 'rise', 'drop', 'slide-in', 'scale', 'chars', 'words'];
+// Label + on-screen name for each entrance/exit preset a person can pick
+// without touching a duration or easing curve — those live under "Timing".
+const MOTION_PRESETS = [
+  { kind: 'none', label: 'None' },
+  { kind: 'fade', label: 'Fade' },
+  { kind: 'rise', label: 'Rise' },
+  { kind: 'drop', label: 'Drop' },
+  { kind: 'slide-in', label: 'Slide' },
+  { kind: 'scale', label: 'Zoom' },
+  { kind: 'chars', label: 'Type on' },
+  { kind: 'words', label: 'Type on (words)' },
+];
 const CLIP_MODES = ['hold', 'loop', 'stop'];
 const FITS = ['cover', 'contain', 'stretch', 'none'];
 
 export const LAYER_KINDS = ['solid', 'gradient', 'scrim', 'still', 'clip', 'text', 'title', 'lower-third', 'counter', 'callout', 'pull-up'];
 export const LAYER_LABELS = {
-  solid: 'Solid colour', gradient: 'Gradient', scrim: 'Scrim',
-  still: 'Still image', clip: 'Video clip', text: 'Text',
+  solid: 'Background colour', gradient: 'Background gradient', scrim: 'Shadow gradient',
+  still: 'Picture', clip: 'Video', text: 'Text',
   title: 'Title', 'lower-third': 'Lower third', counter: 'Counter',
   callout: 'Callout', 'pull-up': 'Pull-up',
 };
+// The short list offered first when adding something — the vocabulary a
+// person reaches for. Anything else (flat colour fills, gradients, the
+// bottom-of-frame darkening scrim, callout pins, the picture-in-picture
+// pull-up) still exists, just under "More" in the same menu — see the "keep
+// the reach" rule in AGENTS.md.
+const PRIMARY_ADD_KINDS = ['clip', 'still', 'title', 'text', 'lower-third', 'counter', 'callout'];
+const MORE_ADD_KINDS = LAYER_KINDS.filter((k) => !PRIMARY_ADD_KINDS.includes(k));
+
+function truncateLabel(s, n = 28) {
+  s = String(s ?? '').trim();
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+function assetBaseName(name) {
+  return String(name).split('/').pop();
+}
+
+// The still/clip a scene's own thumbnail should stand in for — the first
+// layer with a picture, top of the stack down, the same "what does this
+// scene actually show" a person would point to.
+function sceneThumbnailRef(scene) {
+  for (const l of scene.layers) {
+    if ((l.type === 'still' || l.type === 'clip') && l.asset) return { kind: l.type, name: l.asset };
+  }
+  return null;
+}
+
+// A name built from what the layer actually *is* — its text, its filename —
+// rather than its data-model type, so the elements list reads "Welcome to
+// Kanto" and "pixel-chain-run.mp4" instead of "Title" and "Video clip".
+export function layerDisplayName(layer) {
+  switch (layer.type) {
+    case 'text': return layer.text ? truncateLabel(layer.text) : 'Text';
+    case 'title': return layer.text ? truncateLabel(layer.text) : 'Title';
+    case 'lower-third': return layer.text ? `Lower third: ${truncateLabel(layer.text, 20)}` : 'Lower third';
+    case 'counter': return layer.label ? `Counter: ${truncateLabel(layer.label, 20)}` : 'Counter';
+    case 'callout': return layer.text ? `Callout: ${truncateLabel(layer.text, 20)}` : 'Callout';
+    case 'pull-up': return layer.label ? `Pull-up: ${truncateLabel(layer.label, 20)}` : 'Pull-up';
+    case 'still': return layer.asset ? assetBaseName(layer.asset) : 'Picture';
+    case 'clip': return layer.asset ? assetBaseName(layer.asset) : 'Video';
+    case 'solid': case 'gradient': case 'scrim': return LAYER_LABELS[layer.type];
+    default: return LAYER_LABELS[layer.type] || layer.type;
+  }
+}
 
 // ---- templates: the vocabulary a film is built from, matching src/layer.rs's builders ----
 
@@ -149,6 +205,20 @@ export function newLayer(kind) {
   }
 }
 
+// A freshly added Text/Title defaults to dead centre
+// (`Content::default_placement`, src/layer.rs) — fine for an empty frame,
+// but a guaranteed collision on a scene that already has a still/clip
+// filling it (docs/youcut-study.md: "default text placement collides with
+// what's already there"). Bias away from centre only in that case, so the
+// ordinary empty-frame default is untouched, and only ever by setting an
+// explicit `placement` — the same field a drag on the preview would set,
+// so nothing about how placement works changes, just its starting value.
+function biasTextPlacement(layer, scene) {
+  if (layer.type !== 'text' && layer.type !== 'title') return;
+  const hasFullFrameContent = scene.layers.some((l) => l.type === 'still' || l.type === 'clip');
+  if (hasFullFrameContent) layer.placement = { anchor: 'bottom', pad: 96 };
+}
+
 export function newAudio() {
   return { asset: '', at: 0, from: 0, duration: null, fade_in: 0, fade_out: 0, gain: 1 };
 }
@@ -231,6 +301,41 @@ function fText(label, path, value) {
   const id = fieldId(path);
   return `<div class="field"><label for="${id}">${esc(label)}</label><input id="${id}" type="text" data-bind="${path}" data-kind="string" value="${esc(value)}"></div>`;
 }
+// An asset-reference field: a text input backed by a `<datalist>` of names
+// the film already uses, so picking one is a click on a suggestion instead
+// of typing a filename from memory (docs/youcut-study.md) — still a plain
+// text field underneath (a `<datalist>` never blocks a value that isn't in
+// its list), so pointing at a not-yet-referenced asset still works exactly
+// as it always did.
+function fAssetText(label, path, value, knownNames) {
+  const id = fieldId(path);
+  const listId = `${id}-list`;
+  const options = (knownNames || []).map((n) => `<option value="${esc(n)}"></option>`).join('');
+  return `<div class="field"><label for="${id}">${esc(label)}</label>
+    <input id="${id}" type="text" list="${listId}" data-bind="${path}" data-kind="string" value="${esc(value)}">
+    <datalist id="${listId}">${options}</datalist>
+  </div>`;
+}
+// Every distinct asset name already used by a `still`/`clip` layer of this
+// same kind, in declaration order — the suggestion list for `fAssetText`.
+function knownAssetNames(f, kind) {
+  const names = [];
+  const seen = new Set();
+  for (let i = 0; i < sceneCount(f); i++) {
+    for (const l of getScene(f, i).layers) {
+      if (l.type === kind && l.asset && !seen.has(l.asset)) { seen.add(l.asset); names.push(l.asset); }
+    }
+  }
+  return names;
+}
+function knownAudioAssetNames(f) {
+  const names = [];
+  const seen = new Set();
+  for (const a of f.audio) {
+    if (a.asset && !seen.has(a.asset)) { seen.add(a.asset); names.push(a.asset); }
+  }
+  return names;
+}
 function fColor(label, path, value) {
   const id = fieldId(path);
   const hex = /^#[0-9a-fA-F]{6}/.test(value || '') ? value.slice(0, 7) : '#ffffff';
@@ -248,6 +353,28 @@ function fSelect(label, path, value, options, labels) {
 function fTextarea(label, path, value) {
   const id = fieldId(path);
   return `<div class="field"><label for="${id}">${esc(label)}</label><textarea id="${id}" data-bind="${path}" data-kind="string" rows="2">${esc(value)}</textarea></div>`;
+}
+
+// A draggable trim bar in place of two "type the seconds" boxes. `totalDuration`
+// is the source file's real length when it's known (a browser-dropped clip,
+// probed via its `<video>` element) — otherwise the visible span is a
+// synthetic window around the current trim, since nothing in the browser can
+// ask a server-side asset how long its source file actually is.
+function renderTrimWidget(trim, totalDuration) {
+  const [start, len] = trim || [0, 0];
+  const known = typeof totalDuration === 'number' && totalDuration > 0;
+  const span = known ? totalDuration : Math.max(start + len * 2, 10);
+  const startPct = Math.max(0, Math.min(100, (start / span) * 100));
+  const widthPct = Math.max(0, Math.min(100 - startPct, (len / span) * 100));
+  return `<div class="field">
+    <label>Trim</label>
+    <div class="trim-track" data-trim-track data-span="${span}" data-min-len="0.1">
+      <div class="trim-window" style="left:${startPct}%;width:${widthPct}%"></div>
+      <div class="trim-handle trim-handle-start" data-trim-handle="start" style="left:${startPct}%" title="Drag to trim the start"></div>
+      <div class="trim-handle trim-handle-end" data-trim-handle="end" style="left:${startPct + widthPct}%" title="Drag to trim the end"></div>
+    </div>
+    <div class="hint">${start.toFixed(2)}s – ${(start + len).toFixed(2)}s${known ? ` of ${totalDuration.toFixed(1)}s source` : ' — drag the handles (source length unknown)'}</div>
+  </div>`;
 }
 
 function advancedJson(getObj, label) {
@@ -307,34 +434,57 @@ function renderPlacement(placement) {
     </select></div>${extra}`;
 }
 
-// ---- motion (enter/exit) editor: Motion's flattened wire form (src/motion.rs) ----
+// ---- effect (enter/exit motion) editor: Motion's flattened wire form (src/motion.rs) ----
+//
+// A row of named preset buttons rather than a dropdown of every field Motion
+// carries — "add an effect" should be a click, not filling in a duration and
+// an easing curve. Timing (duration, easing, spring vs eased) still exists
+// for the layer that wants it, folded under its own disclosure.
 
-function renderMotion(label, act, motion) {
+function renderEffectPicker(label, act, motion) {
   const kind = motion ? motion.kind : 'none';
-  let extra = '';
+  const buttons = MOTION_PRESETS.map((p) => `<button type="button" class="effect-btn ${p.kind === kind ? 'active' : ''}" data-act="${act}-kind" data-value="${p.kind}">${esc(p.label)}</button>`).join('');
+  let timing = '';
   if (motion) {
-    extra += fNumber('Duration (s)', `${act}.duration`, motion.duration, { step: 0.05 });
-    if ('distance' in motion) extra += fNumber('Distance (px)', `${act}.distance`, motion.distance);
-    if ('dx' in motion) extra += fRow(fNumber('dx (px)', `${act}.dx`, motion.dx), fNumber('dy (px)', `${act}.dy`, motion.dy));
-    if ('from' in motion) extra += fNumber('Start scale', `${act}.from`, motion.from, { step: 0.02 });
-    if ('stagger' in motion) extra += fRow(fNumber('Stagger (s)', `${act}.stagger`, motion.stagger, { step: 0.01 }), fNumber('Rise (px)', `${act}.rise`, motion.rise));
+    timing += fNumber('Duration (s)', `${act}.duration`, motion.duration, { step: 0.05 });
+    if ('distance' in motion) timing += fNumber('Distance (px)', `${act}.distance`, motion.distance);
+    if ('dx' in motion) timing += fRow(fNumber('dx (px)', `${act}.dx`, motion.dx), fNumber('dy (px)', `${act}.dy`, motion.dy));
+    if ('from' in motion) timing += fNumber('Start scale', `${act}.from`, motion.from, { step: 0.02 });
+    if ('stagger' in motion) timing += fRow(fNumber('Stagger (s)', `${act}.stagger`, motion.stagger, { step: 0.01 }), fNumber('Rise (px)', `${act}.rise`, motion.rise));
     const timingKind = motion.timing?.kind === 'spring' ? 'spring' : 'eased';
     const timingId = fieldId(`${act}-timing`);
-    extra += `<div class="field"><label for="${timingId}">Pacing</label><select id="${timingId}" data-act="${act}-timing">
+    timing += `<div class="field"><label for="${timingId}">Pacing</label><select id="${timingId}" data-act="${act}-timing">
       <option value="eased" ${timingKind === 'eased' ? 'selected' : ''}>Eased</option>
       <option value="spring" ${timingKind === 'spring' ? 'selected' : ''}>Spring</option>
     </select></div>`;
-    if (timingKind === 'eased') extra += fSelect('Easing', `${act}.timing.easing`, motion.timing.easing, EASINGS);
+    if (timingKind === 'eased') timing += fSelect('Easing', `${act}.timing.easing`, motion.timing.easing, EASINGS);
   }
-  const kindId = fieldId(`${act}-kind`);
-  return `<div class="field"><label for="${kindId}">${esc(label)}</label><select id="${kindId}" data-act="${act}-kind">
-    ${MOTION_KINDS.map((k) => `<option value="${k}" ${k === kind ? 'selected' : ''}>${k === 'none' ? 'None' : k}</option>`).join('')}
-  </select></div>${extra}`;
+  return `<div class="field"><label>${esc(label)}</label><div class="effect-grid">${buttons}</div></div>
+    ${motion ? `<details class="adv"><summary>Timing</summary>${timing}</details>` : ''}`;
+}
+
+// ---- position quick-picks: a 3x3 anchor grid in front of the exact editor ----
+//
+// Clicking a spot sets an explicit `Placement::Anchored`, which the wasm
+// renderer resolves exactly (it has the real, measured text size — this
+// module never does). Dragging the layer directly on the preview (main.js)
+// takes the same shortcut in reverse: it always lands on an explicit
+// `Placement::Frac` box, so there is nothing here to keep in sync with a
+// guess once a person has touched the layer once.
+function renderPositionPicker(layer) {
+  const kind = placementKind(layer.placement);
+  const currentAnchor = kind === 'anchor' ? layer.placement.anchor : kind === 'anchor-word' ? layer.placement : null;
+  const grid = ANCHORS.map((a) => `<button type="button" class="anchor-btn ${currentAnchor === a ? 'active' : ''}" data-act="quick-anchor" data-anchor="${a}" title="${esc(a)}"><span></span></button>`).join('');
+  return `<div class="field">
+    <div class="hint">Drag it directly on the preview, or pick a spot:</div>
+    <div class="anchor-grid">${grid}</div>
+    <details class="adv"><summary>Exact position</summary>${renderPlacement(layer.placement)}</details>
+  </div>`;
 }
 
 // ---- per-content-type inspector fields ----
 
-function renderContentFields(layer) {
+function renderContentFields(layer, getClipDuration, f) {
   switch (layer.type) {
     case 'solid':
       return fColor('Colour', 'colour', layer.colour);
@@ -346,17 +496,21 @@ function renderContentFields(layer) {
       return fRow(fNumber('Height (frac)', 'height', layer.height, { step: 0.02 }), fNumber('Strength', 'strength', layer.strength, { step: 0.02 }))
         + fColor('Colour', 'colour', layer.colour);
     case 'still':
-      return fText('Asset', 'asset', layer.asset) + fSelect('Fit', 'fit', layer.fit, FITS)
+      return fAssetText('Asset', 'asset', layer.asset, knownAssetNames(f, 'still')) + fSelect('Fit', 'fit', layer.fit, FITS)
         + `<div class="hint">Camera moves aren't editable here yet — use Advanced JSON.</div>`;
     case 'clip': {
       const trim = layer.trim || [0, 0];
-      return fText('Asset', 'asset', layer.asset) + fSelect('Fit', 'fit', layer.fit, FITS)
+      const totalDuration = getClipDuration ? getClipDuration(layer.asset) : null;
+      return fAssetText('Asset', 'asset', layer.asset, knownAssetNames(f, 'clip')) + fSelect('Fit', 'fit', layer.fit, FITS)
+        + renderTrimWidget(trim, totalDuration)
+        + `<details class="adv"><summary>More video options</summary>`
         + fRow(fNumber('Trim start (s)', 'trim.0', trim[0], { step: 0.1, min: 0 }), fNumber('Trim length (s)', 'trim.1', trim[1], { step: 0.1, min: 0.1 }))
         + fNumber('Layer start offset (s)', 'start', layer.start, { step: 0.1 })
         + fSelect('When it runs out', 'mode', layer.mode, CLIP_MODES)
         + fNullableNumber('Decode fps override', 'decode_fps', layer.decode_fps, { placeholder: 'film fps' })
         + fNumber('Max decode width (px)', 'max_width', layer.max_width, { min: 16 })
-        + `<div class="hint">Changing the trim on a browser-added clip re-decodes it from the attached source file.</div>`;
+        + `<div class="hint">Changing the trim on a browser-added clip re-decodes it from the attached source file.</div>`
+        + `</details>`;
     }
     case 'text':
       return fTextarea('Text', 'text', layer.text) + fRow(fNumber('Wrap (frac)', 'wrap', layer.wrap, { step: 0.05 }), fCheck('Shrink to fit', 'fit', layer.fit));
@@ -372,9 +526,12 @@ function renderContentFields(layer) {
         + fText('Label', 'label', layer.label || '');
     case 'callout':
       return fText('Text', 'text', layer.text) + fText('Detail', 'detail', layer.detail || '')
+        + `<div class="hint">Drag the ring on the preview to what it points at, and drag the label to where it sits.</div>`
+        + fColor('Accent', 'accent', layer.accent) + fNumber('Ring radius (px)', 'ring', layer.ring)
+        + `<details class="adv"><summary>Exact position</summary>`
         + fRow(fNumber('Target x (frac)', 'target.0', layer.target[0], { step: 0.01 }), fNumber('Target y (frac)', 'target.1', layer.target[1], { step: 0.01 }))
         + fRow(fNumber('Label x (frac)', 'label_at.0', layer.label_at[0], { step: 0.01 }), fNumber('Label y (frac)', 'label_at.1', layer.label_at[1], { step: 0.01 }))
-        + fColor('Accent', 'accent', layer.accent) + fNumber('Ring radius (px)', 'ring', layer.ring);
+        + `</details>`;
     case 'pull-up':
       return `<div class="field"><label>Region (fx, fy, fw, fh)</label>` + fRow(
         fNumber('', 'region.0', layer.region[0], { step: 0.01 }), fNumber('', 'region.1', layer.region[1], { step: 0.01 }),
@@ -390,7 +547,7 @@ function renderContentFields(layer) {
 
 // ---- the editor object ----
 
-export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resolveAssetStatus }) {
+export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resolveAssetStatus, resolveThumbnail, getClipDuration, onSelect }) {
   let sel = null; // {kind:'scene'|'transition'|'layer'|'audio', i, j}
 
   function film() { return getFilm(); }
@@ -406,6 +563,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     sel = next;
     renderInspector();
     renderTimeline();
+    onSelect?.();
   }
 
   function selectedLayer() {
@@ -419,6 +577,14 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     scene.layers.push(layer);
     select({ kind: 'layer', i, j: scene.layers.length - 1 });
     notify();
+  }
+
+  // A small `<img>` for a still/clip asset, or '' before its thumbnail has
+  // been generated (main.js's `ensureThumbnail` re-renders once it lands —
+  // see that function's doc comment) — never a broken-image icon meanwhile.
+  function thumbImg(kind, name, extraClass = '') {
+    const url = resolveThumbnail && name ? resolveThumbnail(kind, name) : null;
+    return url ? `<img class="thumb ${extraClass}" src="${url}" alt="">` : '';
   }
 
   // ---- timeline panel ----
@@ -435,35 +601,54 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       }
       const scene = getScene(f, i);
       const selected = sel?.kind === 'scene' && sel.i === i || sel?.kind === 'layer' && sel.i === i;
+      const thumbRef = sceneThumbnailRef(scene);
       rows += `<div class="chip-row ${selected ? 'selected' : ''}" data-sel="s:${i}">
+        ${thumbRef ? thumbImg(thumbRef.kind, thumbRef.name) : ''}
         <span class="label">${esc(scene.name || `Scene ${i + 1}`)}</span>
         <span class="meta">${starts[i].toFixed(1)}s · ${scene.duration.toFixed(1)}s</span>
+        <button class="mini-btn" data-act="scene-up" data-i="${i}" title="Move up">↑</button>
+        <button class="mini-btn" data-act="scene-down" data-i="${i}" title="Move down">↓</button>
+        <button class="mini-btn danger" data-act="scene-del" data-i="${i}" title="Delete">✕</button>
       </div>`;
     }
     const scene = getScene(f, currentSceneIndex());
     let layerRows = '';
     scene.layers.forEach((l, j) => {
       const selected = sel?.kind === 'layer' && sel.i === currentSceneIndex() && sel.j === j;
+      const thumb = (l.type === 'still' || l.type === 'clip') ? thumbImg(l.type, l.asset) : '';
       layerRows += `<div class="chip-row ${selected ? 'selected' : ''}" data-sel="l:${j}">
-        <span class="label">${esc(LAYER_LABELS[l.type] || l.type)}${l.type === 'text' || l.type === 'title' || l.type === 'lower-third' ? `: ${esc((l.text || '').slice(0, 24))}` : ''}</span>
-        <span class="meta">z${l.z}</span>
+        ${thumb}
+        <span class="label">${esc(layerDisplayName(l))}</span>
+        <span class="meta">${esc(LAYER_LABELS[l.type] || l.type)}</span>
         <button class="mini-btn" data-act="layer-up" data-j="${j}" title="Move up">↑</button>
         <button class="mini-btn" data-act="layer-down" data-j="${j}" title="Move down">↓</button>
         <button class="mini-btn danger" data-act="layer-del" data-j="${j}" title="Delete">✕</button>
       </div>`;
     });
     const addMenu = `<div class="add-menu">
-        <button class="mini-btn" data-act="toggle-add-layer">+ Layer</button>
+        <button class="mini-btn" data-act="toggle-add-layer">+ Add</button>
         <div class="add-menu-list" id="add-layer-list" hidden>
-          ${LAYER_KINDS.map((k) => `<button data-act="add-layer" data-kind="${k}">${esc(LAYER_LABELS[k])}</button>`).join('')}
+          ${PRIMARY_ADD_KINDS.map((k) => `<button data-act="add-layer" data-kind="${k}">${esc(LAYER_LABELS[k])}</button>`).join('')}
+          <div class="add-menu-sep">More</div>
+          ${MORE_ADD_KINDS.map((k) => `<button data-act="add-layer" data-kind="${k}">${esc(LAYER_LABELS[k])}</button>`).join('')}
         </div>
       </div>`;
 
     const assetRows = renderAssetRows(f);
-    const audioRows = f.audio.map((a, i) => `<div class="chip-row ${sel?.kind === 'audio' && sel.i === i ? 'selected' : ''}" data-sel="a:${i}">
-        <span class="label">${esc(a.asset || '(no asset)')}</span><span class="meta">${a.at}s</span>
+    // `Film::to_json` (src/timeline.rs) skips a zero `at` and a `null`
+    // duration entirely rather than writing them — a wire-format film with
+    // an unset numeric field leaves it `undefined` in this object (see this
+    // file's module doc), which a bare template literal renders as the
+    // string "undefined" concatenated onto its unit ("undefineds"). Default
+    // explicitly rather than trusting the field to exist.
+    const audioRows = f.audio.map((a, i) => {
+      const at = a.at || 0;
+      const dur = a.duration == null ? 'to end' : `${a.duration}s`;
+      return `<div class="chip-row ${sel?.kind === 'audio' && sel.i === i ? 'selected' : ''}" data-sel="a:${i}">
+        <span class="label">${esc(a.asset || '(no asset)')}</span><span class="meta">${at}s · ${dur}</span>
         <button class="mini-btn danger" data-act="audio-del" data-i="${i}">✕</button>
-      </div>`).join('') || '<div class="empty-hint">No audio tracks.</div>';
+      </div>`;
+    }).join('') || '<div class="empty-hint">No audio tracks.</div>';
 
     timelineEl.innerHTML = `
       <div class="pane">
@@ -477,17 +662,20 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
         <div class="row">${rows}</div>
       </div>
       <div class="pane">
-        <h2>Layers — ${esc(scene.name || `Scene ${currentSceneIndex() + 1}`)} ${addMenu}</h2>
-        <div class="row">${layerRows || '<div class="empty-hint">No layers yet.</div>'}</div>
+        <h2>On screen — ${esc(scene.name || `Scene ${currentSceneIndex() + 1}`)} ${addMenu}</h2>
+        <div class="row">${layerRows || '<div class="empty-hint">Nothing yet — click Add.</div>'}</div>
       </div>
-      <div class="pane">
-        <h2>Assets</h2>
-        <div>${assetRows}</div>
-      </div>
-      <div class="pane">
-        <h2>Audio <button class="mini-btn" data-act="add-audio">+ Track</button></h2>
-        <div class="row">${audioRows}</div>
-      </div>
+      <details class="adv pane-adv">
+        <summary>Assets &amp; audio</summary>
+        <div class="pane">
+          <h2>Assets</h2>
+          <div>${assetRows}</div>
+        </div>
+        <div class="pane">
+          <h2>Audio <button class="mini-btn" data-act="add-audio">+ Track</button></h2>
+          <div class="row">${audioRows}</div>
+        </div>
+      </details>
     `;
   }
 
@@ -502,7 +690,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     return [...names].map((key) => {
       const [kind, name] = key.split(/:(.+)/);
       const status = resolveAssetStatus ? resolveAssetStatus(kind, name) : 'unknown';
-      return `<div class="asset-row"><span class="dot ${status}"></span><span class="name">${esc(name)}</span><span class="meta">${kind}</span></div>`;
+      return `<div class="asset-row"><span class="dot ${status}"></span>${thumbImg(kind, name, 'thumb-lg')}<span class="name">${esc(name)}</span><span class="meta">${kind}</span></div>`;
     }).join('');
   }
 
@@ -514,8 +702,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     if (sel.kind === 'scene') {
       const scene = getScene(f, sel.i);
       inspectorEl.innerHTML = `<div class="pane">
-        <h2>Scene ${sel.i + 1} <button class="mini-btn" data-act="scene-up">↑</button><button class="mini-btn" data-act="scene-down">↓</button>
-          <button class="mini-btn danger" data-act="scene-del">Delete</button></h2>
+        <h2>Scene ${sel.i + 1} <button class="mini-btn danger" data-act="scene-del-selected">Delete</button></h2>
         ${fText('Name', 'name', scene.name || '')}
         ${fNumber('Duration (s)', 'duration', scene.duration, { step: 0.1, min: 0.1 })}
         ${fColor('Background', 'background', scene.background || '#080a0e')}
@@ -546,20 +733,23 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     } else if (sel.kind === 'layer') {
       const layer = selectedLayer();
       if (!layer) { select(null); return; }
+      const positionable = DRAGGABLE_KINDS.has(layer.type);
       inspectorEl.innerHTML = `<div class="pane">
-        <h2>${esc(LAYER_LABELS[layer.type] || layer.type)}</h2>
-        ${renderContentFields(layer)}
+        <h2>${esc(layerDisplayName(layer))} <button class="mini-btn danger" data-act="layer-del-selected" title="Delete">Delete</button></h2>
+        ${renderContentFields(layer, getClipDuration, f)}
       </div>
       <div class="pane">
-        <h2>Timing &amp; placement</h2>
-        ${fRow(fNumber('From (s)', 'from', layer.from, { step: 0.05, min: 0 }), fNullableNumber('Duration (s)', 'duration', layer.duration, { placeholder: 'to scene end', step: 0.05 }))}
-        ${fRow(fNumber('Opacity', 'opacity', layer.opacity, { step: 0.05, min: 0 }), fNumber('Z (draw order)', 'z', layer.z, { step: 1 }))}
-        ${renderPlacement(layer.placement)}
+        <h2>Effect</h2>
+        ${renderEffectPicker('When it appears', 'enter', layer.enter)}
+        ${renderEffectPicker('When it leaves', 'exit', layer.exit)}
       </div>
+      ${positionable ? `<div class="pane"><h2>Position</h2>${renderPositionPicker(layer)}</div>` : ''}
       <div class="pane">
-        <h2>Motion</h2>
-        ${renderMotion('Enter', 'enter', layer.enter)}
-        ${renderMotion('Exit', 'exit', layer.exit)}
+        <details class="adv"><summary>Advanced — timing, opacity, draw order${positionable ? '' : ', position'}</summary>
+          ${fRow(fNumber('From (s)', 'from', layer.from, { step: 0.05, min: 0 }), fNullableNumber('Duration (s)', 'duration', layer.duration, { placeholder: 'to scene end', step: 0.05 }))}
+          ${fRow(fNumber('Opacity', 'opacity', layer.opacity, { step: 0.05, min: 0 }), fNumber('Z (draw order)', 'z', layer.z, { step: 1 }))}
+          ${positionable ? '' : renderPlacement(layer.placement)}
+        </details>
       </div>
       <div class="pane">
         ${advancedJson(() => layer, 'Layer JSON — every field, including camera moves, text style and shadows')}
@@ -568,7 +758,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       const a = f.audio[sel.i];
       inspectorEl.innerHTML = `<div class="pane">
         <h2>Audio track ${sel.i + 1}</h2>
-        ${fText('Asset', 'asset', a.asset)}
+        ${fAssetText('Asset', 'asset', a.asset, knownAudioAssetNames(f))}
         ${fRow(fNumber('At (film s)', 'at', a.at, { step: 0.1, min: 0 }), fNumber('From (source s)', 'from', a.from, { step: 0.1, min: 0 }))}
         ${fNullableNumber('Duration (s)', 'duration', a.duration, { placeholder: 'to end of film', step: 0.1 })}
         ${fRow(fNumber('Fade in (s)', 'fade_in', a.fade_in, { step: 0.1, min: 0 }), fNumber('Fade out (s)', 'fade_out', a.fade_out, { step: 0.1, min: 0 }))}
@@ -606,8 +796,69 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
   // ---- event wiring ----
 
   timelineEl.addEventListener('click', (e) => {
-    const selEl = e.target.closest('[data-sel]');
+    // `data-act` (a row's own inline ↑/↓/✕) before `data-sel` (the row
+    // itself): every inline action button lives *inside* a `data-sel` row,
+    // so checking select first would let `closest('[data-sel]')` match the
+    // ancestor row and treat every button click as "select this row" —
+    // which is exactly what made layer-up/layer-down/layer-del/audio-del
+    // silently do nothing before this fix (verified live: clicking ↑ on a
+    // layer row never moved it). Scene rows get inline ↑/↓/✕ for the same
+    // reason: previously only the scene *inspector* had them — one more
+    // consequence of the same ordering bug, since a scene row is a
+    // `data-sel` element too. See docs/youcut-study.md's "one structural
+    // inconsistency worth naming".
     const actEl = e.target.closest('[data-act]');
+    const f = film();
+    if (actEl) {
+      const act = actEl.dataset.act;
+      if (act === 'add-scene') { const i = addSceneAfter(f, sceneCount(f) - 1); select({ kind: 'scene', i }); notify(); }
+      else if (act === 'scene-up' || act === 'scene-down') {
+        const i = parseInt(actEl.dataset.i, 10);
+        const j = act === 'scene-up' ? i - 1 : i + 1;
+        // Always land selection on the moved scene itself rather than
+        // trying to carry a stale layer index across the swap — `moveScene`
+        // exchanges the two scenes' whole layer lists, so a layer index
+        // that made sense before the move may point at something unrelated
+        // after it.
+        if (moveScene(f, i, act === 'scene-up' ? -1 : 1)) select({ kind: 'scene', i: j });
+        notify();
+      } else if (act === 'scene-del') {
+        const i = parseInt(actEl.dataset.i, 10);
+        const wasShowing = (sel?.kind === 'scene' || sel?.kind === 'layer') && sel.i === i;
+        deleteScene(f, i);
+        if (wasShowing) select(null); else notify();
+      } else if (act === 'toggle-add-layer') { document.getElementById('add-layer-list').hidden = !document.getElementById('add-layer-list').hidden; }
+      else if (act === 'add-layer') {
+        const scene = getScene(f, currentSceneIndex());
+        const layer = newLayer(actEl.dataset.kind);
+        biasTextPlacement(layer, scene);
+        scene.layers.push(layer);
+        select({ kind: 'layer', i: currentSceneIndex(), j: scene.layers.length - 1 });
+        notify();
+      } else if (act === 'layer-up' || act === 'layer-down') {
+        const scene = getScene(f, currentSceneIndex());
+        const j = parseInt(actEl.dataset.j, 10);
+        const k = act === 'layer-up' ? j - 1 : j + 1;
+        if (k >= 0 && k < scene.layers.length) {
+          [scene.layers[j], scene.layers[k]] = [scene.layers[k], scene.layers[j]];
+          if (sel?.kind === 'layer' && sel.j === j) sel = { ...sel, j: k };
+        }
+        notify(); renderTimeline();
+      } else if (act === 'layer-del') {
+        const scene = getScene(f, currentSceneIndex());
+        scene.layers.splice(parseInt(actEl.dataset.j, 10), 1);
+        select(null); notify();
+      } else if (act === 'add-audio') {
+        f.audio.push(newAudio());
+        select({ kind: 'audio', i: f.audio.length - 1 });
+        notify();
+      } else if (act === 'audio-del') {
+        f.audio.splice(parseInt(actEl.dataset.i, 10), 1);
+        select(null); notify();
+      }
+      return;
+    }
+    const selEl = e.target.closest('[data-sel]');
     if (selEl) {
       const [kind, idx] = selEl.dataset.sel.split(':');
       const i = parseInt(idx, 10);
@@ -615,40 +866,6 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       else if (kind === 't') select({ kind: 'transition', i });
       else if (kind === 'l') select({ kind: 'layer', i: currentSceneIndex(), j: i });
       else if (kind === 'a') select({ kind: 'audio', i });
-      return;
-    }
-    if (!actEl) return;
-    const act = actEl.dataset.act;
-    const f = film();
-    if (act === 'add-scene') { const i = addSceneAfter(f, sceneCount(f) - 1); select({ kind: 'scene', i }); notify(); }
-    // scene-up/scene-down/scene-del: handled by inspectorEl's own listener —
-    // those buttons render inside the scene inspector, not this panel.
-    else if (act === 'toggle-add-layer') { document.getElementById('add-layer-list').hidden = !document.getElementById('add-layer-list').hidden; }
-    else if (act === 'add-layer') {
-      const scene = getScene(f, currentSceneIndex());
-      scene.layers.push(newLayer(actEl.dataset.kind));
-      select({ kind: 'layer', i: currentSceneIndex(), j: scene.layers.length - 1 });
-      notify();
-    } else if (act === 'layer-up' || act === 'layer-down') {
-      const scene = getScene(f, currentSceneIndex());
-      const j = parseInt(actEl.dataset.j, 10);
-      const k = act === 'layer-up' ? j - 1 : j + 1;
-      if (k >= 0 && k < scene.layers.length) {
-        [scene.layers[j], scene.layers[k]] = [scene.layers[k], scene.layers[j]];
-        if (sel?.kind === 'layer' && sel.j === j) sel = { ...sel, j: k };
-      }
-      notify(); renderTimeline();
-    } else if (act === 'layer-del') {
-      const scene = getScene(f, currentSceneIndex());
-      scene.layers.splice(parseInt(actEl.dataset.j, 10), 1);
-      select(null); notify();
-    } else if (act === 'add-audio') {
-      f.audio.push(newAudio());
-      select({ kind: 'audio', i: f.audio.length - 1 });
-      notify();
-    } else if (act === 'audio-del') {
-      f.audio.splice(parseInt(actEl.dataset.i, 10), 1);
-      select(null); notify();
     }
   });
 
@@ -706,12 +923,6 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       const layer = selectedLayer();
       layer.placement = placementDefault(actEl.value);
       renderInspector(); notify();
-    } else if (act === 'enter-kind' || act === 'exit-kind') {
-      const layer = selectedLayer();
-      const field = act === 'enter-kind' ? 'enter' : 'exit';
-      const dur = layer[field]?.duration ?? 0.5;
-      layer[field] = motionTemplate(actEl.value, dur);
-      renderInspector(); notify();
     } else if (act === 'enter-timing' || act === 'exit-timing') {
       const layer = selectedLayer();
       const field = act === 'enter-timing' ? 'enter' : 'exit';
@@ -727,15 +938,30 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
   inspectorEl.addEventListener('click', (e) => {
     const actEl = e.target.closest('[data-act]');
     if (!actEl) return;
-    // The scene ↑/↓/Delete buttons live in this panel (they're part of the
-    // scene inspector), not the timeline panel, so they're handled here
-    // rather than in `timelineEl`'s listener even though every other
-    // scene/layer mutation is.
+    // Reorder is inline-only now (the scene row in the timeline panel, same
+    // as a layer row) — this panel keeps only Delete, matching the layer
+    // inspector's own "Delete here too" pattern (`layer-del-selected`).
     const f = film();
-    if (actEl.dataset.act === 'scene-up') { moveScene(f, sel.i, -1) && select({ kind: 'scene', i: sel.i - 1 }); notify(); return; }
-    if (actEl.dataset.act === 'scene-down') { moveScene(f, sel.i, 1) && select({ kind: 'scene', i: sel.i + 1 }); notify(); return; }
-    if (actEl.dataset.act === 'scene-del') { deleteScene(f, sel.i); select(null); notify(); return; }
-    if (actEl.dataset.act !== 'apply-json') return;
+    const act = actEl.dataset.act;
+    if (act === 'scene-del-selected') { deleteScene(f, sel.i); select(null); notify(); return; }
+    if (act === 'layer-del-selected') {
+      const scene = getScene(f, sel.i);
+      scene.layers.splice(sel.j, 1);
+      select(null); notify(); return;
+    }
+    if (act === 'enter-kind' || act === 'exit-kind') {
+      const layer = selectedLayer();
+      const field = act === 'enter-kind' ? 'enter' : 'exit';
+      const dur = layer[field]?.duration ?? 0.5;
+      layer[field] = motionTemplate(actEl.dataset.value, dur);
+      renderInspector(); notify(); return;
+    }
+    if (act === 'quick-anchor') {
+      const layer = selectedLayer();
+      layer.placement = { anchor: actEl.dataset.anchor, pad: 72 };
+      renderInspector(); notify(); return;
+    }
+    if (act !== 'apply-json') return;
     const ta = actEl.closest('details').querySelector('.adv-json');
     try {
       const parsed = JSON.parse(ta.value);
@@ -747,6 +973,48 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     } catch (err) {
       ta.title = `invalid JSON: ${err.message}`;
     }
+  });
+
+  // ---- trim widget dragging ----
+  //
+  // The two handles write straight into `layer.trim` as the pointer moves,
+  // re-rendering just the inspector (cheap — no wasm reload) so the bar and
+  // the "1.20s – 3.40s" hint track the drag live. `notify()` — the debounced
+  // reload that re-decodes a browser clip and repaints the preview — fires
+  // only on release, so a fast drag doesn't trigger a re-decode per pixel.
+  inspectorEl.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest('[data-trim-handle]');
+    if (!handle) return;
+    const track = handle.closest('[data-trim-track]');
+    const layer = selectedLayer();
+    if (!layer || !track) return;
+    const span = parseFloat(track.dataset.span) || 10;
+    const minLen = parseFloat(track.dataset.minLen) || 0.1;
+    const which = handle.dataset.trimHandle;
+    const rect = track.getBoundingClientRect();
+    e.preventDefault();
+    const onMove = (ev) => {
+      const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      const t = frac * span;
+      let [s, l] = layer.trim || [0, 0];
+      if (which === 'start') {
+        const end = s + l;
+        s = Math.max(0, Math.min(t, end - minLen));
+        l = end - s;
+      } else {
+        const end = Math.max(t, s + minLen);
+        l = end - s;
+      }
+      layer.trim = [s, l];
+      renderInspector();
+    };
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      notify();
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
   });
 
   return {

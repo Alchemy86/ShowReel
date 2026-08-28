@@ -27,9 +27,9 @@ It knows nothing about any subject. Maps, screen captures and video clips are
 | **12.0 ms a frame** | the example film, 1920×1080 at 60fps, 2082 frames in 25 s on 20 cores — [what a frame costs](docs/performance.md) |
 | **48 megapixels, 4.3 ms** | the camera zooms, pans and holds over a source far larger than the frame. A 6832×7024 still renders to 1080p in 4.3 ms a frame — 33× faster than the obvious implementation |
 | **Text as geometry** | glyphs are filled paths, not font-engine blits, so a title takes a gradient, an outline and a drop shadow. Real shaping, kerning, tracking in ems, **tabular figures** so a counter does not jitter as it ticks |
-| **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris and zoom, each composable with any easing curve or spring |
-| **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, and a **pull-up** that lifts a piece of the frame, dims the rest and annotates it |
-| **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut |
+| **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris, zoom and a cross-blur dissolve, each composable with any easing curve or spring |
+| **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, a **pull-up** that lifts a piece of the frame, dims the rest and annotates it, and a progress bar that fills like a counter but draws no digits |
+| **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut. A video clip's own soundtrack joins the mix too, with the same gain, fades and a mute |
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
 | **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
@@ -118,6 +118,15 @@ with no comments in it still loads exactly as before.
 showreel render examples/kanto.film.jsonc -A <assets> -o reel.mp4
 ```
 
+Starting from a blank page is the slow way in — `showreel new` writes a small,
+working, commented film that needs no assets at all, so the first render is
+one command away rather than a schema lookup:
+
+```bash
+showreel new film.jsonc --title "My Demo"
+showreel still film.jsonc --at 2s -o still.png   # or render it straight away
+```
+
 ### Sound
 
 A track hangs off the film rather than a scene, because a theme that carries an
@@ -136,6 +145,155 @@ inside the source — the two are easy to confuse and are deliberately different
 words. An unset duration means "to the end of the film". Tracks are mixed
 without ffmpeg quietly rescaling anyone's volume, and the mobile cut carries the
 audio too.
+
+### A clip's own audio
+
+`Content::Clip` draws a decoded video frame, and by default its source file's
+own soundtrack joins the mix too — no separate `Audio` track to place, since
+its position and length are the clip's own:
+
+```rust
+Layer::clip("burst.mp4").trim(8.0, 3.4)         // plays at full level
+Layer::clip("burst.mp4").trim(8.0, 3.4).mute()  // draws, contributes no sound
+Layer::clip("burst.mp4").trim(8.0, 3.4).clip_gain(0.3)        // ducked
+Layer::clip("burst.mp4").trim(8.0, 3.4).clip_fades(0.2, 0.5)  // in and out
+```
+
+Measured on a 3s test clip (320×180, a synthesised tone under a test pattern),
+rendered through `showreel render` exactly as any film is:
+
+| clip audio | master's audio stream | measured level |
+|---|---|---|
+| default (gain 1.0) | `aac` | −24.1 dB mean |
+| `.clip_gain(0.3)` | `aac`, 10.5 dB quieter | −34.6 dB mean (≈ 20·log₁₀(0.3), as it should) |
+| `.mute()` | none | — |
+
+This does not loop a clip's audio to match `ClipLoop::Loop` — a looping
+*picture* has no natural audio analogue, so the sound simply runs out when the
+decoded source does, the same way a video frozen on its last frame does not
+keep making noise. See `AGENTS.md` for the full reasoning.
+
+### A clip's own speed
+
+`Layer::clip(...).speed(2.0)` plays the decoded window at a different rate —
+double speed reaches a highlight sooner, `0.5` is real slow motion:
+
+```rust
+Layer::clip("burst.mp4").trim(0.0, 6.0)              // plays at 1x
+Layer::clip("burst.mp4").trim(0.0, 6.0).speed(3.0)   // the same window, 3x through
+```
+
+Same on-screen moment — one second into the layer — two different points in
+the source, because speed only changes *which decoded frame* is picked:
+
+| `speed(1.0)` (default) | `speed(3.0)` |
+|---|---|
+| ![one second in, still the clip's first colour](docs/stills/clip-speed-1x.png) | ![the same one second in, three seconds into the source](docs/stills/clip-speed-3x.png) |
+
+It does not touch the clip's own soundtrack. Playing audio at a different rate
+needs pitch/tempo correction ffmpeg can do (`atempo`) but this crate does not
+attempt, so — the same call as `ClipLoop::Loop`'s audio above — a clip's own
+audio is silently dropped from the mix while `speed != 1.0`, rather than
+played back out of sync with what is on screen. Add a separate `Audio` track
+if the moment needs sound.
+
+### A cross-blur dissolve
+
+`Presentation::CrossBlur` softens both frames toward the transition's
+midpoint and sharpens back out, rather than staying crisp throughout like a
+plain dissolve — it reads as a more "cinematic" cut:
+
+```rust
+Transition::cross_blur(1.2)  // radius defaults to 24px, peaking at the midpoint
+```
+
+Same cut, same midpoint, both stills real frames from `showreel still`:
+
+| plain dissolve | cross-blur |
+|---|---|
+| ![a plain dissolve at its midpoint: two titles double-exposed, both still sharp](docs/stills/dissolve-mid.png) | ![a cross-blur dissolve at its midpoint: both titles soft, reading as one glow rather than two overlapping words](docs/stills/cross-blur-mid.png) |
+
+**The cost is real and worth knowing before reaching for it.** Blurring every
+channel of a full frame (`canvas::blur_rgba`) measured at **~170ms per call**
+at 1920×1080 — independent of the blur radius, since a box blur's cost is the
+frame's pixel count, not the window size. `CrossBlur` calls it twice a frame
+(outgoing and incoming), so a transition at that resolution costs on the order
+of a third of a second a frame on top of everything else drawn — against the
+whole example film's own 12ms/frame average. A short transition (well under a
+second) keeps that bounded to a few seconds of extra render time; a film-length
+one would not.
+
+### A progress bar
+
+A generic decorative shape — a track and a fill that animates the same way
+`Counter` does, but draws no digits:
+
+```rust
+Layer::bar(0.0, 1.0, 2.0)   // fills over 2 seconds
+    .bar_track(Color::rgba(255, 255, 255, 40))
+    .bar_fill(Color::rgb(255, 209, 71))
+    .frac(0.2, 0.56, 0.6, 0.045)   // sized like Solid/Gradient: you place it
+```
+
+Real frame, `showreel still`, 1.2s into a 2s linear fill:
+
+![a progress bar, 60% filled, under a "Rendering" title](docs/stills/progress-bar.png)
+
+Corners default to a pill (half the bar's own height) and clamp gracefully
+when the filled portion is narrower than the radius, the same
+`round_rect_path` clamp every other rounded shape in ShowReel already uses.
+`Layer::bar_fixed(v)` holds at a constant level with no animation at all —
+useful for a static indicator rather than a fill.
+
+### A parallax shot
+
+`Content::Parallax` turns one flat image, cut into a handful of depth planes,
+into a fake-3D shot: one camera move, authored exactly like a still's, is
+shared by every plane — each plane just says how far it departs from that
+move:
+
+```rust
+Layer::parallax(
+    vec![
+        ParallaxPlane::new("sky.png", 0.2),    // barely drifts
+        ParallaxPlane::new("mid.png", 0.55),   // follows the move closely
+        ParallaxPlane::new("fg.png", 1.2),     // overshoots it
+    ],
+    Camera::new()
+        .to(0.0, Framing::Whole)
+        .shot(Shot::new(7.0, Framing::at(0.62, 0.55, 990.0)).eased(Easing::InOutCubic)),
+)
+```
+
+`depth: 1.0` follows the authored move exactly; `0.0` sits still; anything
+else scales the departure from the move's first shot, which is what actually
+reads as depth — nearer things moving more. Every plane must be the same
+pixel size (a depth plane is a cutout of one shared canvas, checked at render
+time — see `examples/parallax_demo.rs`, which draws its own three-plane
+"screenshot" so the example needs nothing on disk):
+
+| wide, before the push | pushed in, 7s later |
+|---|---|
+| ![the whole synthetic skyline before the camera has moved](docs/stills/parallax-wide.png) | ![the same shot pushed in on the sun, buildings visibly at different depths](docs/stills/parallax-pushed.png) |
+
+Splitting a real screenshot into those planes (rotoscoping a subject out from
+its background) is outside the crate's own rule — "nothing in the crate may
+know what its films are about" — the same reason `examples/kanto_reel.rs`
+does its own map-specific work outside `src/`. `Content::Parallax` only
+composes planes that already exist.
+
+**The cost is close to what it looks like: N ordinary camera draws, not a new
+expensive operation.** `draw_parallax` is [`Camera::draw`](src/camera.rs)'s
+own mip-backed `draw_viewport`, called once per plane — there is no blur or
+extra buffer like `Presentation::CrossBlur` above. Measured directly
+(`layer::tests::parallax_draw_cost_at_1080p`, single-threaded, release
+build): a 3-plane stack at 1920×1080 over 4000×2500 source planes cost
+**~45ms/frame**, against **~15ms/frame** for one ordinary `Still`+camera
+layer at the same size — close to linear in the plane count, as expected.
+Rendering the worked example itself (`examples/parallax_demo.rs`, three
+3200×1800 planes, `parallel` feature on) averaged **15.0ms/frame** across the
+whole clip, because most of it spends time at the wide end of the push, where
+every plane's mip pyramid picks a small, cheap level.
 
 ## Look before you render
 
@@ -181,6 +339,119 @@ looking, and the last frame that did render stays on screen:
 It's behind a `studio` feature — `cargo build`/`cargo run` without
 `--features studio` never pulls in the web server, so the library and the
 plain render path stay exactly as dependency-light as they were.
+
+### API access
+
+**"API access" could mean a documented, stable Rust library, or a local HTTP
+service anything can call.** ShowReel already has the first — the library
+this README is documenting, with a `prelude`, `AGENTS.md`'s "load-bearing
+decisions" table pointing at the module that owns each one, and a test suite
+that would break the moment a signature quietly changed underneath it.
+Writing more prose about that isn't new capability. The HTTP surface is: it
+lets a shell script, a browser tool, or anything in any language drive
+ShowReel without shelling out to the CLI and scraping stdout — closer to what
+"API access" usually means, and the reading this crate didn't already have.
+
+**It rides the studio server rather than starting a second one.** `showreel
+studio <film>` already runs a `tiny_http` server holding a live-reloaded,
+validated `Film` and an `AssetStore` for it — everything `render`, `still`,
+`info` and `check` need already exists there. A stateless render-farm-style
+service (POST a film, get a video back) was considered and set aside: it
+would mean a second code path for "load and validate a film" alongside the
+studio's own, free to drift from it, for a capability the studio's own
+snapshot already provides for free. So the endpoints below answer against
+*the film the studio you started already has loaded* — point a studio at a
+film, then drive it:
+
+```bash
+cargo run --release --features studio --bin showreel -- studio my.film.jsonc -A assets &
+
+curl http://127.0.0.1:7878/api/info                    # title, duration, scenes, audio — JSON
+curl http://127.0.0.1:7878/api/check                    # {"ok": true, "errors": []}
+curl "http://127.0.0.1:7878/api/still?at=4.2" -o f.png   # a real frame, full declared size
+curl -X POST "http://127.0.0.1:7878/api/render?mobile=1" -o out.mp4  # the actual encode
+```
+
+| endpoint | method | mirrors | notes |
+|---|---|---|---|
+| `/api/info` | GET | `showreel info` | JSON: title, `width`/`height`/`fps`, `duration`, `frameCount`, `scenes[]`, `audio[]` |
+| `/api/check` | GET | `showreel check` | `{"ok": bool, "errors": [string]}` — a JSON parse failure counts as one error |
+| `/api/still` | GET | `showreel still` | `?at=<seconds>`, full declared size (unlike `/api/frame`, which serves the studio's own `--scale` preview) — a PNG |
+| `/api/render` | POST | `showreel render` | `?scale=`, `?crf=`, `?mobile=1` for the 720p delivery cut instead of the master — streams the finished mp4 back and deletes its own scratch file |
+
+`/api/render` is the one endpoint worth pausing on: it runs the same
+`Renderer` + ffmpeg pipeline the CLI does, so it costs the same time and CPU,
+blocking the request until the file is ready, then reads the whole thing into
+memory to send it — fine for the seconds-to-tens-of-seconds previews this
+tool is built around, not designed for handing back a feature film.
+
+**Localhost by default, and that's load-bearing, not a suggestion.** `/api/render`
+runs ffmpeg and writes a file; reachable from a network, that is a remote
+code/resource-exhaustion surface, not a convenience. `StudioOptions::host`
+already defaults to `127.0.0.1` — the API rides that same default — and
+`showreel studio --host 0.0.0.0` (for previewing on another device on your
+own LAN) now also prints a startup warning naming exactly that risk, so
+opening it is a decision you see, not one that happens quietly.
+
+Proven, not just described: `tests/api_server.rs` starts a real server on a
+real socket and drives all four endpoints (`/api/render` included, over an
+actual TCP connection, skipped only when ffmpeg isn't on `PATH`) rather than
+calling the JSON-building functions directly.
+
+## MCP support
+
+`showreel mcp` (needs `--features mcp`) runs an MCP server over stdio — five
+tools an agent calls directly instead of shelling out to this CLI and
+parsing its stdout:
+
+| tool | mirrors | does |
+|---|---|---|
+| `new_film` | `showreel new` | writes a starter film (one title-card scene) to a path |
+| `check_film` | `showreel check` | validates a film, returns `{ok, errors}` |
+| `film_info` | `showreel info` | the film's structure — title, size/fps, duration, scenes, audio |
+| `render_still` | `showreel still` | one frame, returned inline as a real PNG image |
+| `render_film` | `showreel render` | the actual ffmpeg encode, master plus an optional mobile cut |
+
+That is the same five-and-four the local HTTP API exposes (see "API
+access" above), over a different transport for a different consumer: MCP
+for an agent already in the same process tree, HTTP for anything reachable
+over a socket. Both call the same library code (`Film::load`, `Renderer`,
+`preview::still_at`, `Film::summary`) — there is one implementation of
+"render a still," not three.
+
+**"Build a film" is deliberately not five more tools mirroring every
+`Content` variant.** A film is one JSON file — the browser editor's own
+film object *is* that JSON (see `AGENTS.md`) — and an agent with ordinary
+file tools already reads and writes it directly, faster than a round trip
+through a tool call per layer. `new_film` scaffolds a starting point;
+`check_film`/`film_info`/`render_still` are the fast feedback loop for
+editing the JSON further, the same three things a person reaches for from
+the terminal.
+
+```bash
+cargo build --release --features cli,mcp --bin showreel
+./target/release/showreel mcp   # speaks JSON-RPC over stdin/stdout
+```
+
+Point an MCP-capable agent at that command (its config differs per host —
+Claude Code's `.mcp.json`, for instance, wants `{"command": "...", "args":
+["mcp"]}`). Built on [`rmcp`](https://crates.io/crates/rmcp), the official
+Rust SDK, rather than a hand-rolled JSON-RPC framing — MCP's schema and
+lifecycle messages are a moving target this crate has no business tracking
+itself, the same reasoning that keeps ffmpeg invocation direct rather than
+reimplemented. Behind its own feature flag for the same reason `studio` is:
+it pulls in an async runtime (`tokio`) the plain render path has never
+needed, so a default `cargo build` stays exactly as dependency-light as
+before.
+
+Proven over the real wire format, not just the tool functions in isolation:
+`tests/mcp_server.rs` spawns the actual `showreel mcp` binary and speaks
+real newline-delimited JSON-RPC to it over stdio pipes — every tool, a
+missing-file error path, and a clean-shutdown check that would have caught
+(and did, during development) a real bug: the server's async runtime
+panicked on shutdown without `enable_time`, because `rmcp` uses a timer
+internally that a minimal `tokio::runtime::Builder` doesn't enable by
+default.
 
 ## In the browser
 

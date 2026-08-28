@@ -300,8 +300,18 @@ pub fn round_rect_path(r: Rect, radius: f64) -> Option<tiny_skia::Path> {
     pb.finish()
 }
 
-/// A separable box blur run three times, which approximates a Gaussian closely
-/// enough for a drop shadow and is O(n) rather than O(n·r).
+/// Three box-blur passes (horizontal then vertical) over one channel — the
+/// approximation to a Gaussian that both [`blur_alpha`] and [`blur_rgba`]
+/// share, and O(n) rather than O(n·r).
+fn box_blur3(chan: &mut [u16], tmp: &mut [u16], w: i32, h: i32, r: i32) {
+    for _ in 0..3 {
+        box_blur_pass(chan, tmp, w, h, r, true);
+        box_blur_pass(tmp, chan, w, h, r, false);
+    }
+}
+
+/// Blur only the alpha channel, which approximates a Gaussian closely enough
+/// for a drop shadow.
 ///
 /// Shadows are what stop overlay text looking pasted on, so this is load
 /// bearing for the typography rather than decoration.
@@ -314,16 +324,50 @@ pub fn blur_alpha(pixmap: &mut Pixmap, radius: f64) {
     // Work on the alpha channel only: a shadow is a silhouette.
     let mut a: Vec<u16> = pixmap.pixels().iter().map(|p| p.alpha() as u16).collect();
     let mut tmp = vec![0u16; a.len()];
-    for _ in 0..3 {
-        box_blur_pass(&a, &mut tmp, w, h, r, true);
-        box_blur_pass(&tmp, &mut a, w, h, r, false);
-    }
+    box_blur3(&mut a, &mut tmp, w, h, r);
     // Rebuild as a premultiplied black silhouette; the caller tints it.
     let data = pixmap.pixels_mut();
     for (px, av) in data.iter_mut().zip(a.iter()) {
         let av = (*av).min(255) as u8;
         *px = tiny_skia::PremultipliedColorU8::from_rgba(0, 0, 0, av)
             .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
+    }
+}
+
+/// Blur every channel — the picture itself, not just its silhouette.
+///
+/// The basis of [`crate::transition::Presentation::CrossBlur`]: a shadow only
+/// ever needs [`blur_alpha`]'s silhouette, but a cross-blur dissolve needs the
+/// two frames themselves to soften. Each of R, G, B and A is box-blurred
+/// independently by the same [`box_blur3`]; because every source pixel is
+/// already valid premultiplied (`r, g, b <= a`) and a box blur is a positive
+/// weighted average taken at identical positions for every channel, the
+/// result stays valid premultiplied too, with no clamping needed.
+pub fn blur_rgba(pixmap: &mut Pixmap, radius: f64) {
+    let r = radius.round() as i32;
+    if r < 1 {
+        return;
+    }
+    let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+    let mut tmp = vec![0u16; pixmap.pixels().len()];
+
+    let mut red: Vec<u16> = pixmap.pixels().iter().map(|p| p.red() as u16).collect();
+    box_blur3(&mut red, &mut tmp, w, h, r);
+    let mut green: Vec<u16> = pixmap.pixels().iter().map(|p| p.green() as u16).collect();
+    box_blur3(&mut green, &mut tmp, w, h, r);
+    let mut blue: Vec<u16> = pixmap.pixels().iter().map(|p| p.blue() as u16).collect();
+    box_blur3(&mut blue, &mut tmp, w, h, r);
+    let mut alpha: Vec<u16> = pixmap.pixels().iter().map(|p| p.alpha() as u16).collect();
+    box_blur3(&mut alpha, &mut tmp, w, h, r);
+
+    for (i, px) in pixmap.pixels_mut().iter_mut().enumerate() {
+        *px = tiny_skia::PremultipliedColorU8::from_rgba(
+            red[i] as u8,
+            green[i] as u8,
+            blue[i] as u8,
+            alpha[i] as u8,
+        )
+        .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
     }
 }
 
@@ -382,5 +426,82 @@ mod tests {
             tiny_skia::PremultipliedColorU8::from_rgba(0, 0, 0, 255).unwrap();
         blur_alpha(&mut p, 3.0);
         assert!(p.pixels()[10 * 21 + 12].alpha() > 0, "blur must reach neighbours");
+    }
+
+    #[test]
+    fn blur_rgba_softens_a_hard_colour_edge() {
+        // Left half red, right half blue, both fully opaque.
+        let (w, h) = (40u32, 40u32);
+        let mut p = Pixmap::new(w, h).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                let c = if x < w / 2 { (220, 20, 20) } else { (20, 20, 220) };
+                p.pixels_mut()[(y * w + x) as usize] =
+                    tiny_skia::ColorU8::from_rgba(c.0, c.1, c.2, 255).premultiply();
+            }
+        }
+        blur_rgba(&mut p, 6.0);
+        let at = |x: u32, y: u32| p.pixels()[(y * w + x) as usize];
+        // Far from the seam, each side should stay close to its own colour.
+        let (far_l, far_r) = (at(2, 20), at(w - 3, 20));
+        assert!(far_l.red() > 180 && far_l.blue() < 60, "{far_l:?}");
+        assert!(far_r.blue() > 180 && far_r.red() < 60, "{far_r:?}");
+        // Right at the seam, blurring must have mixed the two.
+        let seam = at(w / 2, 20);
+        assert!(seam.red() > 40 && seam.blue() > 40, "seam should be a mix, got {seam:?}");
+    }
+
+    #[test]
+    fn blur_rgba_keeps_every_pixel_a_valid_premultiplied_colour() {
+        // A semi-transparent edge next to full opacity is the case where a
+        // per-channel average could in principle overshoot alpha.
+        let (w, h) = (20u32, 20u32);
+        let mut p = Pixmap::new(w, h).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                let (c, a) = if x < w / 2 { (Color::rgb(255, 0, 0), 255) } else { (Color::rgb(0, 255, 0), 40) };
+                p.pixels_mut()[(y * w + x) as usize] =
+                    tiny_skia::ColorU8::from_rgba(c.r, c.g, c.b, a).premultiply();
+            }
+        }
+        blur_rgba(&mut p, 4.0);
+        for px in p.pixels() {
+            assert!(px.red() <= px.alpha() && px.green() <= px.alpha() && px.blue() <= px.alpha(), "{px:?}");
+        }
+    }
+
+    #[test]
+    fn blur_rgba_cost_at_1080p() {
+        // Measured, not quoted: a cross-blur dissolve costs this per frame,
+        // twice over (once per outgoing/incoming side), on top of everything
+        // else already drawn that frame. See the "Cost" note on
+        // `Presentation::CrossBlur` in AGENTS.md for the number this printed.
+        let mut p = Pixmap::new(1920, 1080).unwrap();
+        for (i, px) in p.pixels_mut().iter_mut().enumerate() {
+            let (x, y) = (i % 1920, i / 1920);
+            *px = tiny_skia::ColorU8::from_rgba((x % 256) as u8, (y % 256) as u8, 128, 255).premultiply();
+        }
+        let started = std::time::Instant::now();
+        blur_rgba(&mut p, 24.0); // Transition::cross_blur's default peak radius.
+        let elapsed = started.elapsed();
+        eprintln!("blur_rgba at 1920x1080, radius 24: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+        // A generous regression guard, not a tight budget (an unoptimised
+        // debug build is measured here too, and is several times slower than
+        // the ~170ms `cargo test --release` gives — see AGENTS.md): this only
+        // needs to catch the algorithm accidentally going quadratic in the
+        // radius, not hold it to a ms budget.
+        assert!(elapsed.as_secs() < 5, "blur_rgba got unexpectedly slow: {elapsed:?}");
+    }
+
+    #[test]
+    fn a_uniform_colour_is_unchanged_by_either_blur() {
+        // The transitions test suite relies on this: solid-colour test scenes
+        // must survive a cross-blur unchanged, since a uniform image has no
+        // edge for a blur to soften.
+        let mut p = Pixmap::new(16, 16).unwrap();
+        p.fill(Color::rgb(30, 200, 90).to_skia());
+        let before = p.data().to_vec();
+        blur_rgba(&mut p, 24.0);
+        assert_eq!(p.data(), &before[..], "blurring a flat colour must be a no-op");
     }
 }
