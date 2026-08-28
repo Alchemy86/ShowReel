@@ -89,6 +89,25 @@ enum Command {
         #[arg(long, default_value_t = 0.35)]
         scale: f64,
     },
+    /// Write a starter film: a two-scene example that needs no assets, ready
+    /// to edit and render. The fastest way to have something working rather
+    /// than a blank page.
+    New {
+        /// Where to write it. Defaults to `film.jsonc`.
+        #[arg(default_value = "film.jsonc")]
+        out: PathBuf,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long, default_value_t = 1920)]
+        width: u32,
+        #[arg(long, default_value_t = 1080)]
+        height: u32,
+        #[arg(long, default_value_t = 30.0)]
+        fps: f64,
+        /// Overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+    },
     /// Describe a film without rendering it.
     Info { film: PathBuf },
     /// Check a film for the mistakes a type cannot catch.
@@ -151,6 +170,9 @@ fn main() -> Result<()> {
         }
         Command::Preview { film, out, asset_roots, scale } => {
             cmd_render(film, Some(out), asset_roots, scale, None, true, None, 26)
+        }
+        Command::New { out, title, width, height, fps, force } => {
+            cmd_new(out, title, width, height, fps, force)
         }
         Command::Info { film } => cmd_info(film),
         Command::Check { film } => cmd_check(film),
@@ -482,6 +504,126 @@ fn presentation_name(t: &showreel::transition::Transition) -> String {
     .to_string()
 }
 
+/// A two-scene, asset-free starter film, as JSONC — commented so a first-time
+/// reader can see the shape of the format (`opening`/`then`, a layer's `type`
+/// tag) without cross-referencing the docs. Every value here is something
+/// `showreel render` can turn into a video with no `-A` at all: solid and
+/// gradient backgrounds, a title, a lower-third, a counter and plain text.
+/// `examples/kanto.film.jsonc` is the fuller worked example, once this one
+/// stops being a blank page.
+fn starter_jsonc(title: &str, width: u32, height: u32, fps: f64) -> String {
+    // JSON-escaped (and already quoted) so a title with a `"` or a backslash
+    // in it — plausible for anything typed on a command line — still lands in
+    // valid JSON rather than corrupting the file it is interpolated into.
+    let title = serde_json::to_string(title).unwrap();
+    format!(
+        r##"// A ShowReel film. This is JSONC: `//` comments and a trailing comma on the
+// last item of a list are both fine — see `AGENTS.md` if you want to know why
+// only those two, and not the rest of JSON5.
+//
+// The shape: one required opening scene, then any number of (transition,
+// scene) pairs. Every layer needs a "type" — see `examples/kanto.film.jsonc`
+// for the fuller vocabulary (a camera move over a still, video clips, sound).
+//
+// Try it now:
+//   showreel check film.jsonc
+//   showreel still film.jsonc --at 2s -o still.png
+//   showreel sheet film.jsonc -o sheet.png
+//   showreel render film.jsonc -o out.mp4
+{{
+  "width": {width},
+  "height": {height},
+  "fps": {fps},
+  "title": {title},
+
+  "opening": {{
+    "duration": 4.0,
+    "layers": [
+      {{ "type": "gradient", "stops": [[0.0, "#1c2438"], [1.0, "#07090e"]], "angle": 110.0 }},
+      {{
+        "type": "title",
+        "text": {title},
+        "subtitle": "describe a film and render it",
+        // Every character arrives in turn — see `src/motion.rs` for the rest
+        // of the entrance vocabulary (fade, rise, slide, scale, words...).
+        "enter": {{ "kind": "chars", "stagger": 0.03, "rise": 26.0, "duration": 0.6 }}
+      }}
+    ]
+  }},
+
+  "then": [
+    {{
+      "transition": {{ "duration": 0.8, "presentation": {{ "kind": "dissolve" }} }},
+      "scene": {{
+        "duration": 5.0,
+        "layers": [
+          {{ "type": "solid", "colour": "#0d1016" }},
+          {{
+            "type": "lower-third",
+            "text": "Made with ShowReel",
+            "detail": "edit this file to make it yours",
+            "from": 0.3
+          }},
+          {{
+            "type": "counter",
+            "count": {{ "from": 0.0, "to": 100.0, "over": 2.0 }},
+            "label": "% of the way to a real film",
+            "from": 0.6
+          }},
+          {{
+            "type": "text",
+            "text": "A film is a value: a Rust builder or this JSON,\nthe same tree either way.",
+            // A box in fractions of the frame — the placement to reach for,
+            // since it survives a resolution change. See `src/layer.rs`'s
+            // `Placement` for the other kinds (an anchor, an exact rect).
+            // Kept clear of the counter (top right) and the lower-third
+            // (bottom left, below).
+            "placement": {{ "fx": 0.1, "fy": 0.32, "fw": 0.6, "fh": 0.2 }},
+            "from": 1.4
+          }}
+        ]
+      }}
+    }}
+  ]
+}}
+"##
+    )
+}
+
+fn cmd_new(
+    out: PathBuf,
+    title: Option<String>,
+    width: u32,
+    height: u32,
+    fps: f64,
+    force: bool,
+) -> Result<()> {
+    if out.exists() && !force {
+        bail!("{} already exists; pass --force to overwrite", out.display());
+    }
+    let title = title.unwrap_or_else(|| "A New Film".to_string());
+    let jsonc = starter_jsonc(&title, width, height, fps);
+    // Fail loudly here rather than write something `showreel check` would
+    // then also reject — a scaffold that does not itself validate is worse
+    // than no scaffold.
+    let film = Film::from_json(&jsonc).context("the starter template failed to parse")?;
+    let errs = film.validate();
+    if !errs.is_empty() {
+        for e in &errs {
+            eprintln!("error: {e}");
+        }
+        bail!("the starter template does not validate — this is a bug in `showreel new` itself");
+    }
+    if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&out, jsonc)?;
+    println!("{} — {:.1}s, {width}x{height} at {fps}fps, no assets needed", out.display(), film.duration().as_secs());
+    println!("  showreel still {} --at 2s -o still.png", out.display());
+    println!("  showreel render {} -o out.mp4", out.display());
+    Ok(())
+}
+
 fn cmd_check(film_path: PathBuf) -> Result<()> {
     let film = Film::load(&film_path)?;
     let errs = film.validate();
@@ -654,3 +796,27 @@ fn cmd_fonts(filter: Option<String>) -> Result<()> {
     Ok(())
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every value `showreel new` might plausibly be asked for — including a
+    /// title with the exact characters that would break naive JSON string
+    /// interpolation — must still produce a film that parses and validates.
+    #[test]
+    fn the_starter_template_always_parses_and_validates() {
+        for (title, w, h, fps) in [
+            ("A New Film", 1920, 1080, 30.0),
+            ("Quotes \"and\" \\backslashes\\", 640, 360, 24.0),
+            ("", 320, 180, 60.0),
+        ] {
+            let jsonc = starter_jsonc(title, w, h, fps);
+            let film = Film::from_json(&jsonc)
+                .unwrap_or_else(|e| panic!("starter for {title:?} failed to parse: {e}\n{jsonc}"));
+            let errs = film.validate();
+            assert!(errs.is_empty(), "starter for {title:?}: {errs:?}");
+            assert_eq!((film.width, film.height, film.fps), (w, h, fps));
+        }
+    }
+}

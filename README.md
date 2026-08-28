@@ -118,6 +118,15 @@ with no comments in it still loads exactly as before.
 showreel render examples/kanto.film.jsonc -A <assets> -o reel.mp4
 ```
 
+Starting from a blank page is the slow way in — `showreel new` writes a small,
+working, commented film that needs no assets at all, so the first render is
+one command away rather than a schema lookup:
+
+```bash
+showreel new film.jsonc --title "My Demo"
+showreel still film.jsonc --at 2s -o still.png   # or render it straight away
+```
+
 ### Sound
 
 A track hangs off the film rather than a scene, because a theme that carries an

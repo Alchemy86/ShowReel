@@ -135,6 +135,17 @@ got before this round of features touched it.
   cross-blur dissolve" section of `README.md`.
 - **`showreel studio` needs `cargo build --features studio`** — the plain
   binary does not have the subcommand at all, on purpose (`src/studio.rs`).
+- **`showreel new`'s starter film is a hand-written JSONC template
+  (`starter_jsonc` in `src/bin/showreel.rs`), not built through the Rust
+  builders and re-serialised** — unlike `kanto.film.jsonc`, there is no
+  canonical `.rs` source and no drift check, so a schema change (a renamed
+  field, a new required one) can silently break it. `the_starter_template_always_parses_and_validates`
+  guards this by round-tripping the template through `Film::from_json` +
+  `validate()` on every `cargo test`; keep it passing rather than skipping it
+  after a schema change. The one field that *is* runtime input — `--title` —
+  goes through `serde_json::to_string` before interpolation, not a bare
+  `"{title}"`: a title containing a `"` would otherwise corrupt the JSON it is
+  spliced into.
 - **`[profile.web]` (Cargo.toml) is `opt-level = 3`, not the smaller `"z"`,
   and `build-wasm.sh` compiles it with `RUSTFLAGS="-C target-feature=+simd128"`.**
   Both were tried in isolation before being combined — see the measured
