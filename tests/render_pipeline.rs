@@ -450,6 +450,7 @@ fn the_committed_film_description_still_loads_and_validates() {
         .map(|u| match u {
             showreel::timeline::AssetUse::Still(a) => a.clone(),
             showreel::timeline::AssetUse::Clip { asset, .. } => asset.clone(),
+            showreel::timeline::AssetUse::Data(file) => file.clone(),
         })
         .chain(film.audio_assets().iter().map(|s| s.to_string()))
         .collect();

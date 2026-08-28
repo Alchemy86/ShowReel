@@ -8,9 +8,11 @@
 //! Nothing else in the crate opens a path by itself.
 
 pub mod clip;
+pub mod data;
 pub mod still;
 
 pub use clip::{Clip, ClipLoop};
+pub use data::DataTable;
 pub use still::Still;
 
 use anyhow::{Result, bail};
@@ -66,6 +68,7 @@ pub struct AssetStore {
     resolvers: Vec<Box<dyn Resolver>>,
     stills: Mutex<HashMap<String, Arc<Still>>>,
     clips: Mutex<HashMap<String, Arc<Clip>>>,
+    datas: Mutex<HashMap<String, Arc<DataTable>>>,
 }
 
 impl AssetStore {
@@ -74,6 +77,7 @@ impl AssetStore {
             resolvers: vec![Box::new(AbsoluteResolver)],
             clips: Mutex::new(HashMap::new()),
             stills: Mutex::new(HashMap::new()),
+            datas: Mutex::new(HashMap::new()),
         }
     }
 
@@ -140,10 +144,30 @@ impl AssetStore {
         Ok(c)
     }
 
+    /// Parse a chart's external data file once, caching it. Resolved through
+    /// the same [`Resolver`] chain as a still or clip, so `-A`/`--assets` and
+    /// absolute paths locate it identically.
+    pub fn data(&self, reference: &str) -> Result<Arc<DataTable>> {
+        if let Some(d) = self.datas.lock().unwrap().get(reference) {
+            return Ok(d.clone());
+        }
+        let path = self.resolve(reference)?;
+        let d = Arc::new(DataTable::load(&path)?);
+        self.datas.lock().unwrap().insert(reference.to_string(), d.clone());
+        Ok(d)
+    }
+
     /// Register an already-built still under a name, for programmatic films
     /// that generate their own imagery.
     pub fn insert_still(&self, name: &str, still: Still) {
         self.stills.lock().unwrap().insert(name.to_string(), Arc::new(still));
+    }
+
+    /// Register an already-parsed data table under a name — the seam a browser
+    /// build (no filesystem) or a programmatic film feeds a chart's data
+    /// through, the same way [`AssetStore::insert_still`] feeds imagery.
+    pub fn insert_data(&self, name: &str, table: DataTable) {
+        self.datas.lock().unwrap().insert(name.to_string(), Arc::new(table));
     }
 
     /// Register an already-built clip under the exact key [`AssetStore::clip`]
@@ -165,7 +189,8 @@ impl AssetStore {
     pub fn memory_bytes(&self) -> usize {
         let s: usize = self.stills.lock().unwrap().values().map(|s| s.memory_bytes()).sum();
         let c: usize = self.clips.lock().unwrap().values().map(|c| c.memory_bytes()).sum();
-        s + c
+        let d: usize = self.datas.lock().unwrap().values().map(|d| d.memory_bytes()).sum();
+        s + c + d
     }
 }
 

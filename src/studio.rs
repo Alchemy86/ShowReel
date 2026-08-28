@@ -154,8 +154,23 @@ fn load(film_path: &Path, roots: &[PathBuf], scale: f64, version: u64) -> Snapsh
     };
     match Film::from_json(&src) {
         Ok(film) => {
-            let validation_errors = film.validate();
-            let preview_film = Some(scale_film(&film, scale));
+            let mut validation_errors = film.validate();
+            // Expand plugins and resolve chart data against the same store the
+            // preview renders through, so a broken plugin or a missing data
+            // column shows up in the studio's error banner instead of as a
+            // failed render — the same "loud at load" contract the CLI has.
+            let preview_film = match film.expand_plugins(&assets) {
+                Ok(expanded) => {
+                    if let Err(e) = expanded.resolve_chart_data(&assets) {
+                        validation_errors.push(format!("{e:#}"));
+                    }
+                    Some(scale_film(&expanded, scale))
+                }
+                Err(e) => {
+                    validation_errors.push(format!("{e:#}"));
+                    None
+                }
+            };
             Snapshot { version, film: Some(film), preview_film, assets, parse_error: None, validation_errors }
         }
         Err(e) => Snapshot {

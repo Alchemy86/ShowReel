@@ -43,7 +43,8 @@ says where every asset came from).
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command |
 | **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
 | **A colour grade** | a post-composite lift/contrast/saturation/vignette pass, `"documentary"` in one word or five raw knobs, over a still, a clip or a parallax stack alike — see [below](#a-colour-grade) |
-| **Animated charts** | a plotted function or line, or bars that grow, on deliberate axes — drawn in over the film's own clock — see [below](#an-animated-chart) |
+| **Animated charts** | a plotted function or line, or bars that grow, on deliberate axes — drawn in over the film's own clock, with data written inline **or read from a CSV/JSON file** — see [below](#an-animated-chart) |
+| **Plugins** | a new layer kind defined as data — a parameterised template that expands into existing layers, works native and in the browser alike — see [below](#plugins--a-new-layer-kind-without-a-fork) |
 
 ## Everything that's here
 
@@ -55,10 +56,13 @@ which module it lives in.
 - A timeline of `Scene`s joined by `Transition`s — `Scene (Transition Scene)*`,
   a shape that makes "transition first" or "two transitions in a row"
   unwritable rather than a runtime error (`src/timeline.rs`)
-- 14 layer content kinds: solid fill, linear gradient, edge scrim, still image,
-  video clip, plain text, title (+ subtitle), lower-third (+ detail), counter,
-  callout, pull-up, the fake-depth parallax stack, a progress bar, and an
-  animated chart (`src/layer.rs`, `src/chart.rs`)
+- 14 built-in layer content kinds: solid fill, linear gradient, edge scrim, still
+  image, video clip, plain text, title (+ subtitle), lower-third (+ detail),
+  counter, callout, pull-up, the fake-depth parallax stack, a progress bar, and an
+  animated chart (`src/layer.rs`, `src/chart.rs`) — plus a fifteenth, `custom`,
+  that dispatches to a **plugin** (a new kind defined as data, `src/plugin.rs`)
+- Charts read their series inline **or from an external CSV/JSON file**, resolved
+  like any asset and validated loudly at load (`src/chart.rs`, `src/assets/data.rs`)
 - 9 transition presentations — cut, dissolve, fade-through-colour, wipe,
   slide, push, iris, zoom-in, cross-blur — each independent of how it's
   *paced*: any easing curve or a physical spring (`src/transition.rs`, `src/ease.rs`)
@@ -447,6 +451,106 @@ same scene without it. That is below the colour grade's ~34–40ms and far below
 
 Audio mapped to the curve — the reference short also plays each function as a
 sound — is a separate feature, deliberately not started here.
+
+#### Reading a chart's data from a file
+
+Nobody hand-types a series they already have in a file. A chart series can name
+an external **CSV or JSON**, referenced by path exactly the way an image or clip
+is — resolved through the same `-A/--assets` roots, decoded once and cached:
+
+```jsonc
+{ "kind": "data", "file": "adoption.csv", "x": "week", "y": "active_users", "fill": true }
+```
+
+The film still says *what* it plots without opening the data: `x`/`y` name the
+columns. With `"bars": true` the `x` column supplies category labels and the
+chart is a bar chart:
+
+```jsonc
+{ "kind": "data", "file": "regions.json", "x": "region", "y": "revenue", "bars": true }
+```
+
+Two formats are read (chosen by extension): CSV with a header row, and JSON as
+either an array of row objects (`[{"week":0,"active_users":50}, …]`) or an
+object of columns (`{"week":[0,1], "active_users":[50,140]}`).
+
+**The failure mode is the point.** A missing file, a missing column, or a cell
+that will not parse is a **loud error at load — naming the file and the row** —
+never a silently empty or wrong chart:
+
+```
+$ showreel check film.jsonc -A examples
+error: scene 2 layer 2 (chart)
+  chart series 0: data file examples/adoption.csv: column "active_users" row 7 is "n/a", which is not a number
+```
+
+`showreel check`/`info`/`render`/`still`/`sheet` all surface it (the render path
+also warms the cache in `preload`, so the parse is paid once). The worked proof
+lives at `examples/data_plugin_demo.film.jsonc` (+ its `data_plugin_demo/`
+files); render it with `showreel render examples/data_plugin_demo.film.jsonc -A
+examples`. In the browser the data is not yet registered (there is no
+filesystem) — `web-pack` ships the file but a wasm chart reading it is a known
+gap, the same shape as a clip needing pre-decoding.
+
+### Plugins — a new layer kind without a fork
+
+ShowReel's layer kinds are a closed set, on purpose: a layer is **data**, not a
+component, which is what lets one film be written in Rust, loaded from JSON, or
+emitted over MCP with none of them a special case. A plugin adds a fourteenth
+kind *without breaking that* — because **a plugin is also data**: a named,
+parameterised template that expands into the layers the crate already draws.
+
+A plugin is a small JSON file (or an inline block). This defines a `stat-card`
+kind — a panel, an accent strip, a counter and a caption — parameterised by
+value, label and colour (`examples/stat_card.plugin.json` is the full version):
+
+```jsonc
+{ "name": "stat-card",
+  "params": [ { "name": "value" }, { "name": "label" }, { "name": "accent", "default": "#4ad8dc" } ],
+  "body": [
+    { "type": "counter", "count": { "from": 0, "to": "{{value}}", "over": 1.4 }, "label": "{{label}}" }
+  ] }
+```
+
+A film brings it into scope and uses it like any layer:
+
+```jsonc
+{ "width": 1920, "height": 1080, "fps": 30,
+  "plugins": [ { "file": "stat_card.plugin.json" } ],
+  "opening": { "duration": 4.0, "layers": [
+    { "type": "custom", "use": "stat-card",
+      "with": { "value": 5100, "label": "Active users", "accent": "#4ad8dc" } }
+  ] } }
+```
+
+`{{param}}` placeholders substitute at load; a **whole-string** placeholder keeps
+its value's type, so `"{{value}}"` lands in a numeric field as the number
+`5100`, not `"5100"`. The `custom` layer's own `from`/`z`/`opacity` shift the
+whole widget, so you place or restack it without editing the plugin. A missing
+required parameter, a typo'd one, an unknown plugin, or a body that will not
+deserialise all fail loudly at load.
+
+**Why declarative, and what it means for the browser.** Three shapes were
+weighed (`src/plugin.rs` has the full argument):
+
+- *A Rust trait a plugin crate implements* — native speed, but forces every
+  author to compile against us and breaks "a film is JSON": a `dyn` content kind
+  cannot be deserialised from a type tag without a compiled-in registry, and
+  cannot reach the wasm blob unless built into it.
+- *A dynamic library loaded at runtime* — the most flexible and least safe:
+  arbitrary native code, an FFI versioning surface, and **no browser story at
+  all** (`wasm32` has no `dlopen`). This is the product-split we set out to
+  avoid.
+- *A declarative template* — chosen. Limited to composing the existing
+  primitives (it cannot invent a mark they can't draw — a waveform, a QR code —
+  that still needs compiled code), but it round-trips, is deterministic, needs
+  no sandbox because it executes nothing, is authorable by an MCP tool, and runs
+  **identically in the native and wasm builds** because expansion is a pure data
+  transform. Parameter *arithmetic* (`{{w}} * 0.5`) is deliberately not in this
+  first version — direct substitution only.
+
+The proof film uses one plugin three times: `showreel render
+examples/data_plugin_demo.film.jsonc -A examples`.
 
 ### A parallax shot
 

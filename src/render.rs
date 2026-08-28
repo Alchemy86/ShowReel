@@ -139,6 +139,9 @@ impl<'a> Renderer<'a> {
                         trim,
                     )?;
                 }
+                crate::timeline::AssetUse::Data(file) => {
+                    self.assets.data(&file)?;
+                }
             }
         }
         Ok(())

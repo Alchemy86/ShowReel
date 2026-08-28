@@ -27,6 +27,8 @@ Each is documented at the top of its module; read the module rather than duplica
 | `Content::Parallax` (the fake-depth "screenshot" shot, `docs/anarchist-study.md`) is a composition convenience, not new render machinery: one authored `Camera` move, and each plane's own viewport is `Camera::viewport_at`'s *result* blended toward its resting framing by `ParallaxPlane::depth` — position linearly, height geometrically, the same reasoning `Camera::viewport_at` itself uses for zoom | `src/layer.rs` (`draw_parallax`, `parallax_viewport`) |
 | `Grade` (the colour-grade pass, `docs/anarchist-study.md`'s other confirmed gap) follows the same idiom as `Content::Parallax`: a composition convenience, not a new render path. It is `Film.grade`/`Scene.grade` — an `Option`, the same override shape `background` already has — applied once per scene by `Renderer::draw_scene` *after* every layer has drawn, so it composes with a still, a clip or a parallax stack with zero knowledge of what any of them contain. Written as a bare word (`"documentary"`) or a full object, the same untagged shorthand `Placement` uses | `src/grade.rs`, `src/canvas.rs` (`apply_grade`), `src/render.rs` |
 | `Content::Chart` (animated charts — a plotted function/line or growing bars) is one layer content kind, not a parallel system: `ChartSpec` is data like every other layer, and its one animation is a **reveal sweep** — a single eased 0..1 crossing the plot left-to-right on the film clock, the same `value_at(local)` idiom `BarSpec`/`CounterSpec` use, not a private animation vocabulary. A function series is a string (`"40*log(x+1)"`) parsed once by `src/expr.rs` (a tiny arithmetic evaluator — the four ops, `^`, `x`, a fixed function set, `pi`/`tau`/`e`; anything else is a `validate()` error, never a silent zero). Composition is inherited, not built: the grade lands on the finished pixels, a callout/title is a higher-`z` layer, and "push in on a chart" is `PullUp` (a bitmap lift of the drawn region) — the showreel `Camera` is a still/clip mip feature and is deliberately *not* bolted onto procedural drawing. Audio-mapped-to-curve (the reference short does it) was deliberately **not** started | `src/chart.rs`, `src/expr.rs`, `src/layer.rs` (`Content::Chart`, `draw_content`) |
+| A chart reads its series from an external **CSV/JSON** via `Series::Data { file, x, y, bars }`, resolved through `AssetStore` like a still (`AssetStore::data`, cached `DataTable`) — *not* a second mechanism. `ChartSpec::resolve(assets)` expands every `Data` series into a concrete `Line`/`Bars` (borrowed `Cow` when there is none), so `chart::draw` is unchanged below that one call and stays a pure function of `(spec, assets)`. `chart::draw` therefore returns `Result` and the `Content::Chart` arm propagates `?` — that is what makes a bad file/column/row loud in `still`/`render` (no preload) as well as `check` (`Film::resolve_chart_data`). The film names the columns, so it still reads as *x against y* without opening the data | `src/assets/data.rs`, `src/chart.rs` (`Series::Data`, `resolve`), `src/timeline.rs` (`resolve_chart_data`, `AssetUse::Data`) |
+| A **plugin** is a new layer kind expressed as *data*, not code: `Content::Custom { use, with }` names a `Plugin` (a parameterised template of ordinary layers) in `Film.plugins`, and `Film::expand_plugins(assets)` substitutes `{{param}}` and replaces each `custom` layer with the concrete layers it denotes. Declarative was chosen over a Rust trait (forces compile-against-us, breaks "a film is JSON") and a dynamic library (unsafe, and `wasm32` has no `dlopen` — would split native/browser); the template runs identically in both builds because expansion is pure. It cannot draw a mark the primitives can't, and parameter arithmetic is deliberately unbuilt (direct substitution only) | `src/plugin.rs`, `src/timeline.rs` (`expand_plugins`), `src/layer.rs` (`Content::Custom`) |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
@@ -411,6 +413,17 @@ got before this round of features touched it.
   pixel-art master under ~30 MB). If you edit the film, regenerate both cuts by
   hand and re-verify audio on each — nothing regenerates it for you.
 
+- **`examples/data_plugin_demo.film.jsonc` is the proof film for external chart
+  data and plugins**, hand-written JSONC with its assets committed beside it
+  (`examples/data_plugin_demo/adoption.csv`, `regions.json`; the shareable
+  plugin at `examples/stat_card.plugin.json`). Unlike the kanto/showreel films
+  its assets *are* committed — they are tiny text files, the whole point being a
+  self-contained, runnable demonstration. Rendered cut at
+  `docs/data-plugin-demo.mp4` (+ `.mobile.mp4`); re-render with `showreel render
+  examples/data_plugin_demo.film.jsonc -A examples --crf 23 -o
+  docs/data-plugin-demo.mp4`. It is also the fixture the README's data/plugin
+  sections point at.
+
 - **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
   second. Using the first letterboxes a square source into a wide frame — the exact
   opposite of covering it.
@@ -434,6 +447,34 @@ got before this round of features touched it.
   of its frame). It is most of the chart's ~9ms/frame at 1080p; a 240-sample
   gradient-stroked filled curve on its own is cheap. Don't reach for a cache
   without solving the determinism/ordering it would break first (`src/chart.rs`).
+
+- **A `custom` layer MUST be expanded before it reaches the renderer.** Every
+  render entry (`cmd_render`/`still`/`sheet`, studio's `load`, mcp's
+  `render_*`/`check`, wasm's `sr_load_film`) calls `Film::expand_plugins` first;
+  a `Content::Custom` that reaches `draw_content` is a wiring bug and *bails
+  loudly* rather than drawing nothing. If you add a new render path, expand
+  there too. `expand_plugins` returns a derived film (plugins/`custom` gone) and
+  leaves the authored film round-trippable — do not expand in place.
+
+- **The "loud at load" contract is split across two seams, keep both.** For
+  charts-from-data: structural checks (`file`/`x`/`y` present) live in
+  `ChartSpec::problems` (no assets, runs in `validate`); the file/column/row
+  checks need the store and run in `ChartSpec::resolve` — surfaced by
+  `chart::draw`'s `?` on every render path and by `Film::resolve_chart_data` for
+  `check`. Neither alone is enough: `validate` can't open files, and a render
+  that skipped `resolve_chart_data` would still be caught by draw, but `check`
+  (which never draws) would not. For plugins, `expand_plugins` is the one seam.
+
+- **In tests/plugins, a JSON hex colour (`"#e26"`) closes a `r#"..."#` raw
+  string early** — the `"#` sequence is the terminator. Use `r##"..."##`. Bit
+  the plugin unit test and the integration test once each; both now use `##`.
+
+- **The browser cannot read a chart's data file** — `AssetStore::data` reads the
+  filesystem, which `wasm32` has none of. `web-pack` copies the CSV/JSON into the
+  package, but nothing wires `insert_data` through `bridge.js` yet, so a packaged
+  chart reading external data is a *known, documented gap* (same shape as a clip
+  needing pre-decode). Inline chart data works in the browser; a `Series::Data`
+  there needs an `AssetStore::insert_data` call that does not exist on the JS side.
 
 ## Working on it
 

@@ -122,7 +122,8 @@ fn scale_layer(l: &mut Layer, k: f64) {
             for s in &mut spec.series {
                 match s {
                     crate::chart::Series::Line { style, .. }
-                    | crate::chart::Series::Function { style, .. } => style.width *= k,
+                    | crate::chart::Series::Function { style, .. }
+                    | crate::chart::Series::Data { style, .. } => style.width *= k,
                     crate::chart::Series::Bars { .. } => {}
                 }
             }
@@ -139,6 +140,8 @@ fn scale_layer(l: &mut Layer, k: f64) {
         | Content::Parallax { .. }
         | Content::Solid { .. }
         | Content::Gradient { .. }
+        // Expanded to concrete layers before a film is ever scaled.
+        | Content::Custom { .. }
         | Content::Scrim { .. } => {}
     }
 }

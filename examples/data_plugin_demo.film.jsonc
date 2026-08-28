@@ -1,0 +1,122 @@
+// data_plugin_demo — proof film for two features:
+//
+//   1. DATA: charts whose numbers come from an external CSV / JSON, referenced
+//      by path the same way an image is (see the two chart scenes below).
+//   2. PLUGINS: a new layer kind, "stat-card", defined as data in
+//      examples/stat_card.plugin.json and used here via `type: "custom"`.
+//
+// Render it (assets live beside this file):
+//   showreel render examples/data_plugin_demo.film.jsonc -A examples \
+//     -o docs/data-plugin-demo.mp4
+// Or scrub a single frame:
+//   showreel still examples/data_plugin_demo.film.jsonc -A examples --at 5s
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "title": "Data & Plugins",
+  "background": "#0b0e14",
+
+  // Bring the stat-card plugin into scope. A plugin is data: this file could
+  // equally be written inline here, but a path is how a plugin is shared.
+  "plugins": [
+    { "file": "stat_card.plugin.json" }
+  ],
+
+  "opening": {
+    "duration": 3.0,
+    "layers": [
+      { "type": "gradient", "stops": [[0.0, "#141d30"], [1.0, "#080b11"]], "angle": 115.0 },
+      {
+        "type": "title",
+        "text": "Real data, real plugins",
+        "subtitle": "charts that read a file · a layer kind added without a fork",
+        "enter": { "kind": "chars", "stagger": 0.02, "rise": 26.0, "duration": 0.6 }
+      }
+    ]
+  },
+
+  "then": [
+    {
+      "transition": { "presentation": { "kind": "dissolve" }, "duration": 0.6 },
+      "scene": {
+        "duration": 4.0,
+        "layers": [
+          { "type": "gradient", "stops": [[0.0, "#101828"], [1.0, "#080b11"]], "angle": 120.0 },
+          {
+            "type": "text",
+            "text": "One plugin, three cards",
+            "placement": { "fx": 0.06, "fy": 0.16, "fw": 0.88, "fh": 0.1 },
+            "enter": { "kind": "fade", "duration": 0.5 }
+          },
+
+          // Three uses of the SAME plugin. Each is one `custom` layer that
+          // expands into a panel + accent strip + counter + caption at load.
+          { "type": "custom", "use": "stat-card", "from": 0.3,
+            "with": { "fx": 0.06, "value": 5100, "label": "Active users", "accent": "#4ad8dc" } },
+          { "type": "custom", "use": "stat-card", "from": 0.6,
+            "with": { "fx": 0.37, "value": 67, "suffix": "%", "label": "Retention", "accent": "#e26cad" } },
+          { "type": "custom", "use": "stat-card", "from": 0.9,
+            "with": { "fx": 0.68, "value": 24, "suffix": "k", "label": "MRR (GBP)", "accent": "#78c878" } }
+        ]
+      }
+    },
+    {
+      "transition": { "presentation": { "kind": "dissolve" }, "duration": 0.6 },
+      "scene": {
+        "duration": 4.5,
+        "layers": [
+          { "type": "gradient", "stops": [[0.0, "#0f1626"], [1.0, "#080b11"]], "angle": 120.0 },
+          {
+            "type": "text",
+            "text": "Adoption — read from adoption.csv",
+            "placement": { "fx": 0.06, "fy": 0.08, "fw": 0.88, "fh": 0.09 },
+            "enter": { "kind": "fade", "duration": 0.5 }
+          },
+          {
+            "type": "chart",
+            "chart": {
+              "series": [
+                { "kind": "data", "file": "data_plugin_demo/adoption.csv",
+                  "x": "week", "y": "active_users", "fill": true, "width": 6.0 }
+              ],
+              "x": { "min": 0, "max": 11, "label": "week", "ticks": 6 },
+              "y": { "min": 0, "label": "active users" },
+              "reveal": { "over": 2.4 }
+            },
+            "placement": { "fx": 0.08, "fy": 0.24, "fw": 0.84, "fh": 0.66 },
+            "from": 0.3
+          }
+        ]
+      }
+    },
+    {
+      "transition": { "presentation": { "kind": "dissolve" }, "duration": 0.6 },
+      "scene": {
+        "duration": 4.5,
+        "layers": [
+          { "type": "gradient", "stops": [[0.0, "#0f1626"], [1.0, "#080b11"]], "angle": 120.0 },
+          {
+            "type": "text",
+            "text": "Revenue by region — read from regions.json",
+            "placement": { "fx": 0.06, "fy": 0.08, "fw": 0.88, "fh": 0.09 },
+            "enter": { "kind": "fade", "duration": 0.5 }
+          },
+          {
+            "type": "chart",
+            "chart": {
+              "series": [
+                { "kind": "data", "file": "data_plugin_demo/regions.json",
+                  "x": "region", "y": "revenue", "bars": true, "name": "Revenue" }
+              ],
+              "y": { "min": 0, "label": "GBP (k)" },
+              "reveal": { "over": 2.0 }
+            },
+            "placement": { "fx": 0.1, "fy": 0.24, "fw": 0.8, "fh": 0.66 },
+            "from": 0.3
+          }
+        ]
+      }
+    }
+  ]
+}

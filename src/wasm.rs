@@ -189,7 +189,17 @@ pub unsafe extern "C" fn sr_load_film(ptr: *mut u8, len: u32, scale: f64) -> i32
                 ));
                 return 0;
             }
-            let preview = scale_keep_clip_decode(&film, scale.clamp(0.05, 4.0));
+            // Expand any plugins (inline only in the browser — there is no
+            // filesystem to resolve a plugin file from) into concrete layers,
+            // so the pure-data renderer never meets a `custom` layer.
+            let expanded = match film.expand_plugins(&AssetStore::new()) {
+                Ok(e) => e,
+                Err(err) => {
+                    set_error(format!("{err:#}"));
+                    return 0;
+                }
+            };
+            let preview = scale_keep_clip_decode(&expanded, scale.clamp(0.05, 4.0));
             let st = state();
             st.assets_needed_json = serde_json::to_vec(&preview.assets_used()).unwrap_or_default();
             st.structure_json = structure(&film).into_bytes();

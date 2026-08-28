@@ -206,7 +206,18 @@ impl ShowReelMcp {
     ) -> Result<CallToolResult, McpError> {
         let path = std::path::PathBuf::from(&p.film);
         let film = Film::load(&path).map_err(mcp_err)?;
-        let errors = film.validate();
+        let assets = store(&path, &[]);
+        let mut errors = film.validate();
+        // Expand plugins and resolve chart data (beside the film) so `check_film`
+        // catches a broken plugin or a missing data column, the same as the CLI.
+        match film.expand_plugins(&assets) {
+            Ok(expanded) => {
+                if let Err(e) = expanded.resolve_chart_data(&assets) {
+                    errors.push(format!("{e:#}"));
+                }
+            }
+            Err(e) => errors.push(format!("{e:#}")),
+        }
         let value = serde_json::json!({ "ok": errors.is_empty(), "errors": errors });
         Ok(CallToolResult::success(vec![ContentBlock::json(value)?]))
     }
@@ -234,8 +245,9 @@ impl ShowReelMcp {
     ) -> Result<CallToolResult, McpError> {
         let path = std::path::PathBuf::from(&p.film);
         let film = load_valid(&path)?;
-        let film = scale_film(&film, p.scale);
         let assets = store(&path, &p.assets);
+        let film = film.expand_plugins(&assets).map_err(mcp_err)?;
+        let film = scale_film(&film, p.scale);
         let canvas = preview::still_at(&film, &assets, FontDb::shared(), Time(p.at))
             .map_err(mcp_err)?;
         let (w, h) = (canvas.width(), canvas.height());
@@ -263,6 +275,7 @@ impl ShowReelMcp {
         let path = std::path::PathBuf::from(&p.film);
         let film = load_valid(&path)?;
         let assets = store(&path, &p.assets);
+        let film = film.expand_plugins(&assets).map_err(mcp_err)?;
         let render_film = scale_film(&film, p.scale);
 
         let mut tracks = render_film.resolve_audio_tracks(&assets).map_err(mcp_err)?;

@@ -45,6 +45,7 @@ pub mod transition;
 pub mod motion;
 pub mod layer;
 pub mod chart;
+pub mod plugin;
 pub mod grade;
 pub mod theme;
 pub mod timeline;

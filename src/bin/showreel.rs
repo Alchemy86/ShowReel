@@ -109,9 +109,21 @@ enum Command {
         force: bool,
     },
     /// Describe a film without rendering it.
-    Info { film: PathBuf },
+    Info {
+        film: PathBuf,
+        /// Where to look for assets (charts' data files, plugin files).
+        /// Repeatable.
+        #[arg(short = 'A', long = "assets")]
+        asset_roots: Vec<PathBuf>,
+    },
     /// Check a film for the mistakes a type cannot catch.
-    Check { film: PathBuf },
+    Check {
+        film: PathBuf,
+        /// Where to look for assets (charts' data files, plugin files).
+        /// Repeatable.
+        #[arg(short = 'A', long = "assets")]
+        asset_roots: Vec<PathBuf>,
+    },
     /// List the font families ShowReel can see.
     Fonts {
         /// Only families containing this text.
@@ -179,8 +191,8 @@ fn main() -> Result<()> {
         Command::New { out, title, width, height, fps, force } => {
             cmd_new(out, title, width, height, fps, force)
         }
-        Command::Info { film } => cmd_info(film),
-        Command::Check { film } => cmd_check(film),
+        Command::Info { film, asset_roots } => cmd_info(film, asset_roots),
+        Command::Check { film, asset_roots } => cmd_check(film, asset_roots),
         Command::Fonts { filter } => cmd_fonts(filter),
         #[cfg(feature = "studio")]
         Command::Studio { film, asset_roots, port, host, scale } => {
@@ -266,10 +278,10 @@ fn cmd_render(
     if !ffmpeg_available() {
         bail!("ffmpeg is not on PATH; ShowReel needs it to encode");
     }
-    let declared = load(&film_path)?;
+    let assets = store(&film_path, &roots);
+    let declared = load(&film_path)?.expand_plugins(&assets)?;
     let film = scale_film(&declared, scale);
     let out = out.unwrap_or_else(|| film_path.with_extension("mp4"));
-    let assets = store(&film_path, &roots);
     let fonts = FontDb::shared();
     let renderer = Renderer::new(&film, &assets, fonts);
 
@@ -349,8 +361,8 @@ impl FrameSink for Tee<'_> {
 
 fn cmd_still(film_path: PathBuf, at: String, out: PathBuf, roots: Vec<PathBuf>, scale: f64) -> Result<()> {
     let t = parse_time(&at).with_context(|| format!("cannot read --at {at:?}"))?;
-    let film = scale_film(&load(&film_path)?, scale);
     let assets = store(&film_path, &roots);
+    let film = scale_film(&load(&film_path)?.expand_plugins(&assets)?, scale);
     let started = std::time::Instant::now();
     let c = preview::still_at(&film, &assets, FontDb::shared(), t)?;
     c.save_png(&out)?;
@@ -374,8 +386,8 @@ fn cmd_sheet(
     thumb: u32,
 ) -> Result<()> {
     let step = parse_time(&every).with_context(|| format!("cannot read --every {every:?}"))?;
-    let film = load(&film_path)?;
     let assets = store(&film_path, &roots);
+    let film = load(&film_path)?.expand_plugins(&assets)?;
     let started = std::time::Instant::now();
     let sheet = preview::contact_sheet(&film, &assets, FontDb::shared(), step, columns, thumb)?;
     sheet.save_png(&out)?;
@@ -391,8 +403,11 @@ fn cmd_sheet(
     Ok(())
 }
 
-fn cmd_info(film_path: PathBuf) -> Result<()> {
-    let film = Film::load(&film_path)?;
+fn cmd_info(film_path: PathBuf, roots: Vec<PathBuf>) -> Result<()> {
+    let loaded = Film::load(&film_path)?;
+    // Describe the film as it will render — plugins expanded to real layers.
+    let assets = store(&film_path, &roots);
+    let film = loaded.expand_plugins(&assets)?;
     println!("{}", film.title.clone().unwrap_or_else(|| film_path.display().to_string()));
     println!(
         "  {}x{} at {}fps, {:.2}s, {} frames",
@@ -481,6 +496,7 @@ fn cmd_info(film_path: PathBuf) -> Result<()> {
                     let f = decode_fps.map(|f| format!(", {f}fps")).unwrap_or_default();
                     println!("    clip   {asset} ({max_width}px wide{t}{f})");
                 }
+                showreel::timeline::AssetUse::Data(file) => println!("    data   {file}"),
             }
         }
     }
@@ -631,17 +647,25 @@ fn cmd_new(
     Ok(())
 }
 
-fn cmd_check(film_path: PathBuf) -> Result<()> {
+fn cmd_check(film_path: PathBuf, roots: Vec<PathBuf>) -> Result<()> {
     let film = Film::load(&film_path)?;
+    let assets = store(&film_path, &roots);
+    // Plugins first: a `custom` layer becomes real layers, and its own errors
+    // (unknown plugin, missing parameter) surface before validation runs over
+    // the expanded film.
+    let film = film.expand_plugins(&assets)?;
     let errs = film.validate();
-    if errs.is_empty() {
-        println!("{}: ok", film_path.display());
-        return Ok(());
+    if !errs.is_empty() {
+        for e in &errs {
+            eprintln!("error: {e}");
+        }
+        bail!("{}", showreel::timeline::describe_problem_count(errs.len()));
     }
-    for e in &errs {
-        eprintln!("error: {e}");
-    }
-    bail!("{}", showreel::timeline::describe_problem_count(errs.len()));
+    // Then the check a type cannot make: that every chart's external data file
+    // resolves, has the named columns, and parses.
+    film.resolve_chart_data(&assets)?;
+    println!("{}: ok", film_path.display());
+    Ok(())
 }
 
 #[cfg(feature = "studio")]
@@ -808,6 +832,21 @@ fn cmd_web_pack(
                     clip.frame_count(),
                     packed.len() as f64 / 1024.0
                 );
+            }
+            AssetUse::Data(name) => {
+                // Ship the raw CSV/JSON alongside the film, like a still. The
+                // browser build does not yet register a chart's data (there is
+                // no `insert_data` call wired through bridge.js), so a packaged
+                // chart that reads external data is a known gap — see AGENTS.md;
+                // copying the file keeps the package complete for when it is.
+                let bytes = std::fs::read(assets.resolve(&name)?)?;
+                let dest = out.join("assets").join(&name);
+                if let Some(dir) = dest.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(&dest, &bytes)?;
+                asset_bytes += bytes.len() as u64;
+                println!("  data   {name}  {:.0} KB", bytes.len() as f64 / 1024.0);
             }
         }
     }

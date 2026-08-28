@@ -348,6 +348,10 @@ pub struct Film {
     /// [`crate::audio`] for why this sits here and not on a scene.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio: Vec<Audio>,
+    /// Plugins in scope for this film — extra layer kinds defined as data. A
+    /// layer of `type: "custom"` names one of these; see [`crate::plugin`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<crate::plugin::PluginRef>,
     #[serde(flatten)]
     pub timeline: Timeline,
 }
@@ -564,6 +568,13 @@ impl Film {
                             decode_fps: *decode_fps,
                         });
                     }
+                    crate::layer::Content::Chart { spec } => {
+                        for s in &spec.series {
+                            if let crate::chart::Series::Data { file, .. } = s {
+                                push(AssetUse::Data(file.clone()));
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -614,6 +625,90 @@ impl Film {
         errs
     }
 
+    /// Resolve every chart's external data through `assets`, so a missing
+    /// file, column or unparseable row fails **here**, at load, naming the file
+    /// — never as a silently empty plot at render.
+    ///
+    /// [`Film::validate`] cannot do this (it takes no assets), so `showreel
+    /// check` and the render entry points call this after it. It also warms the
+    /// store's cache, so the parse is paid once rather than on the first frame.
+    /// A film with no external-data charts does nothing and allocates nothing.
+    pub fn resolve_chart_data(&self, assets: &crate::assets::AssetStore) -> anyhow::Result<()> {
+        use anyhow::Context;
+        for si in 0..self.timeline.scene_count() {
+            for (li, l) in self.timeline.scene(si).layers.iter().enumerate() {
+                if let crate::layer::Content::Chart { spec } = &l.content {
+                    spec.resolve(assets)
+                        .with_context(|| format!("scene {si} layer {li} (chart)"))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Expand every `custom` layer into the concrete layers its plugin defines,
+    /// returning a film the renderer can draw with no plugin knowledge at all.
+    ///
+    /// This is the whole of the plugin seam on the film side: plugins are data
+    /// (see [`crate::plugin`]), so "support a new layer kind" is a pure
+    /// transform from a film that mentions plugins to one that does not. The
+    /// authored film is left untouched — its `plugins` and `custom` layers
+    /// round-trip through JSON unharmed — and only this derived copy is drawn.
+    ///
+    /// A film with no plugins and no `custom` layers returns a plain clone,
+    /// paying only for the walk. Any plugin error (unknown name, missing
+    /// parameter, a body that will not deserialise) surfaces here, at load.
+    pub fn expand_plugins(&self, assets: &crate::assets::AssetStore) -> anyhow::Result<Film> {
+        use anyhow::Context;
+        let registry = crate::plugin::Registry::build(&self.plugins, assets)?;
+        let mut out = self.clone();
+        // The plugin definitions have done their job; drop them from the
+        // rendered film so its `assets_used`/`validate` never revisit them.
+        out.plugins.clear();
+
+        let expand = |scene: &mut Scene, label: &str| -> anyhow::Result<()> {
+            let mut expanded = Vec::with_capacity(scene.layers.len());
+            for layer in std::mem::take(&mut scene.layers) {
+                match &layer.content {
+                    crate::layer::Content::Custom { use_, with } => {
+                        let inner = registry
+                            .expand(use_, with)
+                            .with_context(|| format!("expanding a custom layer in {label}"))?;
+                        for mut e in inner {
+                            // The `custom` layer's own timing and stacking shift
+                            // the whole widget: place it, or lift it above other
+                            // layers, without editing the plugin.
+                            e.from = layer.from + e.from;
+                            e.z += layer.z;
+                            e.opacity *= layer.opacity;
+                            if e.duration.is_none() {
+                                e.duration = layer.duration;
+                            }
+                            expanded.push(e);
+                        }
+                    }
+                    _ => expanded.push(layer),
+                }
+            }
+            scene.layers = expanded;
+            Ok(())
+        };
+
+        // A `custom` layer with no plugins in scope is still an error `expand`
+        // reports by name, so walk every scene regardless of `registry`.
+        let label = |i: usize, name: &Option<String>| match name {
+            Some(n) => format!("scene {i} ({n:?})"),
+            None => format!("scene {i}"),
+        };
+        let opening_label = label(0, &out.timeline.opening.name);
+        expand(&mut out.timeline.opening, &opening_label)?;
+        for (i, link) in out.timeline.then.iter_mut().enumerate() {
+            let l = label(i + 1, &link.scene.name);
+            expand(&mut link.scene, &l)?;
+        }
+        Ok(out)
+    }
+
     pub fn to_json(&self) -> anyhow::Result<String> {
         Ok(serde_json::to_string_pretty(self)?)
     }
@@ -649,6 +744,8 @@ pub fn describe_problem_count(n: usize) -> String {
 pub enum AssetUse {
     Still(String),
     Clip { asset: String, max_width: u32, trim: Option<(f64, f64)>, decode_fps: Option<f64> },
+    /// A chart's external CSV/JSON data file.
+    Data(String),
 }
 
 impl FilmSpec {
@@ -683,6 +780,7 @@ impl FilmSpec {
             theme: self.theme,
             grade: self.grade,
             audio: Vec::new(),
+            plugins: Vec::new(),
             timeline: Timeline::new(opening),
         }
     }

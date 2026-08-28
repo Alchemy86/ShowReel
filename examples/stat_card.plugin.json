@@ -1,0 +1,61 @@
+{
+  "//": "A ShowReel plugin: a new layer kind, 'stat-card', defined entirely in data.",
+  "//help": "Use it from a film with { \"type\": \"custom\", \"use\": \"stat-card\", \"with\": { ... } }. Every {{param}} below is replaced at load; a whole-string placeholder keeps its type, so \"{{value}}\" lands in a numeric field as a number. See README.md's 'Plugins' section.",
+
+  "name": "stat-card",
+
+  "params": [
+    { "name": "fx",     "default": 0.06, "doc": "left edge of the card, as a fraction of the frame width" },
+    { "name": "value",                    "doc": "the number the card counts up to (required)" },
+    { "name": "suffix", "default": "",    "doc": "text after the number, e.g. \"%\" or \"k\"" },
+    { "name": "label",                    "doc": "the caption under the number (required)" },
+    { "name": "accent", "default": "#4ad8dc", "doc": "the card's highlight colour" }
+  ],
+
+  "body": [
+    {
+      "//": "The card panel.",
+      "type": "gradient",
+      "stops": [[0.0, "#1b2434"], [1.0, "#0c1017"]],
+      "angle": 120.0,
+      "placement": { "fx": "{{fx}}", "fy": 0.40, "fw": 0.26, "fh": 0.34 },
+      "enter": { "kind": "fade", "duration": 0.4 }
+    },
+    {
+      "//": "An accent strip that wipes across the top of the panel.",
+      "type": "bar",
+      "progress": { "from": 0.0, "to": 1.0, "over": 0.7 },
+      "fill": "{{accent}}",
+      "track": "#00000000",
+      "radius": 0.0,
+      "placement": { "fx": "{{fx}}", "fy": 0.40, "fw": 0.26, "fh": 0.012 }
+    },
+    {
+      "//": "The number, counting up in the accent colour.",
+      "type": "counter",
+      "count": { "from": 0.0, "to": "{{value}}", "over": 1.4, "suffix": "{{suffix}}", "decimals": 0 },
+      "style": {
+        "family": ["Montserrat", "Inter", "Open Sans", "Liberation Sans", "DejaVu Sans"],
+        "weight": 800, "italic": false, "size": 84.0, "tracking": -0.01, "line_height": 1.0,
+        "fill": "{{accent}}", "stroke": null,
+        "shadow": { "colour": "#000000a0", "blur": 18.0, "dx": 0.0, "dy": 6.0 },
+        "case": "as-written", "align": "centre", "tabular": true
+      },
+      "placement": { "fx": "{{fx}}", "fy": 0.50, "fw": 0.26, "fh": 0.16 },
+      "enter": { "kind": "rise", "distance": 30.0, "duration": 0.5 }
+    },
+    {
+      "//": "The caption.",
+      "type": "text",
+      "text": "{{label}}",
+      "style": {
+        "family": ["Open Sans", "Inter", "Noto Sans", "Liberation Sans", "DejaVu Sans"],
+        "weight": 500, "italic": false, "size": 30.0, "tracking": 0.06, "line_height": 1.2,
+        "fill": "#c4cbd6", "stroke": null, "shadow": null,
+        "case": "upper", "align": "centre", "tabular": false
+      },
+      "placement": { "fx": "{{fx}}", "fy": 0.665, "fw": 0.26, "fh": 0.06 },
+      "enter": { "kind": "fade", "duration": 0.6 }
+    }
+  ]
+}

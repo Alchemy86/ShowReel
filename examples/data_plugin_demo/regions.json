@@ -1,0 +1,6 @@
+[
+  { "region": "North", "revenue": 42 },
+  { "region": "South", "revenue": 58 },
+  { "region": "East",  "revenue": 31 },
+  { "region": "West",  "revenue": 67 }
+]

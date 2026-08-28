@@ -545,6 +545,18 @@ pub enum Content {
         #[serde(rename = "chart")]
         spec: crate::chart::ChartSpec,
     },
+    /// A use of a plugin — a layer kind defined in data rather than in this
+    /// enum. `use` names a [`crate::plugin::Plugin`] in the film's `plugins`,
+    /// and `with` binds its parameters. It is **expanded into concrete layers
+    /// at load** by [`crate::timeline::Film::expand_plugins`]; a `Custom` that
+    /// reaches the renderer un-expanded is a wiring bug and draws a loud error,
+    /// never nothing. See `src/plugin.rs` for why a plugin is data.
+    Custom {
+        #[serde(rename = "use")]
+        use_: String,
+        #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+        with: serde_json::Map<String, serde_json::Value>,
+    },
 }
 
 impl Content {
@@ -575,7 +587,9 @@ impl Content {
             | Content::PullUp { .. }
             | Content::Parallax { .. }
             | Content::Bar { .. }
-            | Content::Chart { .. } => Placement::Full,
+            | Content::Chart { .. }
+            // Expanded away before draw; the frame is a harmless default.
+            | Content::Custom { .. } => Placement::Full,
         }
     }
 }
@@ -1349,7 +1363,14 @@ impl Layer {
             }
             Content::Chart { spec } => {
                 let box_ = shift(self.placement().resolve(&frame, (frame.w, frame.h)), state);
-                crate::chart::draw(canvas, ctx, spec, box_, local, alpha);
+                crate::chart::draw(canvas, ctx, spec, box_, local, alpha)?;
+            }
+            Content::Custom { use_, .. } => {
+                // Every render path expands plugins first; reaching draw means
+                // one did not. Fail loudly rather than draw a blank.
+                anyhow::bail!(
+                    "custom layer {use_:?} was not expanded — call Film::expand_plugins before rendering"
+                );
             }
         }
         Ok(())

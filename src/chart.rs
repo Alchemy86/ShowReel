@@ -33,6 +33,7 @@
 //! lifts and enlarges a region of *any* layer — the crate's own "push in on a
 //! chart" — because it reads the canvas beneath it rather than the chart's data.
 
+use crate::assets::AssetStore;
 use crate::color::{Color, Paint};
 use crate::ease::Easing;
 use crate::expr::Expr;
@@ -40,7 +41,9 @@ use crate::geom::Rect;
 use crate::layer::RenderCtx;
 use crate::text::{TextLayout, TextStyle};
 use crate::time::Time;
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use tiny_skia::PathBuilder;
 
 /// A chart: its series, its axes, and how it draws in.
@@ -206,6 +209,31 @@ pub enum Series {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
+    /// Points read from an external file — a CSV or a JSON — resolved through
+    /// the [`crate::assets::AssetStore`] the same way an image is. `file` names
+    /// the data; `x` and `y` name the columns to plot, so the film still reads
+    /// as *this against that* without opening the data file. With `bars: true`
+    /// the `x` column supplies category labels and the chart is categorical;
+    /// otherwise `x` and `y` are both read as numbers and joined as a line.
+    ///
+    /// It carries the column names, not the numbers: the file is resolved and
+    /// parsed once at load ([`ChartSpec::resolve`]), where a missing file,
+    /// missing column or unparseable row fails loudly rather than drawing an
+    /// empty chart. By draw time it has become a plain [`Series::Line`] or
+    /// [`Series::Bars`], so nothing downstream is a special case.
+    Data {
+        file: String,
+        x: String,
+        y: String,
+        /// Read as a bar chart (`x` = category labels) rather than an xy line.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        bars: bool,
+        /// A name for the series, shown where a legend or bar group needs one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, flatten)]
+        style: LineStyle,
+    },
 }
 
 fn default_samples() -> usize {
@@ -240,7 +268,7 @@ fn default_line_width() -> f64 {
 
 impl Series {
     fn is_bars(&self) -> bool {
-        matches!(self, Series::Bars { .. })
+        matches!(self, Series::Bars { .. } | Series::Data { bars: true, .. })
     }
 }
 
@@ -284,6 +312,19 @@ impl ChartSpec {
                         out.push(format!("series {i}: a bar series has no values"));
                     }
                 }
+                Series::Data { file, x, y, .. } => {
+                    // The file itself is checked by `resolve` (it needs the
+                    // asset store); here only that the reference is well-formed
+                    // enough to be plottable at all.
+                    if file.trim().is_empty() {
+                        out.push(format!("series {i}: a data series names no file"));
+                    }
+                    if x.trim().is_empty() || y.trim().is_empty() {
+                        out.push(format!(
+                            "series {i}: a data series needs both an x and a y column name"
+                        ));
+                    }
+                }
             }
             if categorical && !s.is_bars() {
                 out.push(format!(
@@ -292,6 +333,61 @@ impl ChartSpec {
             }
         }
         out
+    }
+
+    /// Whether any series reads from an external file.
+    fn has_external_data(&self) -> bool {
+        self.series.iter().any(|s| matches!(s, Series::Data { .. }))
+    }
+
+    /// A copy of this chart with every [`Series::Data`] replaced by the
+    /// concrete [`Series::Line`] or [`Series::Bars`] it names, its numbers read
+    /// from the file through `assets`.
+    ///
+    /// This is where a chart's external data actually fails or succeeds: a
+    /// missing file, a missing column or an unparseable cell is an error here,
+    /// naming the file and the row — never a silently empty plot. A chart with
+    /// no external data is returned borrowed, so the common case allocates
+    /// nothing. The draw path runs this every frame (cheap: the file is parsed
+    /// once and cached in the store), and [`crate::timeline::Film::validate`]
+    /// runs it once up front so `showreel check` catches the same errors before
+    /// a single frame is drawn.
+    pub fn resolve<'a>(&'a self, assets: &AssetStore) -> Result<Cow<'a, ChartSpec>> {
+        if !self.has_external_data() {
+            return Ok(Cow::Borrowed(self));
+        }
+        let mut out = self.clone();
+        for (i, s) in out.series.iter_mut().enumerate() {
+            let Series::Data { file, x, y, bars, name, style } = s else { continue };
+            let table = assets
+                .data(file)
+                .map_err(|e| anyhow::anyhow!("chart series {i}: {e}"))?;
+            if *bars {
+                let values = table.column_f64(y).map_err(|e| anyhow::anyhow!("chart series {i}: {e}"))?;
+                let labels = table.column_str(x).map_err(|e| anyhow::anyhow!("chart series {i}: {e}"))?;
+                if values.is_empty() {
+                    bail!("chart series {i}: data file {file:?} has no rows to plot");
+                }
+                *s = Series::Bars {
+                    values,
+                    labels,
+                    paint: style.paint.clone(),
+                    name: name.clone(),
+                };
+            } else {
+                let xs = table.column_f64(x).map_err(|e| anyhow::anyhow!("chart series {i}: {e}"))?;
+                let ys = table.column_f64(y).map_err(|e| anyhow::anyhow!("chart series {i}: {e}"))?;
+                if xs.len() < 2 {
+                    bail!(
+                        "chart series {i}: data file {file:?} has {} row(s); a line needs at least 2",
+                        xs.len()
+                    );
+                }
+                let points = xs.into_iter().zip(ys).map(|(x, y)| [x, y]).collect();
+                *s = Series::Line { points, style: style.clone() };
+            }
+        }
+        Ok(Cow::Owned(out))
     }
 }
 
@@ -423,10 +519,15 @@ pub fn draw(
     box_: Rect,
     local: Time,
     alpha: f64,
-) {
+) -> Result<()> {
     if box_.w <= 1.0 || box_.h <= 1.0 || alpha <= 0.0 {
-        return;
+        return Ok(());
     }
+    // Turn any external-data series into concrete points/values first. A bad
+    // file, column or row fails here — loudly, naming the file — rather than
+    // drawing nothing. Cheap when the chart has no external data (borrowed).
+    let spec = spec.resolve(ctx.assets)?;
+    let spec = spec.as_ref();
     let label_style = spec.label_style.clone().unwrap_or_else(|| ctx.theme.caption.clone());
     let ink = spec
         .axis_colour
@@ -439,6 +540,7 @@ pub fn draw(
     } else {
         draw_xy(canvas, ctx, spec, box_, &label_style, ink, accent, sweep, alpha);
     }
+    Ok(())
 }
 
 /// Everything shared by both chart modes: reserve room for the labels, draw the
@@ -579,7 +681,9 @@ fn draw_xy(
                     .collect();
                 Some((pts, style))
             }
-            Series::Bars { .. } => None,
+            // Resolved away by `ChartSpec::resolve` before draw; a bar series
+            // is not an xy series either way.
+            Series::Bars { .. } | Series::Data { .. } => None,
         })
         .collect();
 
