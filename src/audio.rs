@@ -46,6 +46,7 @@
 //! clamped by exactly the rule a standalone track's already are, rather than
 //! a second copy of that arithmetic.
 
+use crate::music::Music;
 use crate::time::Time;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -66,8 +67,16 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Audio {
     /// Asset reference, resolved through [`AssetStore`](crate::assets::AssetStore)
-    /// like any other source file.
+    /// like any other source file. Empty when this track is generated
+    /// [`music`](Audio::music) rather than a file — a track is one or the other.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub asset: String,
+    /// Generated music instead of a source file: a chiptune synthesised to the
+    /// film's own clock (see [`crate::music`]). When set, it resolves to a WAV
+    /// and the track is otherwise identical — the same `at`/`gain`/fades/mixing
+    /// apply, because from [`Audio::resolve`] on it is just a located file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music: Option<Music>,
     /// Where the track starts on the **film's** clock.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub at: Time,
@@ -103,12 +112,44 @@ impl Audio {
     pub fn track(asset: impl Into<String>) -> Self {
         Audio {
             asset: asset.into(),
+            music: None,
             at: Time::ZERO,
             from: Time::ZERO,
             duration: None,
             fade_in: Time::ZERO,
             fade_out: Time::ZERO,
             gain: 1.0,
+        }
+    }
+
+    /// A track of generated music, sized to the film. Place and shape it with
+    /// the same builder methods a file track uses.
+    ///
+    /// ```
+    /// use showreel::audio::Audio;
+    /// use showreel::music::{Music, MusicFit};
+    ///
+    /// // The reference chiptune, its tempo fitted to end on the film's last
+    /// // frame, easing away over the final two seconds.
+    /// let bed = Audio::music(Music::chiptune().fit(MusicFit::Film)).fade_out(2.0);
+    /// assert!(bed.music.is_some() && bed.asset.is_empty());
+    /// ```
+    pub fn music(spec: Music) -> Self {
+        Audio { music: Some(spec), ..Audio::track(String::new()) }
+    }
+
+    /// True when this track is generated music rather than a source file.
+    pub fn is_music(&self) -> bool {
+        self.music.is_some()
+    }
+
+    /// A short human label for this track's source: the asset name, or
+    /// `music:<mood>` for generated music. For `info`/`summary` display, where
+    /// a music track has no filename to show.
+    pub fn source_label(&self) -> String {
+        match &self.music {
+            Some(m) => format!("music:{}", m.mood.name()),
+            None => self.asset.clone(),
         }
     }
 
@@ -187,8 +228,21 @@ impl Audio {
     /// The rules a type cannot carry. `label` names the track in messages.
     pub fn validate(&self, label: &str, film: Time) -> Vec<String> {
         let mut errs = Vec::new();
-        if self.asset.trim().is_empty() {
-            errs.push(format!("{label}: needs an asset"));
+        // A track is either a file asset or generated music — exactly one.
+        match (self.asset.trim().is_empty(), self.music.is_some()) {
+            (true, false) => errs.push(format!("{label}: needs an asset or generated music")),
+            (false, true) => errs.push(format!(
+                "{label}: has both an asset and generated music — a track is one or the other"
+            )),
+            _ => {}
+        }
+        if let Some(m) = &self.music {
+            errs.extend(m.validate(label));
+            // Generated music has no pre-existing source to seek into: `from`
+            // reads later into a file, and there is no file yet.
+            if self.from.as_secs() != 0.0 {
+                errs.push(format!("{label}: generated music has no source to seek into, so `from` must be 0"));
+            }
         }
         if self.at.as_secs() < 0.0 {
             errs.push(format!("{label}: starts before the film does"));
@@ -291,6 +345,7 @@ pub fn clip_track(
     }
     let a = Audio {
         asset: String::new(),
+        music: None,
         at: film_at,
         from: source_from,
         duration: Some(window),

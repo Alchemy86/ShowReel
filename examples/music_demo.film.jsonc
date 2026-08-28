@@ -1,0 +1,199 @@
+// =====================================================================
+//  ShowReel — procedural music, timed to the film's own clock
+// =====================================================================
+//
+//  A self-contained proof of the generated-music feature (see
+//  `src/music.rs`). It ships no assets: every background is a colour, the
+//  only source is the chiptune the `music` track synthesises. Commit it,
+//  clone it anywhere with ffmpeg on PATH, and it rebuilds byte-for-byte —
+//  which is the whole point of generating the music rather than licensing
+//  a bed.
+//
+//  RENDER IT
+//    showreel render examples/music_demo.film.jsonc -o docs/music-demo.mp4
+//  (produces the master AND a 720p/30fps mobile cut beside it; no `-A`,
+//  because there are no assets to resolve.)
+//
+//  THE TIMING, which is why this belongs in ShowReel and not beside a blog
+//  post. The one `music` track below asks for `fit: "film"`: its 128 BPM is
+//  a *target*, nudged so a whole number of bars spans the film exactly. The
+//  four scenes are 4, 4, 4 and 2 bars long (a bar is 1.875s at 128 BPM), so
+//  the film is 14 bars = 26.25s, the hard cuts fall on bars 5, 9 and 13, and
+//  the last downbeat lands on the final frame. Every cut is a chord change —
+//  the music was generated to fit the cuts, not hand-aligned to them.
+//
+//  The cuts are deliberately hard (`presentation: cut`, zero duration): a
+//  dissolve would smear the cut across time and there would be no single
+//  instant for a beat to land on. Beat-sync wants a knife edge.
+// =====================================================================
+{
+  "width": 1280,
+  "height": 720,
+  "fps": 30.0,
+  "title": "ShowReel — procedural music",
+  "background": "#05070d",
+
+  // ---------------------------------------------------------------
+  //  SOUND — one generated track, the reference chiptune. No `asset`
+  //  and no `duration`: it is synthesised, and sized to the whole film.
+  //  `fit: "film"` locks the tempo to the film's length so it ends on a
+  //  downbeat; it still composes with the ordinary fade/gain controls,
+  //  because a generated track becomes a WAV and from there is just an
+  //  audio input like any other (see `src/audio.rs`).
+  // ---------------------------------------------------------------
+  "audio": [
+    {
+      "music": { "mood": "funk", "bpm": 128, "fit": "film" },
+      "fade_in": 0.25,
+      "fade_out": 2.0,
+      "gain": 0.9
+    }
+  ],
+
+  // =============================================================
+  //  1 — TITLE  (bars 1–4, 0.00–7.50s)
+  // =============================================================
+  "opening": {
+    "name": "title",
+    "duration": 7.5,
+    "background": "#0a1230",
+    "layers": [
+      {
+        "type": "gradient",
+        "stops": [ [0.0, "#12204a"], [1.0, "#05070d"] ],
+        "angle": 90.0
+      },
+      {
+        "type": "title",
+        "text": "ShowReel",
+        "subtitle": "procedural music — synthesised in Rust",
+        "from": 0.0,
+        "placement": { "fx": 0.1, "fy": 0.38, "fw": 0.8, "fh": 0.30 },
+        "enter": {
+          "kind": "chars", "stagger": 0.04, "rise": 28.0, "duration": 0.5,
+          "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
+        },
+        "z": 10
+      },
+      {
+        "type": "lower-third",
+        "text": "No samples. No licence. One file.",
+        "detail": "the whole soundtrack is a dozen lines of JSON",
+        "accent": "#ffd147",
+        "from": 3.0, "duration": 4.0,
+        "enter": { "kind": "slide-in", "dx": -60.0, "dy": 0.0, "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } },
+        "z": 12
+      }
+    ]
+  },
+
+  "then": [
+
+    // =============================================================
+    //  2 — EVERY CUT IS A CHORD CHANGE  (bars 5–8, 7.50–15.00s)
+    //  The cut into this scene lands on bar 5 — a downbeat. A bar fills
+    //  the width once per musical bar, four times across the scene.
+    // =============================================================
+    {
+      "transition": { "duration": 0.0, "presentation": { "kind": "cut" }, "timing": { "kind": "eased", "easing": "linear" } },
+      "scene": {
+        "name": "on the beat",
+        "duration": 7.5,
+        "background": "#101033",
+        "layers": [
+          {
+            "type": "gradient",
+            "stops": [ [0.0, "#2a1748"], [1.0, "#080611"] ],
+            "angle": 120.0
+          },
+          {
+            "type": "title",
+            "text": "Every cut is a chord change",
+            "subtitle": "the music was fit to the film, not aligned by hand",
+            "from": 0.2,
+            "placement": { "fx": 0.1, "fy": 0.30, "fw": 0.8, "fh": 0.28 },
+            "enter": { "kind": "rise", "distance": 24.0, "duration": 0.45, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "z": 10
+          },
+          {
+            // Fills across a single bar (1.875s), lands, then the next
+            // scene's cut arrives on the following downbeat.
+            "type": "bar",
+            "progress": { "from": 0.0, "to": 1.0, "over": 1.875, "easing": "linear" },
+            "from": 0.0,
+            "placement": { "fx": 0.1, "fy": 0.66, "fw": 0.8, "fh": 0.02 },
+            "fill": "#ffd147",
+            "z": 8
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  3 — IT ENDS WITH THE PICTURE  (bars 9–12, 15.00–22.50s)
+    //  A counter ticks the bar number so the beat grid is visible as
+    //  well as audible.
+    // =============================================================
+    {
+      "transition": { "duration": 0.0, "presentation": { "kind": "cut" }, "timing": { "kind": "eased", "easing": "linear" } },
+      "scene": {
+        "name": "fit to length",
+        "duration": 7.5,
+        "background": "#062024",
+        "layers": [
+          {
+            "type": "gradient",
+            "stops": [ [0.0, "#0c3b3f"], [1.0, "#05100f"] ],
+            "angle": 60.0
+          },
+          {
+            "type": "title",
+            "text": "It ends with the picture",
+            "subtitle": "fit: film nudges 128 BPM so 14 bars span 26.25s",
+            "from": 0.2,
+            "placement": { "fx": 0.1, "fy": 0.30, "fw": 0.8, "fh": 0.28 },
+            "enter": { "kind": "rise", "distance": 24.0, "duration": 0.45, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "z": 10
+          },
+          {
+            "type": "counter",
+            "count": { "from": 9.0, "to": 12.0, "over": 7.5, "easing": "linear", "decimals": 0 },
+            "label": "bar",
+            "from": 0.0,
+            "placement": { "fx": 0.1, "fy": 0.6, "fw": 0.5, "fh": 0.2 },
+            "z": 9
+          }
+        ]
+      }
+    },
+
+    // =============================================================
+    //  4 — CLOSE  (bars 13–14, 22.50–26.25s)  the tune fades out over
+    //  the last 2s, landing its final downbeat on the last frame.
+    // =============================================================
+    {
+      "transition": { "duration": 0.0, "presentation": { "kind": "cut" }, "timing": { "kind": "eased", "easing": "linear" } },
+      "scene": {
+        "name": "close",
+        "duration": 3.75,
+        "background": "#05070d",
+        "layers": [
+          {
+            "type": "gradient",
+            "stops": [ [0.0, "#12204a"], [1.0, "#05070d"] ],
+            "angle": 90.0
+          },
+          {
+            "type": "title",
+            "text": "showreel",
+            "subtitle": "a film is a file you can read — now the music is too",
+            "from": 0.1,
+            "placement": { "fx": 0.1, "fy": 0.40, "fw": 0.8, "fh": 0.26 },
+            "enter": { "kind": "fade", "duration": 0.6, "timing": { "kind": "eased", "easing": "out-cubic" } },
+            "z": 10
+          }
+        ]
+      }
+    }
+  ]
+}

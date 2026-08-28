@@ -302,8 +302,9 @@ pub struct SceneSummary<'a> {
 /// One track in a [`FilmSummary`] — see [`Film::summary`].
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AudioTrackSummary<'a> {
-    pub asset: &'a str,
+pub struct AudioTrackSummary {
+    /// The source file, or `music:<mood>` for a generated track.
+    pub asset: String,
     pub at: f64,
     pub duration: f64,
     pub gain: f64,
@@ -322,7 +323,7 @@ pub struct FilmSummary<'a> {
     pub duration: f64,
     pub frame_count: u32,
     pub scenes: Vec<SceneSummary<'a>>,
-    pub audio: Vec<AudioTrackSummary<'a>>,
+    pub audio: Vec<AudioTrackSummary>,
 }
 
 /// A complete film.
@@ -431,13 +432,14 @@ impl Film {
         self
     }
 
-    /// Every audio asset the film refers to, in declaration order.
+    /// Every audio **file** the film refers to, in declaration order.
     ///
     /// Unlike [`Film::assets_used`] these are not deduplicated or decoded:
     /// ffmpeg reads each one itself, and the same file placed twice is two
-    /// legitimate inputs.
+    /// legitimate inputs. Generated-music tracks have no source file and are
+    /// omitted — they are synthesised, not fetched (see [`crate::music`]).
     pub fn audio_assets(&self) -> Vec<&str> {
-        self.audio.iter().map(|a| a.asset.as_str()).collect()
+        self.audio.iter().filter(|a| !a.is_music()).map(|a| a.asset.as_str()).collect()
     }
 
     /// Every [`Film::audio`] track, located and resolved against this film's
@@ -452,9 +454,17 @@ impl Film {
             .iter()
             .enumerate()
             .map(|(i, a)| {
-                let path = assets.resolve(&a.asset).with_context(|| {
-                    format!("audio track {}: cannot find {}", i + 1, a.asset)
-                })?;
+                // A music track synthesises to a WAV; a file track resolves to
+                // one on disk. Either way the result is a located path handed to
+                // the same `Audio::resolve`, so everything downstream (fades,
+                // gain, mixing, the mobile cut) is identical — see [`crate::music`].
+                let path = match &a.music {
+                    Some(music) => resolve_music(music, a.resolve_duration(total))
+                        .with_context(|| format!("audio track {}: generating music", i + 1))?,
+                    None => assets.resolve(&a.asset).with_context(|| {
+                        format!("audio track {}: cannot find {}", i + 1, a.asset)
+                    })?,
+                };
                 Ok(a.resolve(path, total))
             })
             .collect()
@@ -508,7 +518,7 @@ impl Film {
             .audio
             .iter()
             .map(|a| AudioTrackSummary {
-                asset: a.asset.as_str(),
+                asset: a.source_label(),
                 at: a.at.as_secs(),
                 duration: a.resolve_duration(total).as_secs(),
                 gain: a.gain,
@@ -730,6 +740,20 @@ impl Film {
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
         Film::from_json(&s).map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))
     }
+}
+
+/// Locate a music track's synthesised WAV. Native only: it writes to a temp
+/// file, and `wasm32` has no filesystem. The browser never reaches this — its
+/// audio is a pre-rendered `web-pack` snapshot played by a separate Web Audio
+/// graph (see [`crate::music`] and `tools/web/audio.js`), so a music track that
+/// somehow reached the wasm render path is a wiring bug, and says so loudly.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_music(m: &crate::music::Music, dur: Time) -> anyhow::Result<std::path::PathBuf> {
+    m.render_to_temp(dur.as_secs())
+}
+#[cfg(target_arch = "wasm32")]
+fn resolve_music(_m: &crate::music::Music, _dur: Time) -> anyhow::Result<std::path::PathBuf> {
+    anyhow::bail!("generated music is pre-rendered by `web-pack`, not available in the browser render path")
 }
 
 /// "1 problem" / "N problems" — proper pluralisation for a

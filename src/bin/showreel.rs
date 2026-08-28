@@ -299,23 +299,15 @@ fn load(path: &Path) -> Result<Film> {
     Ok(film)
 }
 
-/// Locate every audio track and pin its timings against the film's length.
+/// Locate every audio track and pin its timings against the film's length —
+/// resolving a file track to a path and synthesising a music track to a WAV,
+/// both through the one seam [`Film::resolve_audio_tracks`].
 ///
 /// Done up front, before a single frame is rendered: a mistyped track name
 /// should fail in the first second, not after a ten-minute render followed by
 /// an ffmpeg error nobody can read.
 fn resolve_audio(film: &Film, assets: &AssetStore) -> Result<Vec<AudioInput>> {
-    let total = film.duration();
-    film.audio
-        .iter()
-        .enumerate()
-        .map(|(i, a)| {
-            let path = assets
-                .resolve(&a.asset)
-                .with_context(|| format!("audio track {}: cannot find {}", i + 1, a.asset))?;
-            Ok(a.resolve(path, total))
-        })
-        .collect()
+    film.resolve_audio_tracks(assets)
 }
 
 fn parse_frames(spec: &str, total: u32) -> Result<std::ops::Range<u32>> {
@@ -609,10 +601,16 @@ fn cmd_info(film_path: PathBuf, roots: Vec<PathBuf>) -> Result<()> {
         let total = film.duration();
         for a in &film.audio {
             let d = a.resolve_duration(total).as_secs();
+            let label = if a.is_music() {
+                format!("{} ({} bpm{})", a.source_label(), a.music.as_ref().unwrap().effective_bpm(d).round(),
+                    if a.music.as_ref().unwrap().fit == showreel::music::MusicFit::Film { ", fit" } else { "" })
+            } else {
+                a.source_label()
+            };
             println!(
                 "    {:>7.2}s  {:<28} {:>5.2}s  from {:.2}s, fade {}s/{}s{}",
                 a.at.as_secs(),
-                a.asset,
+                label,
                 d,
                 a.from.as_secs(),
                 a.fade_in.as_secs(),
@@ -1039,6 +1037,45 @@ fn cmd_web_pack(
         asset_bytes += bytes.len() as u64;
         println!("  audio  {name}  {:.0} KB", bytes.len() as f64 / 1024.0);
     }
+
+    // Generated-music tracks have no source file to copy: synthesise the WAV
+    // natively here (the DSP is pure Rust — no ffmpeg, so `web-pack` can do it
+    // ahead of a browser that has neither ffmpeg nor a filesystem) and ship it
+    // like any other film-level track, listed in `music.json`. This is a
+    // snapshot, the same as a `.srclip`: editing a music track's mood/key/bpm
+    // in the browser needs a repackage to be heard, though its
+    // at/gain/fades are read live from `music.json` the same way a file track's
+    // are from the film JSON. See `src/music.rs` for the wasm story.
+    let music_total = film.duration();
+    let mut music_manifest = Vec::new();
+    for (i, a) in film.audio.iter().enumerate() {
+        let Some(music) = &a.music else { continue };
+        let dur = a.resolve_duration(music_total).as_secs();
+        let bytes = music.wav_bytes(dur);
+        let name = format!("music-{i}.wav");
+        let dest = out.join("assets").join(&name);
+        if let Some(dir) = dest.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&dest, &bytes)?;
+        asset_bytes += bytes.len() as u64;
+        println!(
+            "  music  {name}  {} ({} bpm), {:.0} KB",
+            music.mood.name(),
+            music.effective_bpm(dur).round(),
+            bytes.len() as f64 / 1024.0
+        );
+        music_manifest.push(serde_json::json!({
+            "file": format!("assets/{name}"),
+            "at": a.at.as_secs(),
+            "from": 0.0,
+            "duration": dur,
+            "fade_in": a.fade_in.as_secs(),
+            "fade_out": a.fade_out.as_secs(),
+            "gain": a.gain,
+        }));
+    }
+    std::fs::write(out.join("music.json"), serde_json::to_string(&music_manifest)?)?;
 
     // A clip's own soundtrack is baked into its source video, which the
     // browser never has (only the pre-decoded `.srclip` frames — see

@@ -91,14 +91,17 @@ export class AudioEngine {
   }
 
   // Rebuilds the cue list from the live film object plus the packaged
-  // clip-audio manifest (`[]` if this page was never `web-pack`ed — a plain
-  // `tools/web/` dev serve has no ffmpeg-extracted clip audio to offer).
-  // Failures decoding one track (a missing file, an unsupported codec) are
-  // swallowed per-cue so one bad track does not silence the rest.
-  async rebuild(film, filmDuration, clipAudioManifest) {
+  // clip-audio and music manifests (`[]` if this page was never `web-pack`ed —
+  // a plain `tools/web/` dev serve has neither). Failures decoding one track (a
+  // missing file, an unsupported codec) are swallowed per-cue so one bad track
+  // does not silence the rest.
+  async rebuild(film, filmDuration, clipAudioManifest, musicManifest) {
     this.stop();
     const cues = [];
     for (const track of film.audio || []) {
+      // A generated-music track has no `asset` — its WAV is pre-synthesised at
+      // pack time and listed in `music.json` (added below). A file track is
+      // played live off the film JSON here; a music track is a snapshot.
       if (!track.asset) continue;
       const at = track.at || 0;
       const from = track.from || 0;
@@ -128,6 +131,26 @@ export class AudioEngine {
       } catch {
         // A film opened without web-pack's clip-audio.json, or one entry
         // gone stale against an edited film — see this module's doc comment.
+      }
+    }
+    // Generated-music tracks: the WAV was pre-synthesised, but at/gain/fades
+    // travel in the manifest so the same cue envelope a file track gets applies
+    // here too (only mood/key/bpm are the snapshot — those change the samples).
+    for (const m of musicManifest || []) {
+      if (m.duration <= 0) continue;
+      try {
+        const buffer = await this.decode(m.file);
+        cues.push({
+          buffer,
+          from: m.from || 0,
+          at: m.at || 0,
+          duration: m.duration,
+          fadeIn: Math.min(m.fade_in || 0, m.duration),
+          fadeOut: Math.min(m.fade_out || 0, m.duration),
+          gain: m.gain != null ? m.gain : 1.0,
+        });
+      } catch {
+        // No music.json (unpackaged), or an entry gone stale — silently absent.
       }
     }
     this.cues = cues;

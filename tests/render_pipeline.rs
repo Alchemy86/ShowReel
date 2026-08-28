@@ -333,6 +333,38 @@ fn a_clips_own_audio_reaches_the_mix_and_is_audible() {
 }
 
 #[test]
+fn generated_music_reaches_the_master_with_sound() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg is not on PATH");
+        return;
+    }
+    let dir = std::env::temp_dir().join("showreel-music-e2e");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // A film whose only sound is generated: no asset files exist at all, which
+    // is the whole point — the soundtrack is synthesised from the film's text.
+    let film = Film::new(64, 36, 10.0)
+        .open(Scene::new(3.0).layer(Layer::solid(Color::rgb(20, 20, 20))))
+        .sound(Audio::music(Music::chiptune().fit(MusicFit::Film)).fade_out(0.5));
+
+    // The real seam: a music track synthesises to a WAV and resolves into an
+    // AudioInput exactly like a file track — no `AssetStore` root, no source.
+    let store = AssetStore::new();
+    let tracks = film.resolve_audio_tracks(&store).unwrap();
+    assert_eq!(tracks.len(), 1, "one music track resolves to one input");
+    assert!(tracks[0].path.exists(), "the synthesised WAV must be on disk for ffmpeg");
+
+    let master = encode_with_audio(&dir, &film, tracks);
+    assert_eq!(audio_stream(&master).as_deref(), Some("aac"), "generated music must reach the master");
+    // Present is not audible: prove it carries a real level, like the tests above.
+    let db = mean_volume_db(&master).expect("volumedetect should report a level");
+    assert!(db > -40.0, "the generated music is effectively silent at {db} dBFS");
+    assert!(db < 0.0, "the generated music is clipping at {db} dBFS");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_muted_clip_layer_adds_no_audio_stream() {
     if !ffmpeg_available() {
         eprintln!("skipping: ffmpeg is not on PATH");

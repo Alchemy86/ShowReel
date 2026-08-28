@@ -62,6 +62,11 @@ let reloadTimer = null;
 // `tools/web/` dev serve).
 const audioEngine = new AudioEngine();
 let clipAudioManifest = [];
+// `showreel web-pack`'s `music.json`: generated-music tracks pre-synthesised
+// natively to WAVs (the DSP is pure Rust — see src/music.rs — but the browser
+// has no filesystem to run `render_to_temp` in, so it is baked at pack time).
+// `[]` on a plain `tools/web/` dev serve, exactly like `clipAudioManifest`.
+let musicManifest = [];
 // Rolling window of recent per-frame render+paint times, the same shape
 // `src/studio/page.js`'s `recordFrameTime` uses, so the browser build is
 // honest about achieved playback rate the same way the native studio is —
@@ -313,7 +318,7 @@ async function doReload() {
   } catch (e) {
     fail(String(e && e.stack || e));
   }
-  await audioEngine.rebuild(film, duration, clipAudioManifest);
+  await audioEngine.rebuild(film, duration, clipAudioManifest, musicManifest);
   if (playing) audioEngine.start(Math.min(currentT, duration));
   renderAt(Math.min(currentT, duration));
   editor.render();
@@ -733,6 +738,10 @@ async function boot() {
   // audio.js's module doc. Absent on a plain `tools/web/` dev serve.
   const res3 = await fetch('./clip-audio.json').catch(() => null);
   clipAudioManifest = res3 && res3.ok ? await res3.json().catch(() => []) : [];
+
+  // `music.json`: pre-synthesised generated-music tracks. Same absence rule.
+  const res4 = await fetch('./music.json').catch(() => null);
+  musicManifest = res4 && res4.ok ? await res4.json().catch(() => []) : [];
 
   await doReload();
   splash.hidden = true;

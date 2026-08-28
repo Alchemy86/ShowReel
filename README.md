@@ -62,7 +62,7 @@ Everything else was claimed as already-working and holds up on screen.
 | **Text as geometry** | glyphs are filled paths, not font-engine blits, so a title takes a gradient, an outline and a drop shadow. Real shaping, kerning, tracking in ems, **tabular figures** so a counter does not jitter as it ticks |
 | **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris, zoom and a cross-blur dissolve, each composable with any easing curve or spring |
 | **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, a **pull-up** that lifts a piece of the frame, dims the rest and annotates it, and a progress bar that fills like a counter but draws no digits |
-| **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut. A video clip's own soundtrack joins the mix too, with the same gain, fades and a mute |
+| **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut. A video clip's own soundtrack joins the mix too, with the same gain, fades and a mute. A track can also be **generated music** — a chiptune synthesised to the film's own length, tempo-fit so a beat lands on the cut — see [below](#generated-music-timed-to-the-film) |
 | **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
 | **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command — plus a palette-optimised, README-sized **GIF** of any window of the film, from another ([`showreel gif`](#gif-export)) |
 | **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
@@ -112,6 +112,9 @@ which module it lives in.
   quietly rescaling anyone's volume (`src/audio.rs`)
 - A clip's own baked-in soundtrack joins the mix automatically — gain, fades
   and a mute, all without a separate `Audio` entry (`src/audio.rs`, `src/layer.rs`)
+- **Generated music**: a chiptune synthesised from a one-line description,
+  deterministic and sized to the film — tempo-fit so a beat lands on the cut,
+  with no bed to license (`src/music.rs`)
 - Both the full-quality master and the 720p/30fps mobile cut carry audio —
   checked by an ffprobe-driven test, not assumed (`tests/render_pipeline.rs`)
 
@@ -311,6 +314,50 @@ inside the source — the two are easy to confuse and are deliberately different
 words. An unset duration means "to the end of the film". Tracks are mixed
 without ffmpeg quietly rescaling anyone's volume, and the mobile cut carries the
 audio too.
+
+### Generated music, timed to the film
+
+A track's source can be a *generated* chiptune instead of a file — synthesised
+from a one-line description, so a film with a soundtrack stays a single readable
+text you can commit and rebuild from source, with no bed to license:
+
+```jsonc
+"audio": [
+  { "music": "funk" },                                    // the reference tune, sized to the film
+  { "music": { "mood": "dreamy", "key": "C", "bpm": 96 }, "fade_out": 2.0 }
+]
+```
+
+```rust
+film.sound(Audio::music(Music::chiptune().fit(MusicFit::Film)).fade_out(2.0))
+```
+
+Written as a bare mood word — the same `"documentary"`-style shorthand the
+colour grade uses — or an object for the `key`, `bpm` and tempo `fit`. It is one
+idiom done well, the NES/SID chiptune (a pulse bass, a pulse-wave arpeggio lead,
+noise-burst drums), not a general synthesiser: a `mood` selects a chord
+progression and step patterns, not a new instrument. It is otherwise an ordinary
+track — the `at`/`gain`/fades/mixing and the mobile cut all apply, because a
+generated track becomes a WAV and from there is just an audio input like any
+file.
+
+**The timing is the point.** With no explicit `duration` the tune is synthesised
+to exactly the film's length, so it never needs trimming. `"fit": "film"` goes
+further: the authored `bpm` becomes a *target*, nudged so a whole number of bars
+spans the film — the last downbeat lands on the final frame, and the bar grid is
+regular against the film, so scene cuts spaced a whole number of bars apart get a
+chord change on every cut. `examples/music_demo.film.jsonc` proves it: four
+bar-aligned scenes at 128 BPM, and its three hard cuts land within ~7 ms of a
+downbeat in the rendered audio (rebuild it with `showreel render
+examples/music_demo.film.jsonc -o docs/music-demo.mp4` — no assets needed).
+
+The generator is deterministic (a seeded PRNG, so renders are reproducible,
+unlike the `numpy`-global-RNG script it grew from) and the DSP is pure Rust, so
+it compiles to wasm; in the browser, `showreel web-pack` pre-synthesises the WAV
+and ships it as a snapshot the Web Audio preview plays (editing a music track's
+mood/key/bpm needs a repackage to be heard, the same as a clip's own audio). The
+general "align to N arbitrary interior cut times" solver is a documented next
+step, not a half-built one — see `src/music.rs`.
 
 ### A clip's own audio
 

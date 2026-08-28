@@ -34,6 +34,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
 | A clip's own soundtrack (`ClipAudio`, on `Content::Clip`) is a level, not a placement — its `at`/`from`/`duration` are the clip's own timing, so `clip_track` builds its `AudioInput` by delegating to `Audio::resolve` rather than re-deriving fade clamping | `src/audio.rs`, `src/layer.rs` (`Layer::clip_audio_track`), `src/timeline.rs` (`Film::clip_audio`) |
+| Generated music (`Audio.music: Option<Music>`) is a *source*, not a parallel audio path: a `Music` spec resolves to a synthesised WAV exactly where a file track's `asset` resolves to a path (`Film::resolve_audio_tracks`), so from `Audio::resolve` on it is an ordinary `AudioInput` — fades/gain/mixing/mobile compose for free. One idiom (the NES/SID chiptune the devlog's `chiptune.py` proved, ported faithfully — envelope/spectrum correlation ≈0.9997/0.9999 vs the reference), not a synthesiser: a `Mood` is *data* (a progression + step patterns). Authoring mirrors `Grade`'s bare-word-or-object shorthand. Deterministic (a seeded `splitmix64`, unlike the reference's `numpy` global RNG) so renders reproduce and the temp WAV can be content-addressed. `MusicFit::Film` nudges the tempo so a whole number of bars spans the film (ends on a downbeat); the general per-cut-time solver is a documented next step, not half-built | `src/music.rs`, `src/audio.rs` (`Audio::music`), `src/timeline.rs` (`resolve_audio_tracks`, `resolve_music`) |
 | Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
 | The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
 | "API access" means the local HTTP surface, not the (already stable, already documented) Rust library — and it rides the studio's own server rather than a second, stateless one: `/api/render`/`still`/`info`/`check` answer against whatever film the running `showreel studio` instance already has loaded and validated, so there is one code path for "load a film," not two that can drift | `src/studio.rs`, `README.md`'s "API access" |
@@ -437,6 +438,30 @@ got before this round of features touched it.
   examples/data_plugin_demo.film.jsonc -A examples --crf 23 -o
   docs/data-plugin-demo.mp4`. It is also the fixture the README's data/plugin
   sections point at.
+
+- **`examples/music_demo.film.jsonc` is the proof film for generated music
+  (`src/music.rs`)**, hand-written JSONC and fully self-contained — it ships *no*
+  assets (every background is a colour, the only sound is the synthesised
+  chiptune), which is the whole point. Rendered cut at `docs/music-demo.mp4`
+  (+ `.mobile.mp4`); re-render with `showreel render
+  examples/music_demo.film.jsonc -o docs/music-demo.mp4` (no `-A`). Its four
+  scenes are bar-aligned at 128 BPM with hard cuts and a `fit: "film"` track, so
+  the cuts land on downbeats — verified by onset-detecting the rendered audio
+  (~7 ms of a bar line at each cut), not by eye. If you edit it, re-render both
+  cuts by hand and re-verify audio (`ffprobe`/`volumedetect` a real level on the
+  mobile cut, the same as the showreel reel).
+
+- **Generated music needs the wasm blob rebuilt.** `Audio.asset` became
+  `#[serde(default)]` when `Audio.music` was added, so a film with a music track
+  fails to load in a browser running an *older* `tools/web/showreel.wasm`
+  (`missing field 'asset'`). Any `Audio`-schema change means `./build-wasm.sh`
+  and committing the new blob. In the browser, a music track is a *snapshot*:
+  `showreel web-pack` pre-synthesises the WAV natively (the DSP is pure Rust but
+  the browser has no filesystem for `Music::render_to_temp`) and lists it in
+  `music.json`, which `tools/web/main.js`/`audio.js` play as a cue like a
+  film-level track — editing a music track's mood/key/bpm needs a repackage to be
+  heard, the same staleness a `.srclip` carries. Inline-in-the-browser synthesis
+  (a wasm PCM export → Web Audio) is a documented next step, unbuilt.
 
 - **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
   second. Using the first letterboxes a square source into a wide frame — the exact

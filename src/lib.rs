@@ -52,6 +52,9 @@ pub mod timeline;
 pub mod scale;
 pub mod render;
 pub mod audio;
+// Pure DSP (sample buffers, no ffmpeg, no filesystem), so — unlike `encode` —
+// it stays available on every target, wasm included. See its module docs.
+pub mod music;
 // Shells out to ffmpeg (`std::process::Command`), which has no browser
 // story — see src/wasm.rs's module docs — so it is native-only.
 #[cfg(not(target_arch = "wasm32"))]
