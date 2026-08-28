@@ -205,6 +205,20 @@ export function newLayer(kind) {
   }
 }
 
+// A freshly added Text/Title defaults to dead centre
+// (`Content::default_placement`, src/layer.rs) — fine for an empty frame,
+// but a guaranteed collision on a scene that already has a still/clip
+// filling it (docs/youcut-study.md: "default text placement collides with
+// what's already there"). Bias away from centre only in that case, so the
+// ordinary empty-frame default is untouched, and only ever by setting an
+// explicit `placement` — the same field a drag on the preview would set,
+// so nothing about how placement works changes, just its starting value.
+function biasTextPlacement(layer, scene) {
+  if (layer.type !== 'text' && layer.type !== 'title') return;
+  const hasFullFrameContent = scene.layers.some((l) => l.type === 'still' || l.type === 'clip');
+  if (hasFullFrameContent) layer.placement = { anchor: 'bottom', pad: 96 };
+}
+
 export function newAudio() {
   return { asset: '', at: 0, from: 0, duration: null, fade_in: 0, fade_out: 0, gain: 1 };
 }
@@ -816,7 +830,9 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       } else if (act === 'toggle-add-layer') { document.getElementById('add-layer-list').hidden = !document.getElementById('add-layer-list').hidden; }
       else if (act === 'add-layer') {
         const scene = getScene(f, currentSceneIndex());
-        scene.layers.push(newLayer(actEl.dataset.kind));
+        const layer = newLayer(actEl.dataset.kind);
+        biasTextPlacement(layer, scene);
+        scene.layers.push(layer);
         select({ kind: 'layer', i: currentSceneIndex(), j: scene.layers.length - 1 });
         notify();
       } else if (act === 'layer-up' || act === 'layer-down') {
