@@ -39,9 +39,26 @@
 //! The page renders whatever [`crate::layer::Content`]'s own tag names are
 //! (`still`, `clip`, `counter`, ...) — the crate's general vocabulary, not a
 //! subject. See `AGENTS.md`.
+//!
+//! # API access
+//!
+//! This server is also ShowReel's local HTTP API: the same four things the
+//! CLI can do to a film — `render`, `still`, `info`, `check` — over
+//! `/api/render`, `/api/still`, `/api/info`, `/api/check`, all against
+//! whatever film this instance already has loaded (see "Why polling" above —
+//! the same live-reloaded snapshot the browser page scrubs, not a per-request
+//! upload). Chosen over a second, always-on service: everything a render or a
+//! still needs — the asset store, the file watch, the parsed and validated
+//! film — already exists here, so a curl script drives exactly what the
+//! browser tab does, not a parallel code path that could drift from it. See
+//! the "API access" section of `README.md` for the endpoint contracts and
+//! `AGENTS.md` for why a render endpoint is one more reason `--host` defaults
+//! to loopback.
 
 use crate::assets::AssetStore;
+use crate::encode::{EncodeOptions, FfmpegSink, MobileOptions, ffmpeg_available, mobile_cut, mobile_path};
 use crate::preview;
+use crate::render::Renderer;
 use crate::scale::scale_film;
 use crate::text::FontDb;
 use crate::time::Time;
@@ -49,6 +66,7 @@ use crate::timeline::Film;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -93,6 +111,9 @@ struct Shared {
     scale: f64,
     fonts: &'static FontDb,
     snapshot: Mutex<Arc<Snapshot>>,
+    /// Distinguishes concurrent `/api/render` requests' scratch files —
+    /// several worker threads can be mid-render at once.
+    render_seq: AtomicU64,
 }
 
 impl Shared {
@@ -183,6 +204,7 @@ pub fn serve(film_path: PathBuf, asset_roots: Vec<PathBuf>, opts: StudioOptions)
         scale: opts.scale,
         fonts: FontDb::shared(),
         snapshot: Mutex::new(Arc::new(initial)),
+        render_seq: AtomicU64::new(0),
     });
 
     {
@@ -199,6 +221,14 @@ pub fn serve(film_path: PathBuf, asset_roots: Vec<PathBuf>, opts: StudioOptions)
     println!("ShowReel Studio — {}", film_path.display());
     println!("  http://{display_host}:{}", opts.port);
     println!("  editing the film reloads the browser automatically. Ctrl-C to stop.");
+    if !is_loopback_host(&opts.host) {
+        eprintln!(
+            "  warning: --host {} is not loopback — this exposes /api/render (runs ffmpeg, \
+             writes a file) to anything that can reach this machine on the network. Only do \
+             this on a network you trust.",
+            opts.host
+        );
+    }
 
     // A handful of worker threads recv() concurrently — tiny_http's own
     // pattern for a blocking server without an async runtime. One browser tab
@@ -219,6 +249,10 @@ pub fn serve(film_path: PathBuf, asset_roots: Vec<PathBuf>, opts: StudioOptions)
     Ok(())
 }
 
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
 fn worker_loop(server: &tiny_http::Server, shared: &Shared) {
     loop {
         match server.recv() {
@@ -230,13 +264,24 @@ fn worker_loop(server: &tiny_http::Server, shared: &Shared) {
 
 fn handle(request: tiny_http::Request, shared: &Shared) {
     let url = request.url().to_string();
-    let path = url.split('?').next().unwrap_or("/");
+    let path = url.split('?').next().unwrap_or("/").to_string();
     let method = request.method().clone();
 
-    let (status, content_type, body): (u16, &str, Vec<u8>) = match (method, path) {
+    // A render is the one endpoint that streams a real file back rather than
+    // an in-memory body computed up front, so it handles its own response
+    // rather than fitting the (status, content-type, bytes) shape below.
+    if method == tiny_http::Method::Post && path == "/api/render" {
+        render_response(request, shared, &url);
+        return;
+    }
+
+    let (status, content_type, body): (u16, &str, Vec<u8>) = match (method, path.as_str()) {
         (tiny_http::Method::Get, "/") => (200, "text/html; charset=utf-8", page_html(shared).into_bytes()),
         (tiny_http::Method::Get, "/api/state") => (200, "application/json", state_json(shared)),
         (tiny_http::Method::Get, "/api/frame") => frame_response(shared, &url),
+        (tiny_http::Method::Get, "/api/still") => still_response(shared, &url),
+        (tiny_http::Method::Get, "/api/info") => (200, "application/json", info_json(shared)),
+        (tiny_http::Method::Get, "/api/check") => (200, "application/json", check_json(shared)),
         _ => (404, "text/plain; charset=utf-8", b"not found".to_vec()),
     };
     respond(request, status, content_type, body);
@@ -336,6 +381,214 @@ fn frame_response(shared: &Shared, url: &str) -> (u16, &'static str, Vec<u8>) {
     }
 }
 
+/// `/api/still` — the same idea as `/api/frame`, but at the film's declared
+/// size rather than the studio's own `--scale` preview: this is the endpoint
+/// for a real output, not for keeping the scrubber responsive.
+fn still_response(shared: &Shared, url: &str) -> (u16, &'static str, Vec<u8>) {
+    let snap = shared.current();
+    let Some(film) = &snap.film else {
+        return (409, "text/plain; charset=utf-8", b"the film file does not currently parse".to_vec());
+    };
+    let t = query_param(url, "at").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let t = t.clamp(0.0, film.duration().as_secs().max(0.0));
+    let render = preview::still_at(film, &snap.assets, shared.fonts, Time(t))
+        .context("rendering the still")
+        .and_then(|canvas| canvas.encode_png().context("encoding the still as PNG"));
+    match render {
+        Ok(bytes) => (200, "image/png", bytes),
+        Err(e) => (500, "text/plain; charset=utf-8", format!("{e:#}").into_bytes()),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SceneInfo<'a> {
+    index: usize,
+    name: Option<&'a str>,
+    start: f64,
+    duration: f64,
+    layers: usize,
+    transition_in: Option<&'a crate::transition::Transition>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioTrackInfo<'a> {
+    asset: &'a str,
+    at: f64,
+    duration: f64,
+    gain: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InfoResponse<'a> {
+    path: String,
+    parse_error: Option<&'a str>,
+    title: Option<&'a str>,
+    width: u32,
+    height: u32,
+    fps: f64,
+    duration: f64,
+    frame_count: u32,
+    scenes: Vec<SceneInfo<'a>>,
+    audio: Vec<AudioTrackInfo<'a>>,
+}
+
+/// `/api/info` — the structured equivalent of `showreel info`, purpose-built
+/// rather than reusing `/api/state`'s shape: that one is the browser page's
+/// own wire format and free to change with the editor, while this is a
+/// public contract.
+fn info_json(shared: &Shared) -> Vec<u8> {
+    let snap = shared.current();
+    let body = match &snap.film {
+        None => InfoResponse {
+            path: shared.film_path.display().to_string(),
+            parse_error: snap.parse_error.as_deref(),
+            title: None,
+            width: 0,
+            height: 0,
+            fps: 0.0,
+            duration: 0.0,
+            frame_count: 0,
+            scenes: Vec::new(),
+            audio: Vec::new(),
+        },
+        Some(film) => {
+            let total = film.duration();
+            let scenes = film
+                .timeline
+                .placements()
+                .iter()
+                .map(|p| {
+                    let s = film.timeline.scene(p.index);
+                    SceneInfo {
+                        index: p.index,
+                        name: s.name.as_deref(),
+                        start: p.start.as_secs(),
+                        duration: s.duration.as_secs(),
+                        layers: s.layers.len(),
+                        transition_in: film.timeline.transition_into(p.index),
+                    }
+                })
+                .collect();
+            let audio = film
+                .audio
+                .iter()
+                .map(|a| AudioTrackInfo {
+                    asset: a.asset.as_str(),
+                    at: a.at.as_secs(),
+                    duration: a.resolve_duration(total).as_secs(),
+                    gain: a.gain,
+                })
+                .collect();
+            InfoResponse {
+                path: shared.film_path.display().to_string(),
+                parse_error: None,
+                title: film.title.as_deref(),
+                width: film.width,
+                height: film.height,
+                fps: film.fps,
+                duration: total.as_secs(),
+                frame_count: film.frame_count(),
+                scenes,
+                audio,
+            }
+        }
+    };
+    serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec())
+}
+
+#[derive(Serialize)]
+struct CheckResponse {
+    ok: bool,
+    errors: Vec<String>,
+}
+
+/// `/api/check` — `Film::validate`'s errors, plus a JSON-parse failure
+/// counted as one more error rather than a separate mechanism: either way,
+/// the film cannot currently be rendered, which is what "check" is for.
+fn check_json(shared: &Shared) -> Vec<u8> {
+    let snap = shared.current();
+    let body = match &snap.parse_error {
+        Some(e) => CheckResponse { ok: false, errors: vec![e.clone()] },
+        None => CheckResponse { ok: snap.validation_errors.is_empty(), errors: snap.validation_errors.clone() },
+    };
+    serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec())
+}
+
+/// `/api/render` — the one endpoint that costs real time and disk: it runs
+/// the same `Renderer` + `FfmpegSink` pipeline `showreel render` does, into a
+/// scratch file, then streams the result back and deletes it. Query params
+/// mirror the CLI: `scale` (default 1.0), `crf` (default the codec's own),
+/// `mobile=1` for the 720p delivery cut instead of the master.
+fn render_response(request: tiny_http::Request, shared: &Shared, url: &str) {
+    let snap = shared.current();
+    let Some(film) = &snap.film else {
+        respond(
+            request,
+            409,
+            "text/plain; charset=utf-8",
+            b"the film file does not currently parse".to_vec(),
+        );
+        return;
+    };
+    if !ffmpeg_available() {
+        respond(
+            request,
+            501,
+            "text/plain; charset=utf-8",
+            b"ffmpeg is not on PATH; the API cannot encode".to_vec(),
+        );
+        return;
+    }
+    let scale = query_param(url, "scale").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+    let mobile = query_param(url, "mobile").is_some_and(|s| s == "1" || s == "true");
+    let crf = query_param(url, "crf")
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or_else(|| if mobile { MobileOptions::default().crf } else { EncodeOptions::default().crf });
+
+    let render_film = scale_film(film, scale);
+    let seq = shared.render_seq.fetch_add(1, Ordering::Relaxed);
+    let master_path =
+        std::env::temp_dir().join(format!("showreel-api-render-{}-{seq}.mp4", std::process::id()));
+
+    let result: Result<PathBuf> = (|| {
+        let mut tracks = render_film.resolve_audio_tracks(&snap.assets)?;
+        tracks.extend(render_film.clip_audio(&snap.assets).context("resolving a clip's own audio")?);
+        let opts = EncodeOptions { crf, ..EncodeOptions::default() }.with_audio(tracks);
+        let mut encoder = FfmpegSink::new(
+            &master_path,
+            render_film.width,
+            render_film.height,
+            render_film.fps,
+            &opts,
+            render_film.background,
+        )?;
+        Renderer::new(&render_film, &snap.assets, shared.fonts).render_all(&mut encoder)?;
+        if mobile {
+            let mob = mobile_path(&master_path);
+            mobile_cut(&master_path, &mob, &MobileOptions::default()).context("producing the mobile cut")?;
+            let _ = std::fs::remove_file(&master_path);
+            Ok(mob)
+        } else {
+            Ok(master_path.clone())
+        }
+    })();
+
+    match result {
+        Ok(path) => {
+            let bytes = std::fs::read(&path).unwrap_or_default();
+            let _ = std::fs::remove_file(&path);
+            respond(request, 200, "video/mp4", bytes);
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&master_path);
+            respond(request, 500, "text/plain; charset=utf-8", format!("{e:#}").into_bytes());
+        }
+    }
+}
+
 fn query_param(url: &str, key: &str) -> Option<String> {
     let (_, query) = url.split_once('?')?;
     query.split('&').find_map(|pair| {
@@ -431,6 +684,112 @@ mod tests {
         assert_eq!(snap.film.as_ref().unwrap().width, 64);
         // The preview copy is the scaled one.
         assert_eq!(snap.preview_film.as_ref().unwrap().width, 32);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------
+    // The API endpoints (`info`, `check`, `still`) — request handling for
+    // `render` needs a real ffmpeg process and is covered end to end by
+    // `tests/api_server.rs` instead.
+    // -----------------------------------------------------------------
+
+    fn shared_for(dir: &Path, film: &crate::timeline::Film) -> Shared {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("film.json");
+        std::fs::write(&path, film.to_json().unwrap()).unwrap();
+        let snap = load(&path, &[], 1.0, 1);
+        Shared {
+            film_path: path,
+            asset_roots: Vec::new(),
+            scale: 1.0,
+            fonts: FontDb::shared(),
+            snapshot: Mutex::new(Arc::new(snap)),
+            render_seq: AtomicU64::new(0),
+        }
+    }
+
+    #[test]
+    fn only_loopback_hosts_are_recognised() {
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("::1"));
+        assert!(!is_loopback_host("0.0.0.0"));
+        assert!(!is_loopback_host("192.168.1.5"));
+    }
+
+    #[test]
+    fn info_json_describes_a_valid_film() {
+        let dir = std::env::temp_dir().join("showreel-studio-test-info");
+        let film = crate::timeline::Film::new(64, 36, 10.0)
+            .title("a test film")
+            .open(crate::timeline::Scene::new(2.0).named("only").layer(crate::layer::Layer::solid(crate::color::Color::WHITE)));
+        let shared = shared_for(&dir, &film);
+        let body: serde_json::Value = serde_json::from_slice(&info_json(&shared)).unwrap();
+        assert_eq!(body["title"], "a test film");
+        assert_eq!(body["width"], 64);
+        assert_eq!(body["frameCount"], 20);
+        assert_eq!(body["scenes"][0]["name"], "only");
+        assert!(body["parseError"].is_null());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn info_json_surfaces_a_parse_error_instead_of_panicking() {
+        let dir = std::env::temp_dir().join("showreel-studio-test-info-bad");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("film.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        let snap = load(&path, &[], 1.0, 1);
+        let shared = Shared {
+            film_path: path,
+            asset_roots: Vec::new(),
+            scale: 1.0,
+            fonts: FontDb::shared(),
+            snapshot: Mutex::new(Arc::new(snap)),
+            render_seq: AtomicU64::new(0),
+        };
+        let body: serde_json::Value = serde_json::from_slice(&info_json(&shared)).unwrap();
+        assert!(body["parseError"].is_string(), "{body}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_json_reports_validation_errors() {
+        let dir = std::env::temp_dir().join("showreel-studio-test-check");
+        // Too short a scene for its own transition — the same defect
+        // `render_pipeline.rs`'s `an_invalid_film_is_reported_rather_than_rendered` uses.
+        let bad = crate::timeline::Film::new(64, 36, 10.0)
+            .open(crate::timeline::Scene::new(0.5).named("too short"))
+            .then(crate::transition::Transition::dissolve(2.0), crate::timeline::Scene::new(2.0));
+        let shared = shared_for(&dir, &bad);
+        let body: serde_json::Value = serde_json::from_slice(&check_json(&shared)).unwrap();
+        assert_eq!(body["ok"], false);
+        assert!(!body["errors"].as_array().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_json_is_ok_for_a_valid_film() {
+        let dir = std::env::temp_dir().join("showreel-studio-test-check-ok");
+        let film = crate::timeline::Film::new(64, 36, 10.0)
+            .open(crate::timeline::Scene::new(1.0).named("only"));
+        let shared = shared_for(&dir, &film);
+        let body: serde_json::Value = serde_json::from_slice(&check_json(&shared)).unwrap();
+        assert_eq!(body["ok"], true);
+        assert!(body["errors"].as_array().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn still_response_renders_a_real_png_at_full_declared_size() {
+        let dir = std::env::temp_dir().join("showreel-studio-test-still");
+        let film = crate::timeline::Film::new(64, 36, 10.0)
+            .open(crate::timeline::Scene::new(2.0).named("only").layer(crate::layer::Layer::solid(crate::color::Color::WHITE)));
+        let shared = shared_for(&dir, &film);
+        let (status, ct, body) = still_response(&shared, "/api/still?at=0.5");
+        assert_eq!(status, 200);
+        assert_eq!(ct, "image/png");
+        assert_eq!(&body[1..4], b"PNG", "not a PNG: {body:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

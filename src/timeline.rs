@@ -63,6 +63,7 @@
 //! reasoning and its trade-off.
 
 use crate::audio::Audio;
+use anyhow::Context;
 use crate::color::Color;
 use crate::layer::Layer;
 use crate::theme::Theme;
@@ -378,6 +379,26 @@ impl Film {
     /// legitimate inputs.
     pub fn audio_assets(&self) -> Vec<&str> {
         self.audio.iter().map(|a| a.asset.as_str()).collect()
+    }
+
+    /// Every [`Film::audio`] track, located and resolved against this film's
+    /// own duration — same as [`Film::clip_audio`], but for the tracks
+    /// authored on the film rather than baked into a clip.
+    pub fn resolve_audio_tracks(
+        &self,
+        assets: &crate::assets::AssetStore,
+    ) -> anyhow::Result<Vec<crate::audio::AudioInput>> {
+        let total = self.duration();
+        self.audio
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let path = assets.resolve(&a.asset).with_context(|| {
+                    format!("audio track {}: cannot find {}", i + 1, a.asset)
+                })?;
+                Ok(a.resolve(path, total))
+            })
+            .collect()
     }
 
     /// Every clip layer's own soundtrack, ready to join the mix alongside

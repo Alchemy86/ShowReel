@@ -340,6 +340,64 @@ It's behind a `studio` feature — `cargo build`/`cargo run` without
 `--features studio` never pulls in the web server, so the library and the
 plain render path stay exactly as dependency-light as they were.
 
+### API access
+
+**"API access" could mean a documented, stable Rust library, or a local HTTP
+service anything can call.** ShowReel already has the first — the library
+this README is documenting, with a `prelude`, `AGENTS.md`'s "load-bearing
+decisions" table pointing at the module that owns each one, and a test suite
+that would break the moment a signature quietly changed underneath it.
+Writing more prose about that isn't new capability. The HTTP surface is: it
+lets a shell script, a browser tool, or anything in any language drive
+ShowReel without shelling out to the CLI and scraping stdout — closer to what
+"API access" usually means, and the reading this crate didn't already have.
+
+**It rides the studio server rather than starting a second one.** `showreel
+studio <film>` already runs a `tiny_http` server holding a live-reloaded,
+validated `Film` and an `AssetStore` for it — everything `render`, `still`,
+`info` and `check` need already exists there. A stateless render-farm-style
+service (POST a film, get a video back) was considered and set aside: it
+would mean a second code path for "load and validate a film" alongside the
+studio's own, free to drift from it, for a capability the studio's own
+snapshot already provides for free. So the endpoints below answer against
+*the film the studio you started already has loaded* — point a studio at a
+film, then drive it:
+
+```bash
+cargo run --release --features studio --bin showreel -- studio my.film.jsonc -A assets &
+
+curl http://127.0.0.1:7878/api/info                    # title, duration, scenes, audio — JSON
+curl http://127.0.0.1:7878/api/check                    # {"ok": true, "errors": []}
+curl "http://127.0.0.1:7878/api/still?at=4.2" -o f.png   # a real frame, full declared size
+curl -X POST "http://127.0.0.1:7878/api/render?mobile=1" -o out.mp4  # the actual encode
+```
+
+| endpoint | method | mirrors | notes |
+|---|---|---|---|
+| `/api/info` | GET | `showreel info` | JSON: title, `width`/`height`/`fps`, `duration`, `frameCount`, `scenes[]`, `audio[]` |
+| `/api/check` | GET | `showreel check` | `{"ok": bool, "errors": [string]}` — a JSON parse failure counts as one error |
+| `/api/still` | GET | `showreel still` | `?at=<seconds>`, full declared size (unlike `/api/frame`, which serves the studio's own `--scale` preview) — a PNG |
+| `/api/render` | POST | `showreel render` | `?scale=`, `?crf=`, `?mobile=1` for the 720p delivery cut instead of the master — streams the finished mp4 back and deletes its own scratch file |
+
+`/api/render` is the one endpoint worth pausing on: it runs the same
+`Renderer` + ffmpeg pipeline the CLI does, so it costs the same time and CPU,
+blocking the request until the file is ready, then reads the whole thing into
+memory to send it — fine for the seconds-to-tens-of-seconds previews this
+tool is built around, not designed for handing back a feature film.
+
+**Localhost by default, and that's load-bearing, not a suggestion.** `/api/render`
+runs ffmpeg and writes a file; reachable from a network, that is a remote
+code/resource-exhaustion surface, not a convenience. `StudioOptions::host`
+already defaults to `127.0.0.1` — the API rides that same default — and
+`showreel studio --host 0.0.0.0` (for previewing on another device on your
+own LAN) now also prints a startup warning naming exactly that risk, so
+opening it is a decision you see, not one that happens quietly.
+
+Proven, not just described: `tests/api_server.rs` starts a real server on a
+real socket and drives all four endpoints (`/api/render` included, over an
+actual TCP connection, skipped only when ffmpeg isn't on `PATH`) rather than
+calling the JSON-building functions directly.
+
 ## In the browser
 
 `showreel web-pack <film> -A <assets> -o dist` (needs `--features wasm`, and
