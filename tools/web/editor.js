@@ -592,6 +592,9 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
         ${thumbRef ? thumbImg(thumbRef.kind, thumbRef.name) : ''}
         <span class="label">${esc(scene.name || `Scene ${i + 1}`)}</span>
         <span class="meta">${starts[i].toFixed(1)}s · ${scene.duration.toFixed(1)}s</span>
+        <button class="mini-btn" data-act="scene-up" data-i="${i}" title="Move up">↑</button>
+        <button class="mini-btn" data-act="scene-down" data-i="${i}" title="Move down">↓</button>
+        <button class="mini-btn danger" data-act="scene-del" data-i="${i}" title="Delete">✕</button>
       </div>`;
     }
     const scene = getScene(f, currentSceneIndex());
@@ -685,8 +688,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     if (sel.kind === 'scene') {
       const scene = getScene(f, sel.i);
       inspectorEl.innerHTML = `<div class="pane">
-        <h2>Scene ${sel.i + 1} <button class="mini-btn" data-act="scene-up">↑</button><button class="mini-btn" data-act="scene-down">↓</button>
-          <button class="mini-btn danger" data-act="scene-del">Delete</button></h2>
+        <h2>Scene ${sel.i + 1} <button class="mini-btn danger" data-act="scene-del-selected">Delete</button></h2>
         ${fText('Name', 'name', scene.name || '')}
         ${fNumber('Duration (s)', 'duration', scene.duration, { step: 0.1, min: 0.1 })}
         ${fColor('Background', 'background', scene.background || '#080a0e')}
@@ -780,8 +782,67 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
   // ---- event wiring ----
 
   timelineEl.addEventListener('click', (e) => {
-    const selEl = e.target.closest('[data-sel]');
+    // `data-act` (a row's own inline ↑/↓/✕) before `data-sel` (the row
+    // itself): every inline action button lives *inside* a `data-sel` row,
+    // so checking select first would let `closest('[data-sel]')` match the
+    // ancestor row and treat every button click as "select this row" —
+    // which is exactly what made layer-up/layer-down/layer-del/audio-del
+    // silently do nothing before this fix (verified live: clicking ↑ on a
+    // layer row never moved it). Scene rows get inline ↑/↓/✕ for the same
+    // reason: previously only the scene *inspector* had them — one more
+    // consequence of the same ordering bug, since a scene row is a
+    // `data-sel` element too. See docs/youcut-study.md's "one structural
+    // inconsistency worth naming".
     const actEl = e.target.closest('[data-act]');
+    const f = film();
+    if (actEl) {
+      const act = actEl.dataset.act;
+      if (act === 'add-scene') { const i = addSceneAfter(f, sceneCount(f) - 1); select({ kind: 'scene', i }); notify(); }
+      else if (act === 'scene-up' || act === 'scene-down') {
+        const i = parseInt(actEl.dataset.i, 10);
+        const j = act === 'scene-up' ? i - 1 : i + 1;
+        // Always land selection on the moved scene itself rather than
+        // trying to carry a stale layer index across the swap — `moveScene`
+        // exchanges the two scenes' whole layer lists, so a layer index
+        // that made sense before the move may point at something unrelated
+        // after it.
+        if (moveScene(f, i, act === 'scene-up' ? -1 : 1)) select({ kind: 'scene', i: j });
+        notify();
+      } else if (act === 'scene-del') {
+        const i = parseInt(actEl.dataset.i, 10);
+        const wasShowing = (sel?.kind === 'scene' || sel?.kind === 'layer') && sel.i === i;
+        deleteScene(f, i);
+        if (wasShowing) select(null); else notify();
+      } else if (act === 'toggle-add-layer') { document.getElementById('add-layer-list').hidden = !document.getElementById('add-layer-list').hidden; }
+      else if (act === 'add-layer') {
+        const scene = getScene(f, currentSceneIndex());
+        scene.layers.push(newLayer(actEl.dataset.kind));
+        select({ kind: 'layer', i: currentSceneIndex(), j: scene.layers.length - 1 });
+        notify();
+      } else if (act === 'layer-up' || act === 'layer-down') {
+        const scene = getScene(f, currentSceneIndex());
+        const j = parseInt(actEl.dataset.j, 10);
+        const k = act === 'layer-up' ? j - 1 : j + 1;
+        if (k >= 0 && k < scene.layers.length) {
+          [scene.layers[j], scene.layers[k]] = [scene.layers[k], scene.layers[j]];
+          if (sel?.kind === 'layer' && sel.j === j) sel = { ...sel, j: k };
+        }
+        notify(); renderTimeline();
+      } else if (act === 'layer-del') {
+        const scene = getScene(f, currentSceneIndex());
+        scene.layers.splice(parseInt(actEl.dataset.j, 10), 1);
+        select(null); notify();
+      } else if (act === 'add-audio') {
+        f.audio.push(newAudio());
+        select({ kind: 'audio', i: f.audio.length - 1 });
+        notify();
+      } else if (act === 'audio-del') {
+        f.audio.splice(parseInt(actEl.dataset.i, 10), 1);
+        select(null); notify();
+      }
+      return;
+    }
+    const selEl = e.target.closest('[data-sel]');
     if (selEl) {
       const [kind, idx] = selEl.dataset.sel.split(':');
       const i = parseInt(idx, 10);
@@ -789,40 +850,6 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       else if (kind === 't') select({ kind: 'transition', i });
       else if (kind === 'l') select({ kind: 'layer', i: currentSceneIndex(), j: i });
       else if (kind === 'a') select({ kind: 'audio', i });
-      return;
-    }
-    if (!actEl) return;
-    const act = actEl.dataset.act;
-    const f = film();
-    if (act === 'add-scene') { const i = addSceneAfter(f, sceneCount(f) - 1); select({ kind: 'scene', i }); notify(); }
-    // scene-up/scene-down/scene-del: handled by inspectorEl's own listener —
-    // those buttons render inside the scene inspector, not this panel.
-    else if (act === 'toggle-add-layer') { document.getElementById('add-layer-list').hidden = !document.getElementById('add-layer-list').hidden; }
-    else if (act === 'add-layer') {
-      const scene = getScene(f, currentSceneIndex());
-      scene.layers.push(newLayer(actEl.dataset.kind));
-      select({ kind: 'layer', i: currentSceneIndex(), j: scene.layers.length - 1 });
-      notify();
-    } else if (act === 'layer-up' || act === 'layer-down') {
-      const scene = getScene(f, currentSceneIndex());
-      const j = parseInt(actEl.dataset.j, 10);
-      const k = act === 'layer-up' ? j - 1 : j + 1;
-      if (k >= 0 && k < scene.layers.length) {
-        [scene.layers[j], scene.layers[k]] = [scene.layers[k], scene.layers[j]];
-        if (sel?.kind === 'layer' && sel.j === j) sel = { ...sel, j: k };
-      }
-      notify(); renderTimeline();
-    } else if (act === 'layer-del') {
-      const scene = getScene(f, currentSceneIndex());
-      scene.layers.splice(parseInt(actEl.dataset.j, 10), 1);
-      select(null); notify();
-    } else if (act === 'add-audio') {
-      f.audio.push(newAudio());
-      select({ kind: 'audio', i: f.audio.length - 1 });
-      notify();
-    } else if (act === 'audio-del') {
-      f.audio.splice(parseInt(actEl.dataset.i, 10), 1);
-      select(null); notify();
     }
   });
 
@@ -895,15 +922,12 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
   inspectorEl.addEventListener('click', (e) => {
     const actEl = e.target.closest('[data-act]');
     if (!actEl) return;
-    // The scene ↑/↓/Delete buttons live in this panel (they're part of the
-    // scene inspector), not the timeline panel, so they're handled here
-    // rather than in `timelineEl`'s listener even though every other
-    // scene/layer mutation is.
+    // Reorder is inline-only now (the scene row in the timeline panel, same
+    // as a layer row) — this panel keeps only Delete, matching the layer
+    // inspector's own "Delete here too" pattern (`layer-del-selected`).
     const f = film();
     const act = actEl.dataset.act;
-    if (act === 'scene-up') { moveScene(f, sel.i, -1) && select({ kind: 'scene', i: sel.i - 1 }); notify(); return; }
-    if (act === 'scene-down') { moveScene(f, sel.i, 1) && select({ kind: 'scene', i: sel.i + 1 }); notify(); return; }
-    if (act === 'scene-del') { deleteScene(f, sel.i); select(null); notify(); return; }
+    if (act === 'scene-del-selected') { deleteScene(f, sel.i); select(null); notify(); return; }
     if (act === 'layer-del-selected') {
       const scene = getScene(f, sel.i);
       scene.layers.splice(sel.j, 1);
