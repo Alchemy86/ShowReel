@@ -287,6 +287,41 @@ function fText(label, path, value) {
   const id = fieldId(path);
   return `<div class="field"><label for="${id}">${esc(label)}</label><input id="${id}" type="text" data-bind="${path}" data-kind="string" value="${esc(value)}"></div>`;
 }
+// An asset-reference field: a text input backed by a `<datalist>` of names
+// the film already uses, so picking one is a click on a suggestion instead
+// of typing a filename from memory (docs/youcut-study.md) — still a plain
+// text field underneath (a `<datalist>` never blocks a value that isn't in
+// its list), so pointing at a not-yet-referenced asset still works exactly
+// as it always did.
+function fAssetText(label, path, value, knownNames) {
+  const id = fieldId(path);
+  const listId = `${id}-list`;
+  const options = (knownNames || []).map((n) => `<option value="${esc(n)}"></option>`).join('');
+  return `<div class="field"><label for="${id}">${esc(label)}</label>
+    <input id="${id}" type="text" list="${listId}" data-bind="${path}" data-kind="string" value="${esc(value)}">
+    <datalist id="${listId}">${options}</datalist>
+  </div>`;
+}
+// Every distinct asset name already used by a `still`/`clip` layer of this
+// same kind, in declaration order — the suggestion list for `fAssetText`.
+function knownAssetNames(f, kind) {
+  const names = [];
+  const seen = new Set();
+  for (let i = 0; i < sceneCount(f); i++) {
+    for (const l of getScene(f, i).layers) {
+      if (l.type === kind && l.asset && !seen.has(l.asset)) { seen.add(l.asset); names.push(l.asset); }
+    }
+  }
+  return names;
+}
+function knownAudioAssetNames(f) {
+  const names = [];
+  const seen = new Set();
+  for (const a of f.audio) {
+    if (a.asset && !seen.has(a.asset)) { seen.add(a.asset); names.push(a.asset); }
+  }
+  return names;
+}
 function fColor(label, path, value) {
   const id = fieldId(path);
   const hex = /^#[0-9a-fA-F]{6}/.test(value || '') ? value.slice(0, 7) : '#ffffff';
@@ -435,7 +470,7 @@ function renderPositionPicker(layer) {
 
 // ---- per-content-type inspector fields ----
 
-function renderContentFields(layer, getClipDuration) {
+function renderContentFields(layer, getClipDuration, f) {
   switch (layer.type) {
     case 'solid':
       return fColor('Colour', 'colour', layer.colour);
@@ -447,12 +482,12 @@ function renderContentFields(layer, getClipDuration) {
       return fRow(fNumber('Height (frac)', 'height', layer.height, { step: 0.02 }), fNumber('Strength', 'strength', layer.strength, { step: 0.02 }))
         + fColor('Colour', 'colour', layer.colour);
     case 'still':
-      return fText('Asset', 'asset', layer.asset) + fSelect('Fit', 'fit', layer.fit, FITS)
+      return fAssetText('Asset', 'asset', layer.asset, knownAssetNames(f, 'still')) + fSelect('Fit', 'fit', layer.fit, FITS)
         + `<div class="hint">Camera moves aren't editable here yet — use Advanced JSON.</div>`;
     case 'clip': {
       const trim = layer.trim || [0, 0];
       const totalDuration = getClipDuration ? getClipDuration(layer.asset) : null;
-      return fText('Asset', 'asset', layer.asset) + fSelect('Fit', 'fit', layer.fit, FITS)
+      return fAssetText('Asset', 'asset', layer.asset, knownAssetNames(f, 'clip')) + fSelect('Fit', 'fit', layer.fit, FITS)
         + renderTrimWidget(trim, totalDuration)
         + `<details class="adv"><summary>More video options</summary>`
         + fRow(fNumber('Trim start (s)', 'trim.0', trim[0], { step: 0.1, min: 0 }), fNumber('Trim length (s)', 'trim.1', trim[1], { step: 0.1, min: 0.1 }))
@@ -685,7 +720,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       const positionable = DRAGGABLE_KINDS.has(layer.type);
       inspectorEl.innerHTML = `<div class="pane">
         <h2>${esc(layerDisplayName(layer))} <button class="mini-btn danger" data-act="layer-del-selected" title="Delete">Delete</button></h2>
-        ${renderContentFields(layer, getClipDuration)}
+        ${renderContentFields(layer, getClipDuration, f)}
       </div>
       <div class="pane">
         <h2>Effect</h2>
@@ -707,7 +742,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       const a = f.audio[sel.i];
       inspectorEl.innerHTML = `<div class="pane">
         <h2>Audio track ${sel.i + 1}</h2>
-        ${fText('Asset', 'asset', a.asset)}
+        ${fAssetText('Asset', 'asset', a.asset, knownAudioAssetNames(f))}
         ${fRow(fNumber('At (film s)', 'at', a.at, { step: 0.1, min: 0 }), fNumber('From (source s)', 'from', a.from, { step: 0.1, min: 0 }))}
         ${fNullableNumber('Duration (s)', 'duration', a.duration, { placeholder: 'to end of film', step: 0.1 })}
         ${fRow(fNumber('Fade in (s)', 'fade_in', a.fade_in, { step: 0.1, min: 0 }), fNumber('Fade out (s)', 'fade_out', a.fade_out, { step: 0.1, min: 0 }))}
