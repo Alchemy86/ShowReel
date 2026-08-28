@@ -1,0 +1,96 @@
+# cargo-deny standing supply-chain policy.
+#
+# Run with:  cargo deny check            (all sections)
+#            cargo deny check sources    (single section)
+# Wired into: tools/supplychain/scan.sh (the thorough, explicitly-invoked scan).
+#
+# Scope of THIS file (deliberately): source allow-listing, licence policy, and
+# duplicate detection. Known-vulnerability scanning is owned by cargo audit
+# (tools/supplychain/audit.sh) so there is one advisory gate, not two that drift;
+# the [advisories] section here is therefore tuned NOT to duplicate it.
+
+[graph]
+# Analyse the whole feature surface (this crate has cli/parallel/studio/mcp/wasm
+# optional features); everything in Cargo.lock should be in scope.
+all-features = true
+
+[output]
+feature-depth = 1
+
+# --- Advisories ------------------------------------------------------------
+# cargo audit is the primary known-vulnerability gate (see audit.sh). cargo-deny
+# still fails on a *security vulnerability* here as a backstop, but does not turn
+# the tree red for non-actionable "unmaintained" notices that have no safe
+# upgrade — those are reported by cargo audit as warnings already. Yanked crates
+# are surfaced as warnings.
+[advisories]
+yanked = "warn"
+# The two crates below are flagged "unmaintained" by RustSec with "no safe upgrade
+# available" (rustybuzz -> harfrust, ttf-parser -> skrifa are not drop-in). They
+# are text-rendering deps with no security vulnerability. cargo audit reports them
+# on every run; ignoring them HERE only prevents cargo-deny double-failing the
+# clean tree on a non-actionable notice. Reviewed 2026-08-28. Revisit if a safe
+# migration path appears.
+ignore = [
+  "RUSTSEC-2026-0206", # rustybuzz unmaintained
+  "RUSTSEC-2026-0192", # ttf-parser unmaintained
+]
+
+# --- Licences --------------------------------------------------------------
+# Permissive allow-list covering exactly what the current tree ships. A crate
+# carrying any other licence FAILS the check (see selftest for proof). Update
+# this list consciously when a new licence legitimately enters the tree.
+[licenses]
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.8
+# showreel itself is PolyForm-Noncommercial-1.0.0 (a source-available, non-OSI
+# licence). Allow it for OUR crate ONLY, scoped by name — a dependency carrying
+# this licence would still fail. Kept out of the `allow` list above on purpose so
+# it can never silently apply to a third-party crate.
+exceptions = [
+  { allow = ["PolyForm-Noncommercial-1.0.0"], name = "showreel" },
+]
+
+[licenses.private]
+# Also skip unpublished workspace members if `publish = false` is ever set.
+ignore = true
+
+# --- Bans / duplicates -----------------------------------------------------
+# Duplicate DETECTION: report when two versions of the same crate are linked, but
+# do not fail the build — the current tree legitimately carries a few (bitflags
+# v1/v2, png v0.17/v0.18, etc.) pulled by different deps. "warn" keeps this a
+# visible signal without a false failure on the clean tree.
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+# No crates are hard-banned by default; add a name here to forbid it outright
+# (e.g. a crate implicated in an incident). Proven in selftest.sh.
+deny = []
+skip = []
+skip-tree = []
+
+# --- Sources ---------------------------------------------------------------
+# The standing policy: crates.io ONLY. Any dependency from an unknown registry,
+# or ANY git or path source, FAILS the check — a git/path source slipping into
+# the tree is exactly how an unreviewed or malicious crate arrives. These are
+# "deny", not the template's "warn", on purpose (proven in selftest.sh).
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

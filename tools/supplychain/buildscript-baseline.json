@@ -1,0 +1,1013 @@
+{
+  "_comment": "Supply-chain build-script baseline. Regenerate with `tools/supplychain/guard.py --update-baseline` AFTER reviewing every build script that changed. Reviewed by a human is the point. Keys are 'name version'.",
+  "build_scripts": {
+    "anyhow 1.0.104": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "117: let mut cmd = Command::new(rustc.next().unwrap());",
+        "177: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "anyhow",
+      "sha256": "89d1baedcff59822ed692d3a33f131c211a213bdec33c83f68b54110d9c64223",
+      "size": 6936,
+      "version": "1.0.104"
+    },
+    "crc32fast 1.5.1": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "1: use std::{env, process::Command};",
+        "23: Command::new(env::var_os(\"RUSTC\")?)"
+      ],
+      "name": "crc32fast",
+      "sha256": "deb6052c4a586e8875ef677fe2d9e9dcfafebfa949803455ea8eff6e7dbde436",
+      "size": 1324,
+      "version": "1.5.1"
+    },
+    "crossbeam-deque 0.8.7": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "crossbeam-deque",
+      "sha256": "e40cf96d7d7b1650f9f53a3f578633a178324dbea1d905b3f71a75b45d3982a1",
+      "size": 443,
+      "version": "0.8.7"
+    },
+    "crossbeam-epoch 0.9.20": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "crossbeam-epoch",
+      "sha256": "e40cf96d7d7b1650f9f53a3f578633a178324dbea1d905b3f71a75b45d3982a1",
+      "size": 443,
+      "version": "0.9.20"
+    },
+    "crossbeam-utils 0.8.22": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "crossbeam-utils",
+      "sha256": "7a7f9e56ea7fb4f78c4e532b84b9d27be719d600e85eaeb3a2f4b79a4f0b419c",
+      "size": 1709,
+      "version": "0.8.22"
+    },
+    "getrandom 0.4.3": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "getrandom",
+      "sha256": "662faa06d7b2a9c5bea2c17a127a90e00b9f9b31105b0360da516e47cf816e95",
+      "size": 446,
+      "version": "0.4.3"
+    },
+    "iana-time-zone-haiku 0.1.2": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "iana-time-zone-haiku",
+      "sha256": "10304831100a60c1c2b990762dcfeb47dae8342cf9b54595bec94884e7de5784",
+      "size": 641,
+      "version": "0.1.2"
+    },
+    "libc 0.2.189": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "246: Some(ref wrapper) if wrapper.is_empty() => Command::new(rustc),",
+        "248: let mut cmd = Command::new(wrapper);",
+        "256: None => Command::new(rustc),",
+        "319: let output = Command::new(\"freebsd-version\").output().ok()?;",
+        "344: let output = Command::new(emcc).arg(\"-dumpversion\").output().ok()?;"
+      ],
+      "name": "libc",
+      "sha256": "e47f4a6762799b6e69cefc7acdb3291df828010e4de20609f7378f9c94ea29e6",
+      "size": 12792,
+      "version": "0.2.189"
+    },
+    "libm 0.2.16": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "libm",
+      "sha256": "85dfa93693f40e282ecf2d9a3115280d8f508f056063862add9e529b8143b71b",
+      "size": 470,
+      "version": "0.2.16"
+    },
+    "num-traits 0.2.19": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "num-traits",
+      "sha256": "d3969209fc1c9d201c66ed11820d0b328600d75b3971f8ceebeab04900bc0587",
+      "size": 160,
+      "version": "0.2.19"
+    },
+    "proc-macro2 1.0.107": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "190: let mut cmd = Command::new(rustc.next().unwrap());",
+        "250: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "proc-macro2",
+      "sha256": "baeb20b52f6b536be8657a566591a507bb2e34a45cf8baa42b135510a0c3c729",
+      "size": 10277,
+      "version": "1.0.107"
+    },
+    "quote 1.0.47": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "2: use std::process::Command;",
+        "25: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "quote",
+      "sha256": "cd6808c02e476b09a520105e2c6f6d325cccb1ecd542cbbcc836a0ae6f6fb0f1",
+      "size": 882,
+      "version": "1.0.47"
+    },
+    "rayon-core 1.13.0": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "rayon-core",
+      "sha256": "fa31cb198b772600d100a7c403ddedccef637d2e6b2da431fa7f02ca41307fc6",
+      "size": 278,
+      "version": "1.13.0"
+    },
+    "ref-cast 1.0.27": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "4: use std::process::Command;",
+        "43: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "ref-cast",
+      "sha256": "095bc1870b75dd5c80a68bddaae03d2de9f817e134b026ebf3f63e0ff81cf5ca",
+      "size": 1288,
+      "version": "1.0.27"
+    },
+    "rmcp 3.1.4": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "17: let _ = std::process::Command::new(\"git\")"
+      ],
+      "name": "rmcp",
+      "sha256": "31b905abf91292bab290271e993e347e06a1944e6305f742f69dbd01e6b89349",
+      "size": 858,
+      "version": "3.1.4"
+    },
+    "rustversion 1.0.23": {
+      "build_script": "build/build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "30: command = Command::new(&rustc);",
+        "33: command = Command::new(wrapped_rustc.next().unwrap());"
+      ],
+      "name": "rustversion",
+      "sha256": "4438b108d5b198ca43ef0a78509da89861020674abd05166addd1c3058afbfa6",
+      "size": 4057,
+      "version": "1.0.23"
+    },
+    "serde 1.0.229": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "4: use std::process::Command;",
+        "62: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "serde",
+      "sha256": "e2ea6a7a82f5404c3e28cb055883c737ee7903367a10206fbb47b75c009f0eb3",
+      "size": 2471,
+      "version": "1.0.229"
+    },
+    "serde_core 1.0.229": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "4: use std::process::Command;",
+        "106: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "serde_core",
+      "sha256": "7bc6b1eec8913ff4cd8e4b9b92cd04a82a4f38beb30a0b73a64c1e6e49f07b5f",
+      "size": 4252,
+      "version": "1.0.229"
+    },
+    "serde_json 1.0.151": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "serde_json",
+      "sha256": "a681e754be844c7dbef957f5d2d00b01f37c5dca160ef1055a8d8f975697a881",
+      "size": 1206,
+      "version": "1.0.151"
+    },
+    "thiserror 2.0.20": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "122: let mut cmd = Command::new(rustc.next().unwrap());",
+        "181: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "thiserror",
+      "sha256": "ccc38283604f99237ad2333bbe395259e29fdf2ff4e04a60a95de9e4499c09a3",
+      "size": 6923,
+      "version": "2.0.20"
+    },
+    "wasm-bindgen 0.2.127": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": false
+      },
+      "invokes": [],
+      "name": "wasm-bindgen",
+      "sha256": "33c90a6eb1745c53f9047e0ecde135b249b0ea3d9e1a2a40c9610a33f225e6c9",
+      "size": 1732,
+      "version": "0.2.127"
+    },
+    "wasm-bindgen-shared 0.2.127": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "5: use std::process::Command;",
+        "10: let rev = Command::new(\"git\")"
+      ],
+      "name": "wasm-bindgen-shared",
+      "sha256": "cc562769f4d55da465e081bb3187502bab20beb4704f22cc7d07be5ba4b765ae",
+      "size": 1099,
+      "version": "0.2.127"
+    },
+    "zmij 1.0.23": {
+      "build_script": "build.rs",
+      "caps": {
+        "network": false,
+        "process_exec": true
+      },
+      "invokes": [
+        "31: let output = Command::new(rustc).arg(\"--version\").output().ok()?;"
+      ],
+      "name": "zmij",
+      "sha256": "ad320bc635887879bdbbf1b9322da4a157ec2c5a4243bd7c2cf9b6884a3b2a41",
+      "size": 1362,
+      "version": "1.0.23"
+    }
+  },
+  "crates": {
+    "adler2 2.0.1": {
+      "has_build": false,
+      "name": "adler2",
+      "version": "2.0.1"
+    },
+    "android_system_properties 0.1.6": {
+      "has_build": false,
+      "name": "android_system_properties",
+      "version": "0.1.6"
+    },
+    "anstream 1.0.0": {
+      "has_build": false,
+      "name": "anstream",
+      "version": "1.0.0"
+    },
+    "anstyle 1.0.14": {
+      "has_build": false,
+      "name": "anstyle",
+      "version": "1.0.14"
+    },
+    "anstyle-parse 1.0.0": {
+      "has_build": false,
+      "name": "anstyle-parse",
+      "version": "1.0.0"
+    },
+    "anstyle-query 1.1.5": {
+      "has_build": false,
+      "name": "anstyle-query",
+      "version": "1.1.5"
+    },
+    "anstyle-wincon 3.0.11": {
+      "has_build": false,
+      "name": "anstyle-wincon",
+      "version": "3.0.11"
+    },
+    "anyhow 1.0.104": {
+      "has_build": true,
+      "name": "anyhow",
+      "version": "1.0.104"
+    },
+    "arrayref 0.3.9": {
+      "has_build": false,
+      "name": "arrayref",
+      "version": "0.3.9"
+    },
+    "arrayvec 0.7.8": {
+      "has_build": false,
+      "name": "arrayvec",
+      "version": "0.7.8"
+    },
+    "ascii 1.1.0": {
+      "has_build": false,
+      "name": "ascii",
+      "version": "1.1.0"
+    },
+    "autocfg 1.5.1": {
+      "has_build": false,
+      "name": "autocfg",
+      "version": "1.5.1"
+    },
+    "base64 0.22.1": {
+      "has_build": false,
+      "name": "base64",
+      "version": "0.22.1"
+    },
+    "bitflags 1.3.2": {
+      "has_build": false,
+      "name": "bitflags",
+      "version": "1.3.2"
+    },
+    "bitflags 2.13.1": {
+      "has_build": false,
+      "name": "bitflags",
+      "version": "2.13.1"
+    },
+    "bumpalo 3.20.3": {
+      "has_build": false,
+      "name": "bumpalo",
+      "version": "3.20.3"
+    },
+    "bytemuck 1.25.2": {
+      "has_build": false,
+      "name": "bytemuck",
+      "version": "1.25.2"
+    },
+    "byteorder-lite 0.1.0": {
+      "has_build": false,
+      "name": "byteorder-lite",
+      "version": "0.1.0"
+    },
+    "bytes 1.12.1": {
+      "has_build": false,
+      "name": "bytes",
+      "version": "1.12.1"
+    },
+    "cc 1.4.4": {
+      "has_build": false,
+      "name": "cc",
+      "version": "1.4.4"
+    },
+    "cfg-if 1.0.4": {
+      "has_build": false,
+      "name": "cfg-if",
+      "version": "1.0.4"
+    },
+    "chrono 0.4.45": {
+      "has_build": false,
+      "name": "chrono",
+      "version": "0.4.45"
+    },
+    "chunked_transfer 1.5.0": {
+      "has_build": false,
+      "name": "chunked_transfer",
+      "version": "1.5.0"
+    },
+    "clap 4.6.6": {
+      "has_build": false,
+      "name": "clap",
+      "version": "4.6.6"
+    },
+    "clap_builder 4.6.6": {
+      "has_build": false,
+      "name": "clap_builder",
+      "version": "4.6.6"
+    },
+    "clap_derive 4.6.4": {
+      "has_build": false,
+      "name": "clap_derive",
+      "version": "4.6.4"
+    },
+    "clap_lex 1.1.0": {
+      "has_build": false,
+      "name": "clap_lex",
+      "version": "1.1.0"
+    },
+    "colorchoice 1.0.5": {
+      "has_build": false,
+      "name": "colorchoice",
+      "version": "1.0.5"
+    },
+    "core-foundation-sys 0.8.7": {
+      "has_build": false,
+      "name": "core-foundation-sys",
+      "version": "0.8.7"
+    },
+    "core_maths 0.1.1": {
+      "has_build": false,
+      "name": "core_maths",
+      "version": "0.1.1"
+    },
+    "crc32fast 1.5.1": {
+      "has_build": true,
+      "name": "crc32fast",
+      "version": "1.5.1"
+    },
+    "crossbeam-deque 0.8.7": {
+      "has_build": true,
+      "name": "crossbeam-deque",
+      "version": "0.8.7"
+    },
+    "crossbeam-epoch 0.9.20": {
+      "has_build": true,
+      "name": "crossbeam-epoch",
+      "version": "0.9.20"
+    },
+    "crossbeam-utils 0.8.22": {
+      "has_build": true,
+      "name": "crossbeam-utils",
+      "version": "0.8.22"
+    },
+    "darling 0.24.1": {
+      "has_build": false,
+      "name": "darling",
+      "version": "0.24.1"
+    },
+    "darling_core 0.24.1": {
+      "has_build": false,
+      "name": "darling_core",
+      "version": "0.24.1"
+    },
+    "darling_macro 0.24.1": {
+      "has_build": false,
+      "name": "darling_macro",
+      "version": "0.24.1"
+    },
+    "dyn-clone 1.0.20": {
+      "has_build": false,
+      "name": "dyn-clone",
+      "version": "1.0.20"
+    },
+    "either 1.18.0": {
+      "has_build": false,
+      "name": "either",
+      "version": "1.18.0"
+    },
+    "equivalent 1.0.2": {
+      "has_build": false,
+      "name": "equivalent",
+      "version": "1.0.2"
+    },
+    "fdeflate 0.3.7": {
+      "has_build": false,
+      "name": "fdeflate",
+      "version": "0.3.7"
+    },
+    "find-msvc-tools 0.1.11": {
+      "has_build": false,
+      "name": "find-msvc-tools",
+      "version": "0.1.11"
+    },
+    "flate2 1.1.9": {
+      "has_build": false,
+      "name": "flate2",
+      "version": "1.1.9"
+    },
+    "futures 0.3.34": {
+      "has_build": false,
+      "name": "futures",
+      "version": "0.3.34"
+    },
+    "futures-channel 0.3.34": {
+      "has_build": false,
+      "name": "futures-channel",
+      "version": "0.3.34"
+    },
+    "futures-core 0.3.34": {
+      "has_build": false,
+      "name": "futures-core",
+      "version": "0.3.34"
+    },
+    "futures-executor 0.3.34": {
+      "has_build": false,
+      "name": "futures-executor",
+      "version": "0.3.34"
+    },
+    "futures-io 0.3.34": {
+      "has_build": false,
+      "name": "futures-io",
+      "version": "0.3.34"
+    },
+    "futures-macro 0.3.34": {
+      "has_build": false,
+      "name": "futures-macro",
+      "version": "0.3.34"
+    },
+    "futures-sink 0.3.34": {
+      "has_build": false,
+      "name": "futures-sink",
+      "version": "0.3.34"
+    },
+    "futures-task 0.3.34": {
+      "has_build": false,
+      "name": "futures-task",
+      "version": "0.3.34"
+    },
+    "futures-util 0.3.34": {
+      "has_build": false,
+      "name": "futures-util",
+      "version": "0.3.34"
+    },
+    "getrandom 0.4.3": {
+      "has_build": true,
+      "name": "getrandom",
+      "version": "0.4.3"
+    },
+    "hashbrown 0.17.1": {
+      "has_build": false,
+      "name": "hashbrown",
+      "version": "0.17.1"
+    },
+    "heck 0.5.0": {
+      "has_build": false,
+      "name": "heck",
+      "version": "0.5.0"
+    },
+    "httpdate 1.0.3": {
+      "has_build": false,
+      "name": "httpdate",
+      "version": "1.0.3"
+    },
+    "iana-time-zone 0.1.65": {
+      "has_build": false,
+      "name": "iana-time-zone",
+      "version": "0.1.65"
+    },
+    "iana-time-zone-haiku 0.1.2": {
+      "has_build": true,
+      "name": "iana-time-zone-haiku",
+      "version": "0.1.2"
+    },
+    "ident_case 1.0.1": {
+      "has_build": false,
+      "name": "ident_case",
+      "version": "1.0.1"
+    },
+    "image 0.25.10": {
+      "has_build": false,
+      "name": "image",
+      "version": "0.25.10"
+    },
+    "indexmap 2.14.0": {
+      "has_build": false,
+      "name": "indexmap",
+      "version": "2.14.0"
+    },
+    "is_terminal_polyfill 1.70.2": {
+      "has_build": false,
+      "name": "is_terminal_polyfill",
+      "version": "1.70.2"
+    },
+    "itoa 1.0.18": {
+      "has_build": false,
+      "name": "itoa",
+      "version": "1.0.18"
+    },
+    "js-sys 0.3.104": {
+      "has_build": false,
+      "name": "js-sys",
+      "version": "0.3.104"
+    },
+    "jsonc-parser 0.33.1": {
+      "has_build": false,
+      "name": "jsonc-parser",
+      "version": "0.33.1"
+    },
+    "libc 0.2.189": {
+      "has_build": true,
+      "name": "libc",
+      "version": "0.2.189"
+    },
+    "libm 0.2.16": {
+      "has_build": true,
+      "name": "libm",
+      "version": "0.2.16"
+    },
+    "log 0.4.34": {
+      "has_build": false,
+      "name": "log",
+      "version": "0.4.34"
+    },
+    "memchr 2.8.3": {
+      "has_build": false,
+      "name": "memchr",
+      "version": "2.8.3"
+    },
+    "miniz_oxide 0.8.9": {
+      "has_build": false,
+      "name": "miniz_oxide",
+      "version": "0.8.9"
+    },
+    "moxcms 0.8.1": {
+      "has_build": false,
+      "name": "moxcms",
+      "version": "0.8.1"
+    },
+    "num-traits 0.2.19": {
+      "has_build": true,
+      "name": "num-traits",
+      "version": "0.2.19"
+    },
+    "once_cell 1.21.4": {
+      "has_build": false,
+      "name": "once_cell",
+      "version": "1.21.4"
+    },
+    "once_cell_polyfill 1.70.2": {
+      "has_build": false,
+      "name": "once_cell_polyfill",
+      "version": "1.70.2"
+    },
+    "pastey 0.2.3": {
+      "has_build": false,
+      "name": "pastey",
+      "version": "0.2.3"
+    },
+    "pin-project-lite 0.2.17": {
+      "has_build": false,
+      "name": "pin-project-lite",
+      "version": "0.2.17"
+    },
+    "png 0.17.16": {
+      "has_build": false,
+      "name": "png",
+      "version": "0.17.16"
+    },
+    "png 0.18.1": {
+      "has_build": false,
+      "name": "png",
+      "version": "0.18.1"
+    },
+    "proc-macro2 1.0.107": {
+      "has_build": true,
+      "name": "proc-macro2",
+      "version": "1.0.107"
+    },
+    "pxfm 0.1.30": {
+      "has_build": false,
+      "name": "pxfm",
+      "version": "0.1.30"
+    },
+    "quote 1.0.47": {
+      "has_build": true,
+      "name": "quote",
+      "version": "1.0.47"
+    },
+    "r-efi 6.0.0": {
+      "has_build": false,
+      "name": "r-efi",
+      "version": "6.0.0"
+    },
+    "rayon 1.12.0": {
+      "has_build": false,
+      "name": "rayon",
+      "version": "1.12.0"
+    },
+    "rayon-core 1.13.0": {
+      "has_build": true,
+      "name": "rayon-core",
+      "version": "1.13.0"
+    },
+    "ref-cast 1.0.27": {
+      "has_build": true,
+      "name": "ref-cast",
+      "version": "1.0.27"
+    },
+    "ref-cast-impl 1.0.27": {
+      "has_build": false,
+      "name": "ref-cast-impl",
+      "version": "1.0.27"
+    },
+    "rmcp 3.1.4": {
+      "has_build": true,
+      "name": "rmcp",
+      "version": "3.1.4"
+    },
+    "rmcp-macros 3.1.4": {
+      "has_build": false,
+      "name": "rmcp-macros",
+      "version": "3.1.4"
+    },
+    "rustversion 1.0.23": {
+      "has_build": true,
+      "name": "rustversion",
+      "version": "1.0.23"
+    },
+    "rustybuzz 0.20.1": {
+      "has_build": false,
+      "name": "rustybuzz",
+      "version": "0.20.1"
+    },
+    "schemars 1.2.2": {
+      "has_build": false,
+      "name": "schemars",
+      "version": "1.2.2"
+    },
+    "schemars_derive 1.2.2": {
+      "has_build": false,
+      "name": "schemars_derive",
+      "version": "1.2.2"
+    },
+    "serde 1.0.229": {
+      "has_build": true,
+      "name": "serde",
+      "version": "1.0.229"
+    },
+    "serde_core 1.0.229": {
+      "has_build": true,
+      "name": "serde_core",
+      "version": "1.0.229"
+    },
+    "serde_derive 1.0.229": {
+      "has_build": false,
+      "name": "serde_derive",
+      "version": "1.0.229"
+    },
+    "serde_derive_internals 0.30.0": {
+      "has_build": false,
+      "name": "serde_derive_internals",
+      "version": "0.30.0"
+    },
+    "serde_json 1.0.151": {
+      "has_build": true,
+      "name": "serde_json",
+      "version": "1.0.151"
+    },
+    "shlex 2.0.1": {
+      "has_build": false,
+      "name": "shlex",
+      "version": "2.0.1"
+    },
+    "simd-adler32 0.3.10": {
+      "has_build": false,
+      "name": "simd-adler32",
+      "version": "0.3.10"
+    },
+    "slab 0.4.12": {
+      "has_build": false,
+      "name": "slab",
+      "version": "0.4.12"
+    },
+    "smallvec 1.15.2": {
+      "has_build": false,
+      "name": "smallvec",
+      "version": "1.15.2"
+    },
+    "strict-num 0.1.1": {
+      "has_build": false,
+      "name": "strict-num",
+      "version": "0.1.1"
+    },
+    "strsim 0.11.1": {
+      "has_build": false,
+      "name": "strsim",
+      "version": "0.11.1"
+    },
+    "syn 2.0.119": {
+      "has_build": false,
+      "name": "syn",
+      "version": "2.0.119"
+    },
+    "syn 3.0.4": {
+      "has_build": false,
+      "name": "syn",
+      "version": "3.0.4"
+    },
+    "thiserror 2.0.20": {
+      "has_build": true,
+      "name": "thiserror",
+      "version": "2.0.20"
+    },
+    "thiserror-impl 2.0.20": {
+      "has_build": false,
+      "name": "thiserror-impl",
+      "version": "2.0.20"
+    },
+    "tiny-skia 0.11.4": {
+      "has_build": false,
+      "name": "tiny-skia",
+      "version": "0.11.4"
+    },
+    "tiny-skia-path 0.11.4": {
+      "has_build": false,
+      "name": "tiny-skia-path",
+      "version": "0.11.4"
+    },
+    "tiny_http 0.12.0": {
+      "has_build": false,
+      "name": "tiny_http",
+      "version": "0.12.0"
+    },
+    "tokio 1.53.1": {
+      "has_build": false,
+      "name": "tokio",
+      "version": "1.53.1"
+    },
+    "tokio-macros 2.7.2": {
+      "has_build": false,
+      "name": "tokio-macros",
+      "version": "2.7.2"
+    },
+    "tokio-util 0.7.19": {
+      "has_build": false,
+      "name": "tokio-util",
+      "version": "0.7.19"
+    },
+    "tracing 0.1.44": {
+      "has_build": false,
+      "name": "tracing",
+      "version": "0.1.44"
+    },
+    "tracing-attributes 0.1.31": {
+      "has_build": false,
+      "name": "tracing-attributes",
+      "version": "0.1.31"
+    },
+    "tracing-core 0.1.36": {
+      "has_build": false,
+      "name": "tracing-core",
+      "version": "0.1.36"
+    },
+    "ttf-parser 0.25.1": {
+      "has_build": false,
+      "name": "ttf-parser",
+      "version": "0.25.1"
+    },
+    "unicode-bidi-mirroring 0.4.0": {
+      "has_build": false,
+      "name": "unicode-bidi-mirroring",
+      "version": "0.4.0"
+    },
+    "unicode-ccc 0.4.0": {
+      "has_build": false,
+      "name": "unicode-ccc",
+      "version": "0.4.0"
+    },
+    "unicode-ident 1.0.24": {
+      "has_build": false,
+      "name": "unicode-ident",
+      "version": "1.0.24"
+    },
+    "unicode-properties 0.1.4": {
+      "has_build": false,
+      "name": "unicode-properties",
+      "version": "0.1.4"
+    },
+    "unicode-script 0.5.8": {
+      "has_build": false,
+      "name": "unicode-script",
+      "version": "0.5.8"
+    },
+    "utf8parse 0.2.2": {
+      "has_build": false,
+      "name": "utf8parse",
+      "version": "0.2.2"
+    },
+    "uuid 1.26.0": {
+      "has_build": false,
+      "name": "uuid",
+      "version": "1.26.0"
+    },
+    "wasm-bindgen 0.2.127": {
+      "has_build": true,
+      "name": "wasm-bindgen",
+      "version": "0.2.127"
+    },
+    "wasm-bindgen-macro 0.2.127": {
+      "has_build": false,
+      "name": "wasm-bindgen-macro",
+      "version": "0.2.127"
+    },
+    "wasm-bindgen-macro-support 0.2.127": {
+      "has_build": false,
+      "name": "wasm-bindgen-macro-support",
+      "version": "0.2.127"
+    },
+    "wasm-bindgen-shared 0.2.127": {
+      "has_build": true,
+      "name": "wasm-bindgen-shared",
+      "version": "0.2.127"
+    },
+    "windows-core 0.62.2": {
+      "has_build": false,
+      "name": "windows-core",
+      "version": "0.62.2"
+    },
+    "windows-implement 0.60.2": {
+      "has_build": false,
+      "name": "windows-implement",
+      "version": "0.60.2"
+    },
+    "windows-interface 0.59.3": {
+      "has_build": false,
+      "name": "windows-interface",
+      "version": "0.59.3"
+    },
+    "windows-link 0.2.1": {
+      "has_build": false,
+      "name": "windows-link",
+      "version": "0.2.1"
+    },
+    "windows-result 0.4.1": {
+      "has_build": false,
+      "name": "windows-result",
+      "version": "0.4.1"
+    },
+    "windows-strings 0.5.1": {
+      "has_build": false,
+      "name": "windows-strings",
+      "version": "0.5.1"
+    },
+    "windows-sys 0.61.2": {
+      "has_build": false,
+      "name": "windows-sys",
+      "version": "0.61.2"
+    },
+    "zmij 1.0.23": {
+      "has_build": true,
+      "name": "zmij",
+      "version": "1.0.23"
+    },
+    "zune-core 0.5.3": {
+      "has_build": false,
+      "name": "zune-core",
+      "version": "0.5.3"
+    },
+    "zune-jpeg 0.5.15": {
+      "has_build": false,
+      "name": "zune-jpeg",
+      "version": "0.5.15"
+    }
+  }
+}

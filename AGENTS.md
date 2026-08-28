@@ -558,6 +558,18 @@ got before this round of features touched it.
   in-process. `cargo clippy --features cli,parallel,studio,mcp,wasm` is the combined
   check this project runs before landing changes that touch more than one optional
   feature, since features can compile clean individually and still conflict combined.
+- **Supply-chain gate** (`tools/supplychain/`, `deny.toml`): three gates against a
+  malicious/unreviewed crate — `cargo audit` (known vulns), a stdlib-only build-script
+  drift + typosquat guard (`guard.py`, the half that would have fired on the 2026-08-20
+  arrayref attack before any advisory), and `cargo deny` (crates.io-only sources,
+  licence allow-list, duplicate detection). `tools/supplychain/check.sh` is the fast
+  offline gate (~0.09s, wire it as a pre-push hook via `install-hooks.sh`);
+  `scan.sh` is the full networked scan. The committed `buildscript-baseline.json` is
+  the reviewed state — when a build-script change is legitimate, re-run `guard.py
+  --update-baseline` (that is the workflow, not a way to silence it). Every gate is
+  proven to fire by `selftest.sh`/`deny-selftest.sh`; `audit.sh` reports exit 3 (loud)
+  rather than a false green when the advisory DB can't be reached. See
+  `tools/supplychain/README.md`, including its honest "what each does NOT catch".
 
 ## Maintaining this file
 
