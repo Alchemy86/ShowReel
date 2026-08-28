@@ -561,10 +561,20 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       </div>`;
 
     const assetRows = renderAssetRows(f);
-    const audioRows = f.audio.map((a, i) => `<div class="chip-row ${sel?.kind === 'audio' && sel.i === i ? 'selected' : ''}" data-sel="a:${i}">
-        <span class="label">${esc(a.asset || '(no asset)')}</span><span class="meta">${a.at}s</span>
+    // `Film::to_json` (src/timeline.rs) skips a zero `at` and a `null`
+    // duration entirely rather than writing them — a wire-format film with
+    // an unset numeric field leaves it `undefined` in this object (see this
+    // file's module doc), which a bare template literal renders as the
+    // string "undefined" concatenated onto its unit ("undefineds"). Default
+    // explicitly rather than trusting the field to exist.
+    const audioRows = f.audio.map((a, i) => {
+      const at = a.at || 0;
+      const dur = a.duration == null ? 'to end' : `${a.duration}s`;
+      return `<div class="chip-row ${sel?.kind === 'audio' && sel.i === i ? 'selected' : ''}" data-sel="a:${i}">
+        <span class="label">${esc(a.asset || '(no asset)')}</span><span class="meta">${at}s · ${dur}</span>
         <button class="mini-btn danger" data-act="audio-del" data-i="${i}">✕</button>
-      </div>`).join('') || '<div class="empty-hint">No audio tracks.</div>';
+      </div>`;
+    }).join('') || '<div class="empty-hint">No audio tracks.</div>';
 
     timelineEl.innerHTML = `
       <div class="pane">

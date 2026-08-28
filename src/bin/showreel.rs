@@ -211,7 +211,7 @@ fn load(path: &Path) -> Result<Film> {
         for e in &errs {
             eprintln!("error: {e}");
         }
-        bail!("{} problem(s) in {}", errs.len(), path.display());
+        bail!("{} in {}", showreel::timeline::describe_problem_count(errs.len()), path.display());
     }
     Ok(film)
 }
@@ -634,7 +634,7 @@ fn cmd_check(film_path: PathBuf) -> Result<()> {
     for e in &errs {
         eprintln!("error: {e}");
     }
-    bail!("{} problem(s)", errs.len());
+    bail!("{}", showreel::timeline::describe_problem_count(errs.len()));
 }
 
 #[cfg(feature = "studio")]

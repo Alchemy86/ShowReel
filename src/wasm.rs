@@ -182,7 +182,11 @@ pub unsafe extern "C" fn sr_load_film(ptr: *mut u8, len: u32, scale: f64) -> i32
         Ok(film) => {
             let errs = film.validate();
             if !errs.is_empty() {
-                set_error(format!("{} problem(s): {}", errs.len(), errs.join("; ")));
+                set_error(format!(
+                    "{}: {}",
+                    crate::timeline::describe_problem_count(errs.len()),
+                    errs.join("; ")
+                ));
                 return 0;
             }
             let preview = scale_keep_clip_decode(&film, scale.clamp(0.05, 4.0));

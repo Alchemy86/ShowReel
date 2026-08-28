@@ -465,7 +465,15 @@ impl Film {
         }
         let total = self.duration();
         for (i, a) in self.audio.iter().enumerate() {
-            errs.extend(a.validate(&format!("audio {i} ({})", a.asset), total));
+            // An empty `asset` is itself one of the errors `a.validate` is
+            // about to report — parenthesising it as `audio 2 ()` reads as
+            // unfinished rather than as the missing-asset error it already is.
+            let label = if a.asset.trim().is_empty() {
+                format!("audio {i}")
+            } else {
+                format!("audio {i} ({})", a.asset)
+            };
+            errs.extend(a.validate(&label, total));
         }
         errs
     }
@@ -491,6 +499,13 @@ impl Film {
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
         Film::from_json(&s).map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))
     }
+}
+
+/// "1 problem" / "N problems" — proper pluralisation for a
+/// [`Film::validate`] error count, shared by the CLI's error output and the
+/// browser editor's error banner so neither says "1 problem(s)".
+pub fn describe_problem_count(n: usize) -> String {
+    if n == 1 { "1 problem".to_string() } else { format!("{n} problems") }
 }
 
 /// An asset reference, with how it will be decoded.
