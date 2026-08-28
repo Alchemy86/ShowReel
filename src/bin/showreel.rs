@@ -747,6 +747,7 @@ fn cmd_web_pack(
         "export.js",
         "audio.js",
         "geometry.js",
+        "thumbnails.js",
     ] {
         std::fs::copy(web_root.join(module), out.join(module))
             .with_context(|| format!("copying {module}"))?;

@@ -17,6 +17,7 @@ import { importClip } from './clipimport.js';
 import { exportWebM, webCodecsAvailable } from './export.js';
 import { layerFrameRect, pointInRect, rectToFrac, calloutPins, fracFromFrame, calloutHit } from './geometry.js';
 import { AudioEngine } from './audio.js';
+import { stillThumbnail, clipThumbnail } from './thumbnails.js';
 
 const WASM = './showreel.wasm';
 const FONTS = [
@@ -77,6 +78,10 @@ const providedClips = new Map();
 const providedClipDurations = new Map();
 // `${kind}:${name}` -> 'ok' | 'missing', for the Assets panel's status dots.
 const assetStatus = new Map();
+// `${kind}:${name}` -> object URL, generated once per unique asset the first
+// time its bytes are seen and kept for the page's lifetime — see
+// thumbnails.js's module doc for why this is cheap enough to do eagerly.
+const thumbCache = new Map();
 // clipCacheKey(...) -> {bytes} — avoids re-decoding a browser clip on every
 // keystroke; only a changed (asset, fps, max_width, trim) tuple re-extracts.
 const clipExtractCache = new Map();
@@ -173,6 +178,7 @@ async function loadAssets(onProgress) {
         const [np, nl] = bridge.writeText(name);
         const [bp, bl] = bridge.writeBytes(bytes);
         if (!wasm.sr_add_still(np, nl, bp, bl)) throw new Error(`still ${name}: ${bridge.lastError()}`);
+        ensureThumbnail(`still:${name}`, () => stillThumbnail(bytes));
       }
     } else if ('Clip' in u) {
       const c = u.Clip;
@@ -202,10 +208,29 @@ async function loadAssets(onProgress) {
         if (!wasm.sr_add_clip(np, nl, fpsUsed, c.max_width, trim ? 1 : 0, trimStart, trimDur, bp, bl)) {
           throw new Error(`clip ${c.asset}: ${bridge.lastError()}`);
         }
+        ensureThumbnail(`clip:${c.asset}`, () => clipThumbnail(container));
       }
     }
     onProgress?.(++done, needed.length);
   }
+}
+
+// Generates a thumbnail at most once per `${kind}:${name}` — see
+// thumbnails.js's module doc. `make` may be sync (a clip's already-JPEG
+// first frame) or async (a still's scaled decode); either way the editor
+// re-renders once it lands, so a thumbnail that wasn't ready yet on the
+// first paint still shows up without the caller needing to know which kind
+// of asset it was.
+function ensureThumbnail(key, make) {
+  if (thumbCache.has(key)) return;
+  thumbCache.set(key, null); // claim the key so a second reload doesn't redo the work
+  Promise.resolve(make())
+    .then((url) => { if (url) { thumbCache.set(key, url); editor.render(); } })
+    .catch(() => thumbCache.delete(key)); // let a later reload retry
+}
+
+function resolveThumbnail(kind, name) {
+  return thumbCache.get(`${kind}:${name}`) || null;
 }
 
 function resolveAssetStatus(kind, name) {
@@ -307,6 +332,7 @@ const editor = createEditor({
   getFilm: () => film,
   onChange: scheduleReload,
   resolveAssetStatus,
+  resolveThumbnail,
   getClipDuration: (name) => providedClipDurations.get(name) ?? null,
   onSelect: () => updateOverlay(),
 });

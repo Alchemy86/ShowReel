@@ -72,6 +72,16 @@ function assetBaseName(name) {
   return String(name).split('/').pop();
 }
 
+// The still/clip a scene's own thumbnail should stand in for — the first
+// layer with a picture, top of the stack down, the same "what does this
+// scene actually show" a person would point to.
+function sceneThumbnailRef(scene) {
+  for (const l of scene.layers) {
+    if ((l.type === 'still' || l.type === 'clip') && l.asset) return { kind: l.type, name: l.asset };
+  }
+  return null;
+}
+
 // A name built from what the layer actually *is* — its text, its filename —
 // rather than its data-model type, so the elements list reads "Welcome to
 // Kanto" and "pixel-chain-run.mp4" instead of "Title" and "Video clip".
@@ -488,7 +498,7 @@ function renderContentFields(layer, getClipDuration) {
 
 // ---- the editor object ----
 
-export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resolveAssetStatus, getClipDuration, onSelect }) {
+export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resolveAssetStatus, resolveThumbnail, getClipDuration, onSelect }) {
   let sel = null; // {kind:'scene'|'transition'|'layer'|'audio', i, j}
 
   function film() { return getFilm(); }
@@ -520,6 +530,14 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     notify();
   }
 
+  // A small `<img>` for a still/clip asset, or '' before its thumbnail has
+  // been generated (main.js's `ensureThumbnail` re-renders once it lands —
+  // see that function's doc comment) — never a broken-image icon meanwhile.
+  function thumbImg(kind, name, extraClass = '') {
+    const url = resolveThumbnail && name ? resolveThumbnail(kind, name) : null;
+    return url ? `<img class="thumb ${extraClass}" src="${url}" alt="">` : '';
+  }
+
   // ---- timeline panel ----
 
   function renderTimeline() {
@@ -534,7 +552,9 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
       }
       const scene = getScene(f, i);
       const selected = sel?.kind === 'scene' && sel.i === i || sel?.kind === 'layer' && sel.i === i;
+      const thumbRef = sceneThumbnailRef(scene);
       rows += `<div class="chip-row ${selected ? 'selected' : ''}" data-sel="s:${i}">
+        ${thumbRef ? thumbImg(thumbRef.kind, thumbRef.name) : ''}
         <span class="label">${esc(scene.name || `Scene ${i + 1}`)}</span>
         <span class="meta">${starts[i].toFixed(1)}s · ${scene.duration.toFixed(1)}s</span>
       </div>`;
@@ -543,7 +563,9 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     let layerRows = '';
     scene.layers.forEach((l, j) => {
       const selected = sel?.kind === 'layer' && sel.i === currentSceneIndex() && sel.j === j;
+      const thumb = (l.type === 'still' || l.type === 'clip') ? thumbImg(l.type, l.asset) : '';
       layerRows += `<div class="chip-row ${selected ? 'selected' : ''}" data-sel="l:${j}">
+        ${thumb}
         <span class="label">${esc(layerDisplayName(l))}</span>
         <span class="meta">${esc(LAYER_LABELS[l.type] || l.type)}</span>
         <button class="mini-btn" data-act="layer-up" data-j="${j}" title="Move up">↑</button>
@@ -616,7 +638,7 @@ export function createEditor({ timelineEl, inspectorEl, getFilm, onChange, resol
     return [...names].map((key) => {
       const [kind, name] = key.split(/:(.+)/);
       const status = resolveAssetStatus ? resolveAssetStatus(kind, name) : 'unknown';
-      return `<div class="asset-row"><span class="dot ${status}"></span><span class="name">${esc(name)}</span><span class="meta">${kind}</span></div>`;
+      return `<div class="asset-row"><span class="dot ${status}"></span>${thumbImg(kind, name, 'thumb-lg')}<span class="name">${esc(name)}</span><span class="meta">${kind}</span></div>`;
     }).join('');
   }
 
