@@ -335,6 +335,26 @@ fn border_w_default() -> f64 {
     3.0
 }
 
+/// One depth-plane image in a [`Content::Parallax`] stack.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParallaxPlane {
+    pub asset: String,
+    /// How far this plane departs from the stack's one authored camera move:
+    /// `0.0` sits still (as far from camera as it gets), `1.0` follows the
+    /// move exactly, and a foreground cutout typically wants somewhat past
+    /// `1.0` to sell the depth. Scales the *offset* from the move's first
+    /// shot, not the framing itself, so every plane starts framed together
+    /// and only diverges as the move plays out.
+    #[serde(default = "one")]
+    pub depth: f64,
+}
+
+impl ParallaxPlane {
+    pub fn new(asset: impl Into<String>, depth: f64) -> Self {
+        ParallaxPlane { asset: asset.into(), depth }
+    }
+}
+
 /// The content of a layer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -481,6 +501,27 @@ pub enum Content {
         #[serde(default)]
         style: Option<TextStyle>,
     },
+    /// A flat image split into depth planes and shot with one camera move —
+    /// the fake-3D technique of pushing a camera across a still screenshot
+    /// that has been cut into background/subject/foreground layers.
+    ///
+    /// Every plane must be the same pixel size as the first: a depth plane is
+    /// a cutout of one shared canvas (typically with alpha where a nearer
+    /// plane covers it), not an independently sized image, and mixing sizes
+    /// would leave the "same camera move" premise with no shared coordinate
+    /// space to apply it in. Checked at render time. Splitting a source image
+    /// into those planes is a rotoscoping/cutout step outside the crate's own
+    /// rule ("nothing in the crate may know what its films are about") — this
+    /// only composes planes that already exist.
+    Parallax {
+        /// Back to front — a nearer plane's alpha is what lets a farther one
+        /// show through.
+        planes: Vec<ParallaxPlane>,
+        /// The move, authored exactly like [`Content::Still`]'s camera. It is
+        /// the path a `depth: 1.0` plane follows exactly; every other plane's
+        /// [`ParallaxPlane::depth`] scales how far it departs from it.
+        camera: Camera,
+    },
     /// A progress bar: a track and a fill that animates like a counter, with
     /// no digits — purely decorative, the way a loading or scrub indicator is.
     Bar {
@@ -523,6 +564,7 @@ impl Content {
             | Content::Clip { .. }
             | Content::Callout { .. }
             | Content::PullUp { .. }
+            | Content::Parallax { .. }
             | Content::Bar { .. } => Placement::Full,
         }
     }
@@ -623,6 +665,11 @@ impl Layer {
     /// A still seen through a camera move — the headline capability.
     pub fn camera(asset: impl Into<String>, camera: Camera) -> Self {
         Layer::new(Content::Still { asset: asset.into(), fit: Fit::Cover, camera: Some(camera) })
+    }
+
+    /// A flat image shot as fake-3D depth planes — see [`Content::Parallax`].
+    pub fn parallax(planes: Vec<ParallaxPlane>, camera: Camera) -> Self {
+        Layer::new(Content::Parallax { planes, camera })
     }
 
     pub fn clip(asset: impl Into<String>) -> Self {
@@ -1190,9 +1237,61 @@ impl Layer {
             Content::PullUp { spec, style } => {
                 self.draw_pull_up(canvas, ctx, spec, style.as_ref(), state, alpha);
             }
+            Content::Parallax { planes, camera } => {
+                self.draw_parallax(canvas, ctx, planes, camera, local, state, alpha)?;
+            }
             Content::Bar { spec, track, fill, radius } => {
                 self.draw_bar(canvas, spec, *track, fill, *radius, state, alpha, local);
             }
+        }
+        Ok(())
+    }
+
+    /// Draw a [`Content::Parallax`] stack: one shared camera move, applied to
+    /// each plane scaled by its own depth.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_parallax(
+        &self,
+        canvas: &mut Canvas,
+        ctx: &RenderCtx<'_>,
+        planes: &[ParallaxPlane],
+        camera: &Camera,
+        local: Time,
+        state: &MotionState,
+        alpha: f64,
+    ) -> Result<()> {
+        let Some(first) = planes.first() else { return Ok(()) };
+        let base = ctx.assets.still(&first.asset)?;
+        let source = base.size();
+        let box_ = shift_scaled(
+            self.placement().resolve(&ctx.frame, (source.0 as f64, source.1 as f64)),
+            state,
+        );
+        let frame_aspect = box_.aspect();
+        let bounds = Rect::from_size(source.0 as f64, source.1 as f64);
+        // What a depth-0 plane shows: wherever the move starts, i.e. before
+        // any of it has played out.
+        let rest = camera
+            .shots
+            .first()
+            .map(|s| s.framing.resolve(source, frame_aspect))
+            .unwrap_or_else(|| bounds.to_aspect(frame_aspect));
+        let target = camera.viewport_at(local, source, frame_aspect);
+
+        for plane in planes {
+            let still = ctx.assets.still(&plane.asset)?;
+            if still.size() != source {
+                let (w, h) = still.size();
+                anyhow::bail!(
+                    "parallax plane {:?} is {w}x{h}, but the first plane {:?} is {}x{} — every depth plane must share one canvas",
+                    plane.asset,
+                    first.asset,
+                    source.0,
+                    source.1
+                );
+            }
+            let vp = parallax_viewport(&rest, &target, plane.depth, &bounds, camera.clamp_to_source);
+            crate::camera::draw_viewport(canvas, &still, vp, box_, alpha);
         }
         Ok(())
     }
@@ -1781,6 +1880,28 @@ fn viewport_for_fit(src: &Rect, box_: &Rect, fit: Fit) -> Rect {
     }
 }
 
+/// A parallax plane's own viewport: `rest` scaled toward `target` by `depth`.
+///
+/// `depth` 0 stays at `rest`, 1 matches `target` exactly, and values outside
+/// 0..1 over- or undershoot it — that departure, different per plane, is what
+/// reads as depth. Centre blends linearly; height blends geometrically, the
+/// same reasoning [`Camera::viewport_at`] uses for zoom, so a depth of 2 does
+/// not zoom twice as far in raw pixels but twice as far on the same
+/// perceptual curve the base move itself already respects.
+fn parallax_viewport(rest: &Rect, target: &Rect, depth: f64, bounds: &Rect, clamp: bool) -> Rect {
+    let (rcx, rcy) = rest.centre();
+    let (tcx, tcy) = target.centre();
+    let cx = rcx + (tcx - rcx) * depth;
+    let cy = rcy + (tcy - rcy) * depth;
+    let h = if rest.h <= 0.0 || target.h <= 0.0 {
+        rest.h + (target.h - rest.h) * depth
+    } else {
+        rest.h * (target.h / rest.h).powf(depth)
+    };
+    let r = Rect::centred(cx, cy, h * target.aspect(), h);
+    if clamp { r.clamp_within(bounds) } else { r }
+}
+
 fn shift(r: Rect, s: &MotionState) -> Rect {
     Rect { x: r.x + s.dx, y: r.y + s.dy, ..r }
 }
@@ -1882,6 +2003,8 @@ fn stagger_units(layout: &TextLayout, kind: crate::motion::MotionKind) -> Vec<us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::Still;
+    use crate::camera::Framing;
 
     /// Solid ink touching each edge of the canvas. A plate that ran off the
     /// frame leaves its cut edge — opaque background and half a glyph —
@@ -2345,5 +2468,149 @@ mod tests {
         assert_eq!(serde_json::from_str::<Content>(&s).unwrap(), l.content);
         assert!(s.contains("\"progress\""), "{s}");
         assert!(!s.contains("\"radius\""), "a default radius should not be written: {s}");
+    }
+
+    // -----------------------------------------------------------------
+    // Content::Parallax
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parallax_viewport_at_depth_zero_stays_put_and_one_matches_the_move() {
+        let rest = Rect::centred(500.0, 500.0, 1000.0, 500.0);
+        let target = Rect::centred(800.0, 500.0, 200.0, 100.0);
+        let bounds = Rect::from_size(2000.0, 2000.0);
+        let still = parallax_viewport(&rest, &target, 0.0, &bounds, false);
+        assert_eq!(still, rest, "depth 0 must not move at all");
+        let moving = parallax_viewport(&rest, &target, 1.0, &bounds, false);
+        assert_eq!(moving, target, "depth 1 must follow the move exactly");
+    }
+
+    #[test]
+    fn parallax_viewport_overshoots_past_depth_one() {
+        // A foreground plane (depth > 1) should end up centred *beyond* the
+        // move's own target, and zoomed in tighter than it — that departure
+        // is what reads as depth.
+        let rest = Rect::centred(500.0, 500.0, 1000.0, 500.0);
+        let target = Rect::centred(700.0, 500.0, 500.0, 250.0);
+        let bounds = Rect::from_size(4000.0, 4000.0);
+        let over = parallax_viewport(&rest, &target, 2.0, &bounds, false);
+        assert!(over.centre().0 > target.centre().0, "{over:?}");
+        assert!(over.h < target.h, "a depth-2 plane should have zoomed in past the target: {over:?}");
+    }
+
+    #[test]
+    fn parallax_viewport_clamps_within_bounds_when_asked() {
+        let rest = Rect::centred(50.0, 50.0, 1000.0, 500.0);
+        let target = Rect::centred(-500.0, 50.0, 200.0, 100.0);
+        let bounds = Rect::from_size(2000.0, 2000.0);
+        let clamped = parallax_viewport(&rest, &target, 1.0, &bounds, true);
+        assert!(clamped.x >= -1e-9, "{clamped:?}");
+        let free = parallax_viewport(&rest, &target, 1.0, &bounds, false);
+        assert!(free.x < 0.0, "unclamped must be free to hang off the source: {free:?}");
+    }
+
+    #[test]
+    fn a_parallax_stack_renders_every_plane_back_to_front() {
+        let store = AssetStore::new();
+        store.insert_still("bg", Still::solid(200, 100, Color::rgb(20, 20, 200)).unwrap());
+        store.insert_still("fg", Still::solid(200, 100, Color::rgb(220, 30, 30)).unwrap());
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 200.0, 100.0);
+        let mut cv = Canvas::new(200, 100).unwrap();
+        let cam = Camera::hold(Framing::Whole);
+        let layer = Layer::parallax(
+            vec![ParallaxPlane::new("bg", 0.4), ParallaxPlane::new("fg", 1.2)],
+            cam,
+        );
+        layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap();
+        // The foreground plane is opaque and drawn last, so it must win.
+        let centre = cv.as_ref().pixels()[(50 * 200 + 100) as usize];
+        assert!(centre.red() > 150 && centre.blue() < 100, "expected the foreground colour on top: {centre:?}");
+    }
+
+    #[test]
+    fn mismatched_plane_sizes_are_a_clear_render_error() {
+        let store = AssetStore::new();
+        store.insert_still("bg", Still::solid(400, 200, Color::WHITE).unwrap());
+        store.insert_still("fg", Still::solid(40, 20, Color::BLACK).unwrap());
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 400.0, 200.0);
+        let mut cv = Canvas::new(400, 200).unwrap();
+        let layer = Layer::parallax(
+            vec![ParallaxPlane::new("bg", 0.0), ParallaxPlane::new("fg", 1.0)],
+            Camera::hold(Framing::Whole),
+        );
+        let err = layer.draw(&mut cv, &ctx, Time(0.0), Time(1.0)).unwrap_err().to_string();
+        assert!(err.contains("fg"), "{err}");
+        assert!(err.contains("40x20"), "{err}");
+        assert!(err.contains("400x200"), "{err}");
+    }
+
+    #[test]
+    fn parallax_draw_cost_at_1080p() {
+        // Measured, not quoted: draw_parallax is exactly N ordinary mip-backed
+        // draws (see camera::draw_viewport, already the crate's fast path for
+        // a still under a camera), so the extra cost of a 3-plane parallax
+        // shot over one ordinary Still+camera layer should be close to
+        // linear in the plane count, not a new expensive operation like
+        // `Presentation::CrossBlur`'s blur (~170ms/frame at 1080p, measured
+        // in `canvas::tests::blur_rgba_cost_at_1080p`). See AGENTS.md for the
+        // number this printed.
+        fn synth(w: u32, h: u32, base: Color) -> Still {
+            let img = image::RgbaImage::from_fn(w, h, |x, y| {
+                let t = ((x ^ y) % 251) as u8;
+                image::Rgba([base.r.wrapping_add(t), base.g, base.b, 255])
+            });
+            Still::from_rgba(img)
+        }
+        let store = AssetStore::new();
+        let (sw, sh) = (4000u32, 2500u32);
+        for (name, c) in [
+            ("bg", Color::rgb(10, 20, 40)),
+            ("mid", Color::rgb(20, 80, 40)),
+            ("fg", Color::rgb(160, 60, 30)),
+        ] {
+            store.insert_still(name, synth(sw, sh, c));
+        }
+        let theme = crate::theme::Theme::dark();
+        let ctx = ctx_for(&theme, &store, 1920.0, 1080.0);
+        let layer = Layer::parallax(
+            vec![
+                ParallaxPlane::new("bg", 0.2),
+                ParallaxPlane::new("mid", 0.6),
+                ParallaxPlane::new("fg", 1.3),
+            ],
+            Camera::push_in(Framing::at(0.5, 0.5, sh as f64 * 0.3), 4.0),
+        );
+        let single = Layer::camera("bg", Camera::push_in(Framing::at(0.5, 0.5, sh as f64 * 0.3), 4.0));
+        let mut cv = Canvas::new(1920, 1080).unwrap();
+
+        let runs = 30;
+        let started = std::time::Instant::now();
+        for _ in 0..runs {
+            layer.draw(&mut cv, &ctx, Time(2.0), Time(4.0)).unwrap();
+        }
+        let parallax_ms = started.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+
+        let started = std::time::Instant::now();
+        for _ in 0..runs {
+            single.draw(&mut cv, &ctx, Time(2.0), Time(4.0)).unwrap();
+        }
+        let single_ms = started.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+
+        eprintln!(
+            "parallax draw (3 planes) at 1920x1080: {parallax_ms:.3}ms/frame vs {single_ms:.3}ms/frame for one Still+camera layer"
+        );
+        assert!(parallax_ms < 1000.0, "parallax draw got unexpectedly slow: {parallax_ms}ms");
+    }
+
+    #[test]
+    fn a_parallax_layer_round_trips_through_json() {
+        let l = Layer::parallax(
+            vec![ParallaxPlane::new("bg.png", 0.3), ParallaxPlane::new("fg.png", 1.4)],
+            Camera::push_in(Framing::at(0.5, 0.5, 400.0), 2.0),
+        );
+        let s = serde_json::to_string(&l.content).unwrap();
+        assert_eq!(serde_json::from_str::<Content>(&s).unwrap(), l.content);
     }
 }

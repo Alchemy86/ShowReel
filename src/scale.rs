@@ -116,7 +116,11 @@ fn scale_layer(l: &mut Layer, k: f64) {
         }
         // A camera's framings are in the *source* image's pixels, which do not
         // change when the output frame does.
-        Content::Still { .. } | Content::Solid { .. } | Content::Gradient { .. } | Content::Scrim { .. } => {}
+        Content::Still { .. }
+        | Content::Parallax { .. }
+        | Content::Solid { .. }
+        | Content::Gradient { .. }
+        | Content::Scrim { .. } => {}
     }
 }
 

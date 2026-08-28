@@ -24,6 +24,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Transitions split presentation from timing; the "no leading transition" rule is in the *type* | `src/transition.rs`, `src/timeline.rs` |
 | `Presentation::CrossBlur` blurs every RGBA channel (`canvas::blur_rgba`), not just alpha (`canvas::blur_alpha`, for shadows) — both share the same three-pass box-blur core, `canvas::box_blur3` | `src/canvas.rs`, `src/transition.rs` |
 | `Content::Bar`'s `BarSpec` (`from`/`to`/`over`/`easing`) deliberately mirrors `CounterSpec` rather than reusing it — a bar has no digits, grouping or prefix/suffix, and nests under `"progress"` for the same `from`-collides-with-`Layer::from` reason `CounterSpec` nests under `"count"` | `src/layer.rs` |
+| `Content::Parallax` (the fake-depth "screenshot" shot, `docs/anarchist-study.md`) is a composition convenience, not new render machinery: one authored `Camera` move, and each plane's own viewport is `Camera::viewport_at`'s *result* blended toward its resting framing by `ParallaxPlane::depth` — position linearly, height geometrically, the same reasoning `Camera::viewport_at` itself uses for zoom | `src/layer.rs` (`draw_parallax`, `parallax_viewport`) |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
@@ -63,6 +64,17 @@ co-equal examples, and shipping only the easier half is itself a half-landing. L
 session that can give the shaping/wrap/draw path the same careful pass the audio pipeline
 got before this round of features touched it.
 
+**A global colour grade (lift/gamma/gain, saturation, contrast, vignette) — the other real
+gap `docs/anarchist-study.md` found — is deliberately left for its own session, not bundled
+into `Content::Parallax`.** It is confirmed absent (nothing in `canvas.rs` tone-maps a
+finished frame) and worth building, but the study's own ranking puts it last: a one-stage,
+self-contained addition to `render.rs`'s per-frame pipeline that touches no text, camera or
+transition code, and — per the study — the smaller lever of the two gaps for how much it
+would change what a film can actually look like. Bundling it into this round would have
+meant doing it quickly to stay in scope, and a post-composite grade is exactly the kind of
+thing (colour is unforgiving, and a vignette that clips wrong is obvious) that deserves its
+own measured pass rather than a rider on the parallax work.
+
 ## Sharp edges
 
 - **Nothing may call `Theme::default()` while drawing.** Use `RenderCtx::theme`, which is
@@ -78,6 +90,12 @@ got before this round of features touched it.
   `Placement` is untagged with a string shorthand (`"centre"`) rather than flattened.
 - Counters nest under `"count"` rather than flattening: a counter's `from` is a value and a
   layer's `from` is a time.
+- **Every `Content::Parallax` plane must be the exact same pixel size as the first.**
+  `draw_parallax` checks this at render time and errors with both planes' sizes rather than
+  silently misaligning them — the "one authored camera move, blended per plane" math only
+  makes sense if every plane shares one coordinate space, the same way real depth-plane
+  cutouts of one screenshot share its canvas. A differently-sized plane is an authoring
+  mistake to fix (re-export the cutout at the source canvas's size), not a case to support.
 
 - **Any text drawn into a plate must be measured against the room that actually exists**,
   then the plate clamped into the frame. `TextLayout::fit_width` wraps first and shrinks

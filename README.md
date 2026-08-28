@@ -245,6 +245,56 @@ when the filled portion is narrower than the radius, the same
 `Layer::bar_fixed(v)` holds at a constant level with no animation at all —
 useful for a static indicator rather than a fill.
 
+### A parallax shot
+
+`Content::Parallax` turns one flat image, cut into a handful of depth planes,
+into a fake-3D shot: one camera move, authored exactly like a still's, is
+shared by every plane — each plane just says how far it departs from that
+move:
+
+```rust
+Layer::parallax(
+    vec![
+        ParallaxPlane::new("sky.png", 0.2),    // barely drifts
+        ParallaxPlane::new("mid.png", 0.55),   // follows the move closely
+        ParallaxPlane::new("fg.png", 1.2),     // overshoots it
+    ],
+    Camera::new()
+        .to(0.0, Framing::Whole)
+        .shot(Shot::new(7.0, Framing::at(0.62, 0.55, 990.0)).eased(Easing::InOutCubic)),
+)
+```
+
+`depth: 1.0` follows the authored move exactly; `0.0` sits still; anything
+else scales the departure from the move's first shot, which is what actually
+reads as depth — nearer things moving more. Every plane must be the same
+pixel size (a depth plane is a cutout of one shared canvas, checked at render
+time — see `examples/parallax_demo.rs`, which draws its own three-plane
+"screenshot" so the example needs nothing on disk):
+
+| wide, before the push | pushed in, 7s later |
+|---|---|
+| ![the whole synthetic skyline before the camera has moved](docs/stills/parallax-wide.png) | ![the same shot pushed in on the sun, buildings visibly at different depths](docs/stills/parallax-pushed.png) |
+
+Splitting a real screenshot into those planes (rotoscoping a subject out from
+its background) is outside the crate's own rule — "nothing in the crate may
+know what its films are about" — the same reason `examples/kanto_reel.rs`
+does its own map-specific work outside `src/`. `Content::Parallax` only
+composes planes that already exist.
+
+**The cost is close to what it looks like: N ordinary camera draws, not a new
+expensive operation.** `draw_parallax` is [`Camera::draw`](src/camera.rs)'s
+own mip-backed `draw_viewport`, called once per plane — there is no blur or
+extra buffer like `Presentation::CrossBlur` above. Measured directly
+(`layer::tests::parallax_draw_cost_at_1080p`, single-threaded, release
+build): a 3-plane stack at 1920×1080 over 4000×2500 source planes cost
+**~45ms/frame**, against **~15ms/frame** for one ordinary `Still`+camera
+layer at the same size — close to linear in the plane count, as expected.
+Rendering the worked example itself (`examples/parallax_demo.rs`, three
+3200×1800 planes, `parallel` feature on) averaged **15.0ms/frame** across the
+whole clip, because most of it spends time at the wide end of the push, where
+every plane's mip pyramid picks a small, cheap level.
+
 ## Look before you render
 
 Rendering a film to judge its timing is the slow way round.

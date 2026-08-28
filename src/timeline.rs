@@ -421,26 +421,31 @@ impl Film {
     /// worker threads discover the same file at the same moment.
     pub fn assets_used(&self) -> Vec<AssetUse> {
         let mut seen = Vec::new();
+        let mut push = |u: AssetUse| {
+            if !seen.contains(&u) {
+                seen.push(u);
+            }
+        };
         for i in 0..self.timeline.scene_count() {
             for l in &self.timeline.scene(i).layers {
-                let u = match &l.content {
+                match &l.content {
                     crate::layer::Content::Still { asset, .. } => {
-                        Some(AssetUse::Still(asset.clone()))
+                        push(AssetUse::Still(asset.clone()));
+                    }
+                    crate::layer::Content::Parallax { planes, .. } => {
+                        for p in planes {
+                            push(AssetUse::Still(p.asset.clone()));
+                        }
                     }
                     crate::layer::Content::Clip { asset, max_width, trim, decode_fps, .. } => {
-                        Some(AssetUse::Clip {
+                        push(AssetUse::Clip {
                             asset: asset.clone(),
                             max_width: *max_width,
                             trim: trim.map(|(a, b)| (a.as_secs(), b.as_secs())),
                             decode_fps: *decode_fps,
-                        })
+                        });
                     }
-                    _ => None,
-                };
-                if let Some(u) = u
-                    && !seen.contains(&u)
-                {
-                    seen.push(u);
+                    _ => {}
                 }
             }
         }

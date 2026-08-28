@@ -7,7 +7,7 @@ pub use crate::canvas::Canvas;
 pub use crate::color::{Color, Paint};
 pub use crate::ease::{Easing, Spring};
 pub use crate::geom::{Anchor, Direction, Fit, Rect};
-pub use crate::layer::{CalloutSpec, Content, CounterSpec, Layer, Placement, PullUpSpec};
+pub use crate::layer::{CalloutSpec, Content, CounterSpec, Layer, ParallaxPlane, Placement, PullUpSpec};
 pub use crate::motion::{Motion, MotionKind};
 pub use crate::render::{Collect, FrameSink, PngSequence, Renderer};
 pub use crate::text::{Align, FontDb, Plate, Shadow, TextStyle};
