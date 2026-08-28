@@ -51,11 +51,22 @@ button, input, select { font-family: inherit; font-size: inherit; color: inherit
 
 #stage-wrap { flex: 1; display: flex; align-items: center; justify-content: center;
   background: #000; min-height: 0; padding: 10px; position: relative; }
-/* `object-fit: contain` keeps this box's on-screen size fixed regardless of
-   the canvas's intrinsic pixel buffer — playback renders into a smaller
-   buffer (see main.js's draft scale) and the browser upscales it to fill the
-   same box, rather than the box itself shrinking. */
-#view { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+/* Scale-to-fit via intrinsic size + max-width/max-height, not `width: 100%;
+   height: 100%; object-fit: contain`, which was tried first: stretching the
+   canvas element's own CSS box to fill the flex container gave it a box
+   shaped like the pane (tall and narrow), not like the film, and object-fit
+   letterboxed *within* that wrong-shaped box rather than filling the pane —
+   the frame ended up small and off-centre with most of the pane empty
+   (docs/youcut-study.md's "the stage doesn't fill the stage"). Leaving
+   width/height auto lets the canvas's own intrinsic size (its `width`/
+   `height` attributes, set from the film's own dimensions in main.js) drive
+   the aspect ratio, and max-width/max-height clamp it to whichever axis of
+   `#stage-wrap` binds first — the same "big as it can be, never distorted"
+   result object-fit was reaching for, without needing the canvas's CSS box
+   to already be the right shape. Playback renders into a smaller backing
+   buffer (see main.js's draft scale) and this scales that up to fill the
+   same on-screen size, exactly as before. */
+#view { width: auto; height: auto; max-width: 100%; max-height: 100%; display: block; background: #000; }
 #splash { position: absolute; inset: 0; display: grid; place-items: center; background: var(--bg);
   color: var(--muted); font-family: var(--mono); font-size: 13px; text-align: center; }
 #splash b { color: var(--ink); }
