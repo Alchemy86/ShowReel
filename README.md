@@ -398,6 +398,61 @@ real socket and drives all four endpoints (`/api/render` included, over an
 actual TCP connection, skipped only when ffmpeg isn't on `PATH`) rather than
 calling the JSON-building functions directly.
 
+## MCP support
+
+`showreel mcp` (needs `--features mcp`) runs an MCP server over stdio — five
+tools an agent calls directly instead of shelling out to this CLI and
+parsing its stdout:
+
+| tool | mirrors | does |
+|---|---|---|
+| `new_film` | `showreel new` | writes a starter film (one title-card scene) to a path |
+| `check_film` | `showreel check` | validates a film, returns `{ok, errors}` |
+| `film_info` | `showreel info` | the film's structure — title, size/fps, duration, scenes, audio |
+| `render_still` | `showreel still` | one frame, returned inline as a real PNG image |
+| `render_film` | `showreel render` | the actual ffmpeg encode, master plus an optional mobile cut |
+
+That is the same five-and-four the local HTTP API exposes (see "API
+access" above), over a different transport for a different consumer: MCP
+for an agent already in the same process tree, HTTP for anything reachable
+over a socket. Both call the same library code (`Film::load`, `Renderer`,
+`preview::still_at`, `Film::summary`) — there is one implementation of
+"render a still," not three.
+
+**"Build a film" is deliberately not five more tools mirroring every
+`Content` variant.** A film is one JSON file — the browser editor's own
+film object *is* that JSON (see `AGENTS.md`) — and an agent with ordinary
+file tools already reads and writes it directly, faster than a round trip
+through a tool call per layer. `new_film` scaffolds a starting point;
+`check_film`/`film_info`/`render_still` are the fast feedback loop for
+editing the JSON further, the same three things a person reaches for from
+the terminal.
+
+```bash
+cargo build --release --features cli,mcp --bin showreel
+./target/release/showreel mcp   # speaks JSON-RPC over stdin/stdout
+```
+
+Point an MCP-capable agent at that command (its config differs per host —
+Claude Code's `.mcp.json`, for instance, wants `{"command": "...", "args":
+["mcp"]}`). Built on [`rmcp`](https://crates.io/crates/rmcp), the official
+Rust SDK, rather than a hand-rolled JSON-RPC framing — MCP's schema and
+lifecycle messages are a moving target this crate has no business tracking
+itself, the same reasoning that keeps ffmpeg invocation direct rather than
+reimplemented. Behind its own feature flag for the same reason `studio` is:
+it pulls in an async runtime (`tokio`) the plain render path has never
+needed, so a default `cargo build` stays exactly as dependency-light as
+before.
+
+Proven over the real wire format, not just the tool functions in isolation:
+`tests/mcp_server.rs` spawns the actual `showreel mcp` binary and speaks
+real newline-delimited JSON-RPC to it over stdio pipes — every tool, a
+missing-file error path, and a clean-shutdown check that would have caught
+(and did, during development) a real bug: the server's async runtime
+panicked on shutdown without `enable_time`, because `rmcp` uses a timer
+internally that a minimal `tokio::runtime::Builder` doesn't enable by
+default.
+
 ## In the browser
 
 `showreel web-pack <film> -A <assets> -o dist` (needs `--features wasm`, and

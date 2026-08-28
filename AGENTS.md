@@ -32,6 +32,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
 | The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
 | "API access" means the local HTTP surface, not the (already stable, already documented) Rust library — and it rides the studio's own server rather than a second, stateless one: `/api/render`/`still`/`info`/`check` answer against whatever film the running `showreel studio` instance already has loaded and validated, so there is one code path for "load a film," not two that can drift | `src/studio.rs`, `README.md`'s "API access" |
+| The MCP server (`showreel mcp`) uses `rmcp`, the official SDK, not a hand-rolled JSON-RPC framing — and its five tools mirror the CLI's own vocabulary (`new`/`check`/`info`/`still`/`render`) rather than one tool per `Content` variant: a film is JSON an agent already edits with ordinary file tools, so "build" only needs scaffolding, not a bespoke authoring API | `src/mcp.rs` |
 | The renderer also compiles to `wasm32-unknown-unknown` (no wasm-bindgen — plain `extern "C"` over linear memory, `projects/asciicity`'s pattern) so a film can be scrubbed in someone else's browser with no server. `rayon` and `clap` are optional (`parallel`/`cli` features) so the wasm build pulls in neither; ffmpeg has no browser story, so a clip's frames are pre-decoded natively by `showreel web-pack` and shipped as a `.srclip` JPEG sequence | `src/wasm.rs`, `src/webclip.rs`, `build-wasm.sh` |
 | The browser page (`tools/web/`) is a real editor, not just a scrubber: `editor.js` mutates a film's JSON tree directly (it *is* the wire format — see the sharp edge below) and `main.js` reloads it through the same `sr_load_film`/`sr_add_*` wasm calls the boot sequence uses. Adding a clip from the browser needs no ffmpeg either: `clipimport.js` decodes it via a seeked `<video>` element (the platform decoder, reached through the one API surface that already demuxes for you) and `srclip.js` packs the frames into the exact `.srclip` container `sr_add_clip` already reads — no new wasm surface. Exporting a video uses real WebCodecs (`VideoEncoder`, VP8) plus a hand-rolled, ffprobe-verified WebM muxer (`muxer.js`/`test-muxer.mjs`), since no browser ships a demuxer *or* a muxer | `tools/web/editor.js`, `tools/web/main.js`, `tools/web/clipimport.js`, `tools/web/srclip.js`, `tools/web/export.js`, `tools/web/muxer.js` |
 | The editor is organised around what a person is doing (trim, add an effect, move/change text), not the data model: the inspector shows named presets and drag widgets first and folds the full field vocabulary under "Advanced"/"Exact position"/"Layer JSON" — the reach is never removed, only deferred. Direct manipulation (drag a clip's trim handles, drag a layer on the preview, drag a callout's ring and label) is real dragging against `geometry.js`'s from-scratch JS mirror of `Placement::resolve` and `CalloutSpec`'s target/label_at, not a data-model change — the wasm renderer and wire format are untouched | `tools/web/geometry.js`, `tools/web/editor.js`, `tools/web/index.html`'s `#stage-overlay` |
@@ -163,6 +164,13 @@ own measured pass rather than a rider on the parallax work.
   resource-exhaustion (and, depending what else is running, code-execution-adjacent)
   surface, per the brief that added it. Extend the studio server's API further with
   the same default in mind, not just this one endpoint.
+- **`showreel mcp` needs `--features mcp`** (a plain build has neither the subcommand nor
+  `rmcp`/`tokio` in the dependency graph), and its `tokio::runtime::Builder` must call
+  `.enable_time()`. Found the hard way: `rmcp` uses a timer internally (request timeouts,
+  shutdown draining), and a runtime built without it doesn't fail at startup — every tool
+  call answers fine — it panics later, the first time shutdown actually needs the timer.
+  `tests/mcp_server.rs`'s `the_server_shuts_down_cleanly_after_real_work` exists
+  specifically to catch this regressing; a test that never closes stdin would not.
 - **`showreel new`'s starter film is a hand-written JSONC template
   (`starter_jsonc` in `src/bin/showreel.rs`), not built through the Rust
   builders and re-serialised** — unlike `kanto.film.jsonc`, there is no
@@ -422,6 +430,14 @@ own measured pass rather than a rider on the parallax work.
   `index.html` — every JS file there is a plain ES module, no build step. `node
   tools/web/test-muxer.mjs` checks the hand-rolled WebM muxer (`tools/web/muxer.js`)
   against real `ffprobe`/`ffmpeg` decode; run it after touching that file.
+- **MCP server**: `showreel mcp` (needs `--features mcp`, which also needs `cli`) runs an
+  MCP server over stdio — see the README's "MCP support" section for the tool list.
+  `cargo build --features cli,mcp --bin showreel` builds it; `cargo test --features mcp`
+  runs `tests/mcp_server.rs`, which spawns the real binary and speaks real
+  newline-delimited JSON-RPC over stdio pipes rather than calling the tool functions
+  in-process. `cargo clippy --features cli,parallel,studio,mcp,wasm` is the combined
+  check this project runs before landing changes that touch more than one optional
+  feature, since features can compile clean individually and still conflict combined.
 
 ## Maintaining this file
 

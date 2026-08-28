@@ -402,99 +402,22 @@ fn still_response(shared: &Shared, url: &str) -> (u16, &'static str, Vec<u8>) {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SceneInfo<'a> {
-    index: usize,
-    name: Option<&'a str>,
-    start: f64,
-    duration: f64,
-    layers: usize,
-    transition_in: Option<&'a crate::transition::Transition>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AudioTrackInfo<'a> {
-    asset: &'a str,
-    at: f64,
-    duration: f64,
-    gain: f64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct InfoResponse<'a> {
     path: String,
     parse_error: Option<&'a str>,
-    title: Option<&'a str>,
-    width: u32,
-    height: u32,
-    fps: f64,
-    duration: f64,
-    frame_count: u32,
-    scenes: Vec<SceneInfo<'a>>,
-    audio: Vec<AudioTrackInfo<'a>>,
+    #[serde(flatten)]
+    summary: Option<crate::timeline::FilmSummary<'a>>,
 }
 
-/// `/api/info` — the structured equivalent of `showreel info`, purpose-built
-/// rather than reusing `/api/state`'s shape: that one is the browser page's
-/// own wire format and free to change with the editor, while this is a
-/// public contract.
+/// `/api/info` — the structured equivalent of `showreel info`, over
+/// [`Film::summary`] — the same shape `showreel mcp`'s `film_info` tool
+/// answers with, so the two surfaces cannot drift apart.
 fn info_json(shared: &Shared) -> Vec<u8> {
     let snap = shared.current();
-    let body = match &snap.film {
-        None => InfoResponse {
-            path: shared.film_path.display().to_string(),
-            parse_error: snap.parse_error.as_deref(),
-            title: None,
-            width: 0,
-            height: 0,
-            fps: 0.0,
-            duration: 0.0,
-            frame_count: 0,
-            scenes: Vec::new(),
-            audio: Vec::new(),
-        },
-        Some(film) => {
-            let total = film.duration();
-            let scenes = film
-                .timeline
-                .placements()
-                .iter()
-                .map(|p| {
-                    let s = film.timeline.scene(p.index);
-                    SceneInfo {
-                        index: p.index,
-                        name: s.name.as_deref(),
-                        start: p.start.as_secs(),
-                        duration: s.duration.as_secs(),
-                        layers: s.layers.len(),
-                        transition_in: film.timeline.transition_into(p.index),
-                    }
-                })
-                .collect();
-            let audio = film
-                .audio
-                .iter()
-                .map(|a| AudioTrackInfo {
-                    asset: a.asset.as_str(),
-                    at: a.at.as_secs(),
-                    duration: a.resolve_duration(total).as_secs(),
-                    gain: a.gain,
-                })
-                .collect();
-            InfoResponse {
-                path: shared.film_path.display().to_string(),
-                parse_error: None,
-                title: film.title.as_deref(),
-                width: film.width,
-                height: film.height,
-                fps: film.fps,
-                duration: total.as_secs(),
-                frame_count: film.frame_count(),
-                scenes,
-                audio,
-            }
-        }
+    let body = InfoResponse {
+        path: shared.film_path.display().to_string(),
+        parse_error: snap.parse_error.as_deref(),
+        summary: snap.film.as_ref().map(|f| f.summary()),
     };
     serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec())
 }

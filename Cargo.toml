@@ -28,6 +28,14 @@ rayon = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 # Only pulled in by the `studio` feature — see [features] below.
 tiny_http = { version = "0.12.0", default-features = false, optional = true }
+# Only pulled in by the `mcp` feature — see [features] below. The official
+# Rust SDK, not a hand-rolled JSON-RPC framing: MCP's schema and lifecycle
+# messages are a moving target this crate has no business tracking itself.
+rmcp = { version = "3.1.4", default-features = false, features = ["server", "transport-io", "macros", "schemars"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "io-std", "io-util", "time"], optional = true }
+# A still returned from an MCP tool call goes over JSON as base64 image
+# content — this is that encoding, not a general-purpose dependency.
+base64 = { version = "0.22", optional = true }
 
 [[bin]]
 name = "showreel"
@@ -69,3 +77,9 @@ studio = ["dep:tiny_http"]
 # assets for that page (pre-decoding clips, which need ffmpeg and so can
 # never run in the browser itself — see src/wasm.rs).
 wasm = []
+# An MCP server (`showreel mcp`, stdio transport) so an agent builds, renders,
+# stills and inspects a film through typed tool calls instead of shelling out
+# to the CLI and parsing its text output. Off by default for the same reason
+# `studio` is: it pulls in an async runtime (`tokio`) the plain render path
+# has never needed.
+mcp = ["dep:rmcp", "dep:tokio", "dep:base64"]

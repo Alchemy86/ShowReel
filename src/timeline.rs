@@ -277,6 +277,44 @@ impl Timeline {
     }
 }
 
+/// One scene in a [`FilmSummary`] — see [`Film::summary`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneSummary<'a> {
+    pub index: usize,
+    pub name: Option<&'a str>,
+    pub start: f64,
+    pub duration: f64,
+    pub layers: usize,
+    pub transition_in: Option<&'a Transition>,
+}
+
+/// One track in a [`FilmSummary`] — see [`Film::summary`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioTrackSummary<'a> {
+    pub asset: &'a str,
+    pub at: f64,
+    pub duration: f64,
+    pub gain: f64,
+}
+
+/// A film's structure, in the shape every "inspect a film" surface (the CLI's
+/// `info`, the studio's `/api/info`, the MCP server's `film_info`) answers
+/// with — see [`Film::summary`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilmSummary<'a> {
+    pub title: Option<&'a str>,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub duration: f64,
+    pub frame_count: u32,
+    pub scenes: Vec<SceneSummary<'a>>,
+    pub audio: Vec<AudioTrackSummary<'a>>,
+}
+
 /// A complete film.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Film {
@@ -422,6 +460,49 @@ impl Film {
 
     pub fn frame_count(&self) -> u32 {
         self.duration().frame_count(self.fps).max(1)
+    }
+
+    /// This film's structure — the JSON shape `showreel info`, the studio's
+    /// `/api/info` and the MCP server's `film_info` tool all describe it in.
+    /// One method, so those three surfaces cannot quietly drift apart.
+    pub fn summary(&self) -> FilmSummary<'_> {
+        let total = self.duration();
+        let scenes = self
+            .timeline
+            .placements()
+            .iter()
+            .map(|p| {
+                let s = self.timeline.scene(p.index);
+                SceneSummary {
+                    index: p.index,
+                    name: s.name.as_deref(),
+                    start: p.start.as_secs(),
+                    duration: s.duration.as_secs(),
+                    layers: s.layers.len(),
+                    transition_in: self.timeline.transition_into(p.index),
+                }
+            })
+            .collect();
+        let audio = self
+            .audio
+            .iter()
+            .map(|a| AudioTrackSummary {
+                asset: a.asset.as_str(),
+                at: a.at.as_secs(),
+                duration: a.resolve_duration(total).as_secs(),
+                gain: a.gain,
+            })
+            .collect();
+        FilmSummary {
+            title: self.title.as_deref(),
+            width: self.width,
+            height: self.height,
+            fps: self.fps,
+            duration: total.as_secs(),
+            frame_count: self.frame_count(),
+            scenes,
+            audio,
+        }
     }
 
     pub fn frame_rect(&self) -> crate::geom::Rect {

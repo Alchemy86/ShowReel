@@ -134,6 +134,11 @@ enum Command {
         #[arg(long, default_value_t = 1.0)]
         scale: f64,
     },
+    /// Run an MCP server over stdio: build, render, still and inspect a
+    /// film through typed tool calls instead of shelling out to this CLI
+    /// and parsing its output. Built with `--features mcp`.
+    #[cfg(feature = "mcp")]
+    Mcp,
     /// Package a film to run in a browser with no server: the wasm build
     /// (`build-wasm.sh`) plus this film's assets, clips pre-decoded (needs
     /// ffmpeg — see `src/wasm.rs`). Built with `--features wasm`.
@@ -181,6 +186,8 @@ fn main() -> Result<()> {
         Command::Studio { film, asset_roots, port, host, scale } => {
             cmd_studio(film, asset_roots, port, host, scale)
         }
+        #[cfg(feature = "mcp")]
+        Command::Mcp => cmd_mcp(),
         #[cfg(feature = "wasm")]
         Command::WebPack { film, asset_roots, out, scale, clip_quality } => {
             cmd_web_pack(film, asset_roots, out, scale, clip_quality)
@@ -649,6 +656,18 @@ fn cmd_studio(
         bail!("{} does not exist", film_path.display());
     }
     showreel::studio::serve(film_path, roots, showreel::studio::StudioOptions { port, host, scale })
+}
+
+#[cfg(feature = "mcp")]
+fn cmd_mcp() -> Result<()> {
+    // `enable_time` is not optional: rmcp uses a timer internally (request
+    // timeouts, shutdown draining), and omitting it panics on the first path
+    // that needs one rather than failing at startup.
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_time()
+        .build()
+        .context("starting the MCP server's async runtime")?
+        .block_on(showreel::mcp::serve())
 }
 
 /// Where a clip's `.srclip` container lands under `assets/`, given the exact
