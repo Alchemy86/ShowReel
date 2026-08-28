@@ -1,0 +1,4 @@
+# The on-screen footage is ASCII-city-engine output, not part of this repo —
+# see examples/narration_demo.assets.md. The baked narration WAV + manifest ARE
+# committed (that is the point: render needs no voice model), so allow them.
+*.mp4

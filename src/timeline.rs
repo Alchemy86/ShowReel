@@ -439,7 +439,7 @@ impl Film {
     /// legitimate inputs. Generated-music tracks have no source file and are
     /// omitted — they are synthesised, not fetched (see [`crate::music`]).
     pub fn audio_assets(&self) -> Vec<&str> {
-        self.audio.iter().filter(|a| !a.is_music()).map(|a| a.asset.as_str()).collect()
+        self.audio.iter().filter(|a| a.is_file()).map(|a| a.asset.as_str()).collect()
     }
 
     /// Every [`Film::audio`] track, located and resolved against this film's
@@ -454,18 +454,41 @@ impl Film {
             .iter()
             .enumerate()
             .map(|(i, a)| {
-                // A music track synthesises to a WAV; a file track resolves to
-                // one on disk. Either way the result is a located path handed to
-                // the same `Audio::resolve`, so everything downstream (fades,
-                // gain, mixing, the mobile cut) is identical — see [`crate::music`].
-                let path = match &a.music {
-                    Some(music) => resolve_music(music, a.resolve_duration(total))
-                        .with_context(|| format!("audio track {}: generating music", i + 1))?,
-                    None => assets.resolve(&a.asset).with_context(|| {
-                        format!("audio track {}: cannot find {}", i + 1, a.asset)
-                    })?,
+                // A music track synthesises to a WAV; a narration track resolves
+                // to a WAV baked ahead of time; a file track resolves to one on
+                // disk. Either way the result is a located path handed to the
+                // same `Audio::resolve`, so everything downstream (fades, gain,
+                // mixing, the mobile cut) is identical — see [`crate::music`] and
+                // [`crate::narration`].
+                //
+                // `effective_total` is the length an unset `duration` resolves
+                // against. For a file or music track that is the film. For a
+                // narration track it is the *speech's own length* (read from the
+                // baked WAV) offset by `at`, because a voice-over's natural
+                // duration is how long it speaks — not "to the end of the film",
+                // which would place a fade_out on trailing silence.
+                let (path, effective_total) = match (&a.music, &a.narration) {
+                    (Some(music), _) => (
+                        resolve_music(music, a.resolve_duration(total))
+                            .with_context(|| format!("audio track {}: generating music", i + 1))?,
+                        total,
+                    ),
+                    (_, Some(narr)) => {
+                        let path = resolve_narration(narr, assets)
+                            .with_context(|| format!("audio track {}: narration", i + 1))?;
+                        let speech = narration_duration(&path).with_context(|| {
+                            format!("audio track {}: reading baked narration {}", i + 1, path.display())
+                        })?;
+                        (path, Time(a.at.as_secs() + speech))
+                    }
+                    _ => (
+                        assets.resolve(&a.asset).with_context(|| {
+                            format!("audio track {}: cannot find {}", i + 1, a.asset)
+                        })?,
+                        total,
+                    ),
                 };
-                Ok(a.resolve(path, total))
+                Ok(a.resolve(path, effective_total))
             })
             .collect()
     }
@@ -756,6 +779,44 @@ fn resolve_music(_m: &crate::music::Music, _dur: Time) -> anyhow::Result<std::pa
     anyhow::bail!("generated music is pre-rendered by `web-pack`, not available in the browser render path")
 }
 
+/// Locate a narration track's **baked** WAV: it is synthesised ahead of time by
+/// `showreel narrate` (Kokoro is a Python model, not a Rust synth — see
+/// [`crate::narration`]), so unlike music this only *finds* the artifact, it
+/// never generates it. The file is content-addressed by the script, so a
+/// changed line makes the old bake un-findable rather than letting a stale take
+/// through — and a missing bake fails loudly here, at load, naming the fix.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_narration(
+    n: &crate::narration::Narration,
+    assets: &crate::assets::AssetStore,
+) -> anyhow::Result<std::path::PathBuf> {
+    let name = n.baked_name();
+    assets.resolve(&name).map_err(|_| {
+        anyhow::anyhow!(
+            "narration not baked: no `{name}` on the asset path. \
+             Run `showreel narrate <film> -A <assets> -o <assets>` to synthesise it, \
+             then render with the same assets directory."
+        )
+    })
+}
+#[cfg(target_arch = "wasm32")]
+fn resolve_narration(
+    _n: &crate::narration::Narration,
+    _assets: &crate::assets::AssetStore,
+) -> anyhow::Result<std::path::PathBuf> {
+    anyhow::bail!("narration is pre-baked by `web-pack`, not available in the browser render path")
+}
+
+/// The playing length of a baked narration WAV, read from its header — so a
+/// narration track's natural duration is the speech itself. On wasm the
+/// narration arm bails in [`resolve_narration`] before this is ever reached; it
+/// stays compiled on every target so the one `resolve_audio_tracks` body serves
+/// both, rather than splitting the closure.
+fn narration_duration(path: &std::path::Path) -> anyhow::Result<f64> {
+    let bytes = std::fs::read(path)?;
+    crate::narration::wav_duration(&bytes)
+}
+
 /// "1 problem" / "N problems" — proper pluralisation for a
 /// [`Film::validate`] error count, shared by the CLI's error output and the
 /// browser editor's error banner so neither says "1 problem(s)".
@@ -988,5 +1049,65 @@ mod tests {
                 .layer(Layer::still("other.png")),
         );
         assert_eq!(f.assets_used().len(), 2);
+    }
+
+    #[test]
+    fn a_narration_track_resolves_against_its_baked_wav_at_the_speechs_own_length() {
+        // The render seam, exercised natively with no Kokoro: pre-write a baked
+        // WAV under the content-addressed name the film's narration hashes to,
+        // and resolve_audio_tracks must find it and take the speech's own
+        // length (not "to the end of the film") for an unset duration.
+        use crate::audio::Audio;
+        use crate::narration::{self, Narration};
+
+        let dir = std::env::temp_dir().join(format!("sr-narr-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let narr = Narration::line("A short baked line for the resolver.");
+        // A 2-second mono WAV standing in for a real bake.
+        let samples = vec![1000i16; 2 * narration::SAMPLE_RATE as usize];
+        std::fs::write(dir.join(narr.baked_name()), narration::wav_bytes(&samples, narration::SAMPLE_RATE)).unwrap();
+
+        // A 10s film with the narration placed at 1s. Its natural length is the
+        // 2s of speech, so the resolved input runs 1s..3s, not to the film's end.
+        let film = Film::new(64, 36, 30.0)
+            .open(Scene::new(10.0))
+            .sound(Audio::narration(narr).at(1.0));
+        let store = crate::assets::AssetStore::rooted(&dir);
+        let inputs = film.resolve_audio_tracks(&store).unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].at, 1.0);
+        assert!((inputs[0].duration - 2.0).abs() < 0.01, "duration {}", inputs[0].duration);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_unbaked_narration_fails_loudly_and_names_the_fix() {
+        use crate::audio::Audio;
+        use crate::narration::Narration;
+        let film = Film::new(64, 36, 30.0)
+            .open(Scene::new(5.0))
+            .sound(Audio::narration(Narration::line("Never baked.")));
+        // An empty store finds no baked WAV. The helpful message is in the
+        // error's cause chain (anyhow's CLI reporter prints it); `{:#}` renders
+        // the whole chain the way the user sees it.
+        let store = crate::assets::AssetStore::new();
+        let err = film.resolve_audio_tracks(&store).err().expect("must error");
+        let full = format!("{err:#}");
+        assert!(full.contains("not baked") && full.contains("showreel narrate"), "{full}");
+    }
+
+    #[test]
+    fn a_narration_track_is_not_a_plain_audio_asset() {
+        use crate::audio::Audio;
+        use crate::narration::Narration;
+        // audio_assets is what ffmpeg reads by name; a narration track has no
+        // such file (it resolves to a baked WAV by hash), so it is excluded,
+        // exactly as a music track is.
+        let film = Film::new(64, 36, 30.0)
+            .open(Scene::new(5.0))
+            .sound(Audio::narration(Narration::line("Spoken.")))
+            .sound(Audio::track("bed.wav"));
+        assert_eq!(film.audio_assets(), vec!["bed.wav"]);
     }
 }

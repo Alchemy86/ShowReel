@@ -67,6 +67,12 @@ let clipAudioManifest = [];
 // has no filesystem to run `render_to_temp` in, so it is baked at pack time).
 // `[]` on a plain `tools/web/` dev serve, exactly like `clipAudioManifest`.
 let musicManifest = [];
+// `showreel web-pack`'s `narration.json`: baked voice-over WAVs. Like music,
+// the WAV is a pack-time snapshot (the voice model runs natively — see
+// src/narration.rs — and the browser has neither Python nor a filesystem for
+// it), but its at/gain/fades travel in the manifest and apply live. `[]` on a
+// plain dev serve or a film with no narration.
+let narrationManifest = [];
 // Rolling window of recent per-frame render+paint times, the same shape
 // `src/studio/page.js`'s `recordFrameTime` uses, so the browser build is
 // honest about achieved playback rate the same way the native studio is —
@@ -318,7 +324,7 @@ async function doReload() {
   } catch (e) {
     fail(String(e && e.stack || e));
   }
-  await audioEngine.rebuild(film, duration, clipAudioManifest, musicManifest);
+  await audioEngine.rebuild(film, duration, clipAudioManifest, musicManifest, narrationManifest);
   if (playing) audioEngine.start(Math.min(currentT, duration));
   renderAt(Math.min(currentT, duration));
   editor.render();
@@ -742,6 +748,10 @@ async function boot() {
   // `music.json`: pre-synthesised generated-music tracks. Same absence rule.
   const res4 = await fetch('./music.json').catch(() => null);
   musicManifest = res4 && res4.ok ? await res4.json().catch(() => []) : [];
+
+  // `narration.json`: baked voice-over tracks. Same absence rule.
+  const res5 = await fetch('./narration.json').catch(() => null);
+  narrationManifest = res5 && res5.ok ? await res5.json().catch(() => []) : [];
 
   await doReload();
   splash.hidden = true;

@@ -95,7 +95,7 @@ export class AudioEngine {
   // a plain `tools/web/` dev serve has neither). Failures decoding one track (a
   // missing file, an unsupported codec) are swallowed per-cue so one bad track
   // does not silence the rest.
-  async rebuild(film, filmDuration, clipAudioManifest, musicManifest) {
+  async rebuild(film, filmDuration, clipAudioManifest, musicManifest, narrationManifest) {
     this.stop();
     const cues = [];
     for (const track of film.audio || []) {
@@ -151,6 +151,27 @@ export class AudioEngine {
         });
       } catch {
         // No music.json (unpackaged), or an entry gone stale — silently absent.
+      }
+    }
+    // Baked narration: like music, the WAV is a pack-time snapshot (the voice
+    // model is native-only — see src/narration.rs) but its at/gain/fades ride
+    // in the manifest, so the very same cue envelope applies. Its `duration` is
+    // the speech's own length, written into the manifest at pack time.
+    for (const n of narrationManifest || []) {
+      if (n.duration <= 0) continue;
+      try {
+        const buffer = await this.decode(n.file);
+        cues.push({
+          buffer,
+          from: n.from || 0,
+          at: n.at || 0,
+          duration: n.duration,
+          fadeIn: Math.min(n.fade_in || 0, n.duration),
+          fadeOut: Math.min(n.fade_out || 0, n.duration),
+          gain: n.gain != null ? n.gain : 1.0,
+        });
+      } catch {
+        // No narration.json (unpackaged), or an entry gone stale — silently absent.
       }
     }
     this.cues = cues;

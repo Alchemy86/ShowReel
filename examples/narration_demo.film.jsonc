@@ -1,0 +1,178 @@
+// =====================================================================
+//  ShowReel — directed narration, over the ASCII city engine's footage
+// =====================================================================
+//
+//  The proof film for the narration feature (see `src/narration.rs`). A
+//  British voice (Kokoro `bm_george`) reads the ASCII-city pitch over real
+//  footage from that engine, with the generated chiptune ducked underneath.
+//
+//  WHY THIS SHAPE
+//    * Narration is a track the *film* owns, alongside `music` — see the
+//      `audio` block below. Each line carries its own direction (`pace`,
+//      `pause_after`): the read is marked up like a voice actor's script,
+//      not run at one flat speed.
+//    * The two lower-thirds are cued to the narration's own word timings —
+//      the `from`/`duration` on each come straight out of the manifest
+//      `showreel narrate` writes beside the WAV. That is the point of the
+//      timings: captions become a lookup, not a guess.
+//    * The voice AND the synthesiser are declared (`engine`, `voice`), so
+//      swapping either is a one-word edit — Kokoro is one engine behind the
+//      seam, not the design.
+//
+//  BAKE, THEN RENDER  (render needs no Python — only the baked WAV + ffmpeg)
+//    showreel narrate examples/narration_demo.film.jsonc -A examples/narration_demo -o examples/narration_demo
+//    showreel render  examples/narration_demo.film.jsonc -A examples/narration_demo --crf 30 -o docs/narration-demo.mp4
+//
+//  The footage (`city-film.mp4`) is NOT committed — it is the ASCII city
+//  engine's output; see `examples/narration_demo.assets.md`. The baked
+//  narration WAV and its word-timing manifest ARE committed, which is the
+//  whole pitch: the audio is a pre-rendered asset anyone can render with,
+//  no voice model in the loop.
+// =====================================================================
+{
+  "width": 1280,
+  "height": 720,
+  "fps": 30.0,
+  "title": "ShowReel — directed narration",
+  "background": "#05070d",
+
+  // ---------------------------------------------------------------
+  //  SOUND — two tracks, mixed sensibly.
+  //   * narration: the voice, out front. It has no `duration`: its
+  //     natural length is however long it speaks (read from the baked
+  //     WAV), not "to the end of the film".
+  //   * music: the chiptune, ducked to 0.22 so it sits under the voice,
+  //     fading in behind the first line and out under the last.
+  // ---------------------------------------------------------------
+  "audio": [
+    {
+      "narration": {
+        "engine": "kokoro",
+        "voice": "bm_george",
+        "gap": 0.45,
+        "lines": [
+          { "text": "Everything you are about to see is built from a single number.",
+            "pace": 0.95, "pause_after": 0.7 },
+          { "text": "No artist drew this city, no designer placed a window or a door, and nobody decided where the street lamps should go.",
+            "pace": 1.0, "pause_after": 0.55 },
+          { "text": "It is written in Rust, it runs in a terminal, and every building, every road and every car you pass was worked out from that one seed the moment you pressed run.",
+            "pace": 1.02, "pause_after": 0.6 },
+          { "text": "Change the number, and the whole city changes with it — street by street — and none of it was stored anywhere.",
+            "pace": 0.92, "pause_after": 0.3 }
+        ]
+      },
+      "at": 1.4,
+      "gain": 1.0
+    },
+    {
+      "music": { "mood": "dreamy", "bpm": 96, "fit": "free" },
+      "at": 0.0,
+      "fade_in": 1.5,
+      "fade_out": 3.0,
+      "gain": 0.22
+    }
+  ],
+
+  "opening": {
+    "name": "narrated city",
+    // The read is 33.1s starting at 1.4s, so the film runs to 35.5s: the
+    // voice is the spine and the picture is cut to fit it, not the reverse.
+    "duration": 35.5,
+    "background": "#05070d",
+    "layers": [
+      {
+        "type": "clip",
+        "asset": "city-film.mp4",
+        "fit": "cover",
+        "placement": { "fx": 0.0, "fy": 0.0, "fw": 1.0, "fh": 1.0 },
+        // The source is 32s; the film is 35.5s, so it holds its last frame
+        // under the final line rather than looping with a visible jump.
+        "trim": [0.0, 32.0],
+        "mode": "hold",
+        "decode_fps": 20.0,
+        "max_width": 1152,
+        "audio": { "muted": true },
+        "from": 0.0,
+        "z": 0
+      },
+
+      // A gentle scrim so the type stays legible over bright ASCII colour.
+      {
+        "type": "gradient",
+        "stops": [ [0.0, "#00000000"], [0.60, "#00000000"], [1.0, "#000000cc"] ],
+        "angle": 90.0,
+        "from": 0.0,
+        "z": 2
+      },
+
+      // Opening card — names the piece while the voice sets up (line 0 runs
+      // 1.40–5.87s; the card clears before the captions begin).
+      {
+        "type": "title",
+        "text": "A city from one number",
+        "subtitle": "narration, directed — spoken by Kokoro, mixed in ShowReel",
+        "from": 0.2,
+        "duration": 5.4,
+        "placement": { "fx": 0.08, "fy": 0.28, "fw": 0.84, "fh": 0.30 },
+        "enter": { "kind": "rise", "distance": 26.0, "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } },
+        "exit": { "kind": "fade", "duration": 0.5, "timing": { "kind": "eased", "easing": "in-cubic" } },
+        "z": 10
+      },
+
+      // ---------------------------------------------------------------
+      //  CAPTIONS, cued to the narration's own word timings. Every
+      //  `from`/`duration` below is (narration `at` 1.4s) + the line's
+      //  start/length from the manifest ShowReel wrote beside the WAV:
+      //    line 1  track 5.17–13.38s → film 6.57s for 8.21s
+      //    line 2  track 13.93–24.88s → film 15.33s for 10.95s
+      //    line 3  track 25.48–32.83s → film 26.88s for 7.35s
+      //  They are on screen exactly while their line is spoken — which is
+      //  the point of the timings: a caption is a lookup, not a guess.
+      // ---------------------------------------------------------------
+      {
+        "type": "lower-third",
+        "text": "Nobody drew it",
+        "detail": "no artist, no designer, no hand-placed street lamp",
+        "accent": "#5fd0ff",
+        "from": 6.57, "duration": 8.21,
+        "enter": { "kind": "slide-in", "dx": -60.0, "dy": 0.0, "duration": 0.45, "timing": { "kind": "eased", "easing": "out-cubic" } },
+        "exit": { "kind": "fade", "duration": 0.4, "timing": { "kind": "eased", "easing": "in-cubic" } },
+        "z": 12
+      },
+      {
+        "type": "lower-third",
+        "text": "Written in Rust, run in a terminal",
+        "detail": "every street worked out from one seed, the moment you run it",
+        "accent": "#ffd147",
+        "from": 15.33, "duration": 10.95,
+        "enter": { "kind": "slide-in", "dx": -60.0, "dy": 0.0, "duration": 0.45, "timing": { "kind": "eased", "easing": "out-cubic" } },
+        "exit": { "kind": "fade", "duration": 0.4, "timing": { "kind": "eased", "easing": "in-cubic" } },
+        "z": 12
+      },
+      {
+        "type": "lower-third",
+        "text": "Change the number",
+        "detail": "and the whole city changes with it — none of it was stored",
+        "accent": "#ff6f91",
+        "from": 26.88, "duration": 7.35,
+        "enter": { "kind": "slide-in", "dx": -60.0, "dy": 0.0, "duration": 0.45, "timing": { "kind": "eased", "easing": "out-cubic" } },
+        "exit": { "kind": "fade", "duration": 0.4, "timing": { "kind": "eased", "easing": "in-cubic" } },
+        "z": 12
+      },
+
+      // Closing card, over the held final frame after the last line lands.
+      {
+        "type": "title",
+        "text": "showreel",
+        "subtitle": "a film is a file you can read — now the voice-over is too",
+        "from": 34.4,
+        "duration": 1.1,
+        "placement": { "fx": 0.08, "fy": 0.40, "fw": 0.84, "fh": 0.26 },
+        "enter": { "kind": "fade", "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } },
+        "z": 10
+      }
+    ]
+  },
+
+  "then": []
+}

@@ -47,6 +47,7 @@
 //! a second copy of that arithmetic.
 
 use crate::music::Music;
+use crate::narration::Narration;
 use crate::time::Time;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -77,6 +78,14 @@ pub struct Audio {
     /// apply, because from [`Audio::resolve`] on it is just a located file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub music: Option<Music>,
+    /// Directed voice-over instead of a source file: a script Kokoro speaks
+    /// (see [`crate::narration`]). Unlike music this does not synthesise at
+    /// render — it resolves to a WAV **baked ahead of time** by `showreel
+    /// narrate`, because the voice is a heavy Python model where music is pure
+    /// Rust. From [`Audio::resolve`] on it is just a located file, so the same
+    /// `at`/`gain`/fades/mixing apply. A track is a file, music, *or* narration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narration: Option<Narration>,
     /// Where the track starts on the **film's** clock.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub at: Time,
@@ -113,6 +122,7 @@ impl Audio {
         Audio {
             asset: asset.into(),
             music: None,
+            narration: None,
             at: Time::ZERO,
             from: Time::ZERO,
             duration: None,
@@ -138,18 +148,47 @@ impl Audio {
         Audio { music: Some(spec), ..Audio::track(String::new()) }
     }
 
+    /// A track of directed voice-over, spoken by Kokoro. Place and shape it with
+    /// the same builder methods a file track uses. Unlike [`Audio::music`] the
+    /// audio is not synthesised at render — bake it first with `showreel
+    /// narrate` (see [`crate::narration`]).
+    ///
+    /// ```
+    /// use showreel::audio::Audio;
+    /// use showreel::narration::Narration;
+    ///
+    /// let vo = Audio::narration(Narration::line("Everything is one number."));
+    /// assert!(vo.narration.is_some() && vo.asset.is_empty());
+    /// ```
+    pub fn narration(spec: Narration) -> Self {
+        Audio { narration: Some(spec), ..Audio::track(String::new()) }
+    }
+
     /// True when this track is generated music rather than a source file.
     pub fn is_music(&self) -> bool {
         self.music.is_some()
     }
 
-    /// A short human label for this track's source: the asset name, or
-    /// `music:<mood>` for generated music. For `info`/`summary` display, where
-    /// a music track has no filename to show.
+    /// True when this track is baked narration rather than a source file.
+    pub fn is_narration(&self) -> bool {
+        self.narration.is_some()
+    }
+
+    /// True when this track is a plain source file, not generated music or
+    /// baked narration — the tracks [`crate::timeline::Film::audio_assets`]
+    /// hands to ffmpeg by name.
+    pub fn is_file(&self) -> bool {
+        self.music.is_none() && self.narration.is_none()
+    }
+
+    /// A short human label for this track's source: the asset name, `music:<mood>`
+    /// for generated music, or `voice:<id>` for narration. For `info`/`summary`
+    /// display, where a generated track has no filename to show.
     pub fn source_label(&self) -> String {
-        match &self.music {
-            Some(m) => format!("music:{}", m.mood.name()),
-            None => self.asset.clone(),
+        match (&self.music, &self.narration) {
+            (Some(m), _) => format!("music:{}", m.mood.name()),
+            (_, Some(n)) => n.source_label(),
+            _ => self.asset.clone(),
         }
     }
 
@@ -228,13 +267,19 @@ impl Audio {
     /// The rules a type cannot carry. `label` names the track in messages.
     pub fn validate(&self, label: &str, film: Time) -> Vec<String> {
         let mut errs = Vec::new();
-        // A track is either a file asset or generated music — exactly one.
-        match (self.asset.trim().is_empty(), self.music.is_some()) {
-            (true, false) => errs.push(format!("{label}: needs an asset or generated music")),
-            (false, true) => errs.push(format!(
-                "{label}: has both an asset and generated music — a track is one or the other"
+        // A track is exactly one source kind: a file asset, generated music, or
+        // baked narration. Zero is nothing to play; more than one is ambiguous.
+        let has_asset = !self.asset.trim().is_empty();
+        let sources = [has_asset, self.music.is_some(), self.narration.is_some()]
+            .into_iter()
+            .filter(|&b| b)
+            .count();
+        match sources {
+            0 => errs.push(format!("{label}: needs an asset, generated music, or narration")),
+            1 => {}
+            _ => errs.push(format!(
+                "{label}: has more than one of asset/music/narration — a track is exactly one"
             )),
-            _ => {}
         }
         if let Some(m) = &self.music {
             errs.extend(m.validate(label));
@@ -242,6 +287,14 @@ impl Audio {
             // reads later into a file, and there is no file yet.
             if self.from.as_secs() != 0.0 {
                 errs.push(format!("{label}: generated music has no source to seek into, so `from` must be 0"));
+            }
+        }
+        if let Some(n) = &self.narration {
+            errs.extend(n.validate(label));
+            // Baked narration is generated the same way music is: no source to
+            // seek into, so `from` is meaningless.
+            if self.from.as_secs() != 0.0 {
+                errs.push(format!("{label}: narration has no source to seek into, so `from` must be 0"));
             }
         }
         if self.at.as_secs() < 0.0 {
@@ -346,6 +399,7 @@ pub fn clip_track(
     let a = Audio {
         asset: String::new(),
         music: None,
+        narration: None,
         at: film_at,
         from: source_from,
         duration: Some(window),

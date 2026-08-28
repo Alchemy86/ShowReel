@@ -1,0 +1,529 @@
+{
+  "voice": "bm_george",
+  "sample_rate": 24000,
+  "duration": 33.125,
+  "lines": [
+    {
+      "index": 0,
+      "text": "Everything you are about to see is built from a single number.",
+      "start": 0.0,
+      "end": 4.475,
+      "words": [
+        {
+          "text": "Everything",
+          "start": 0.25,
+          "end": 0.75
+        },
+        {
+          "text": "you",
+          "start": 0.75,
+          "end": 0.9
+        },
+        {
+          "text": "are",
+          "start": 0.9,
+          "end": 1.0
+        },
+        {
+          "text": "about",
+          "start": 1.0,
+          "end": 1.325
+        },
+        {
+          "text": "to",
+          "start": 1.325,
+          "end": 1.475
+        },
+        {
+          "text": "see",
+          "start": 1.475,
+          "end": 2.175
+        },
+        {
+          "text": "is",
+          "start": 2.175,
+          "end": 2.388
+        },
+        {
+          "text": "built",
+          "start": 2.388,
+          "end": 2.75
+        },
+        {
+          "text": "from",
+          "start": 2.75,
+          "end": 2.925
+        },
+        {
+          "text": "a",
+          "start": 2.925,
+          "end": 3.05
+        },
+        {
+          "text": "single",
+          "start": 3.05,
+          "end": 3.475
+        },
+        {
+          "text": "number",
+          "start": 3.475,
+          "end": 4.15
+        },
+        {
+          "text": ".",
+          "start": 4.15,
+          "end": 4.375
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "text": "No artist drew this city, no designer placed a window or a door, and nobody decided where the street lamps should go.",
+      "start": 5.175,
+      "end": 13.375,
+      "words": [
+        {
+          "text": "No",
+          "start": 5.425,
+          "end": 5.662
+        },
+        {
+          "text": "artist",
+          "start": 5.662,
+          "end": 6.138
+        },
+        {
+          "text": "drew",
+          "start": 6.138,
+          "end": 6.4
+        },
+        {
+          "text": "this",
+          "start": 6.4,
+          "end": 6.588
+        },
+        {
+          "text": "city",
+          "start": 6.588,
+          "end": 7.25
+        },
+        {
+          "text": ",",
+          "start": 7.25,
+          "end": 7.387
+        },
+        {
+          "text": "no",
+          "start": 7.387,
+          "end": 7.625
+        },
+        {
+          "text": "designer",
+          "start": 7.625,
+          "end": 8.125
+        },
+        {
+          "text": "placed",
+          "start": 8.125,
+          "end": 8.412
+        },
+        {
+          "text": "a",
+          "start": 8.412,
+          "end": 8.512
+        },
+        {
+          "text": "window",
+          "start": 8.512,
+          "end": 9.063
+        },
+        {
+          "text": "or",
+          "start": 9.063,
+          "end": 9.2
+        },
+        {
+          "text": "a",
+          "start": 9.2,
+          "end": 9.313
+        },
+        {
+          "text": "door",
+          "start": 9.313,
+          "end": 9.95
+        },
+        {
+          "text": ",",
+          "start": 9.95,
+          "end": 10.05
+        },
+        {
+          "text": "and",
+          "start": 10.05,
+          "end": 10.175
+        },
+        {
+          "text": "nobody",
+          "start": 10.175,
+          "end": 10.575
+        },
+        {
+          "text": "decided",
+          "start": 10.575,
+          "end": 11.325
+        },
+        {
+          "text": "where",
+          "start": 11.325,
+          "end": 11.487
+        },
+        {
+          "text": "the",
+          "start": 11.487,
+          "end": 11.575
+        },
+        {
+          "text": "street",
+          "start": 11.575,
+          "end": 11.925
+        },
+        {
+          "text": "lamps",
+          "start": 11.925,
+          "end": 12.25
+        },
+        {
+          "text": "should",
+          "start": 12.25,
+          "end": 12.45
+        },
+        {
+          "text": "go",
+          "start": 12.45,
+          "end": 13.075
+        },
+        {
+          "text": ".",
+          "start": 13.075,
+          "end": 13.275
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "text": "It is written in Rust, it runs in a terminal, and every building, every road and every car you pass was worked out from that one seed the moment you pressed run.",
+      "start": 13.925,
+      "end": 24.875,
+      "words": [
+        {
+          "text": "It",
+          "start": 14.15,
+          "end": 14.275
+        },
+        {
+          "text": "is",
+          "start": 14.275,
+          "end": 14.437
+        },
+        {
+          "text": "written",
+          "start": 14.437,
+          "end": 14.775
+        },
+        {
+          "text": "in",
+          "start": 14.775,
+          "end": 14.937
+        },
+        {
+          "text": "Rust",
+          "start": 14.937,
+          "end": 15.625
+        },
+        {
+          "text": ",",
+          "start": 15.625,
+          "end": 15.725
+        },
+        {
+          "text": "it",
+          "start": 15.725,
+          "end": 15.85
+        },
+        {
+          "text": "runs",
+          "start": 15.85,
+          "end": 16.25
+        },
+        {
+          "text": "in",
+          "start": 16.25,
+          "end": 16.35
+        },
+        {
+          "text": "a",
+          "start": 16.35,
+          "end": 16.463
+        },
+        {
+          "text": "terminal",
+          "start": 16.463,
+          "end": 17.275
+        },
+        {
+          "text": ",",
+          "start": 17.275,
+          "end": 17.375
+        },
+        {
+          "text": "and",
+          "start": 17.375,
+          "end": 17.537
+        },
+        {
+          "text": "every",
+          "start": 17.537,
+          "end": 17.887
+        },
+        {
+          "text": "building",
+          "start": 17.887,
+          "end": 18.525
+        },
+        {
+          "text": ",",
+          "start": 18.525,
+          "end": 18.625
+        },
+        {
+          "text": "every",
+          "start": 18.625,
+          "end": 18.962
+        },
+        {
+          "text": "road",
+          "start": 18.962,
+          "end": 19.45
+        },
+        {
+          "text": "and",
+          "start": 19.45,
+          "end": 19.587
+        },
+        {
+          "text": "every",
+          "start": 19.587,
+          "end": 19.912
+        },
+        {
+          "text": "car",
+          "start": 19.912,
+          "end": 20.2
+        },
+        {
+          "text": "you",
+          "start": 20.2,
+          "end": 20.325
+        },
+        {
+          "text": "pass",
+          "start": 20.325,
+          "end": 20.775
+        },
+        {
+          "text": "was",
+          "start": 20.775,
+          "end": 20.95
+        },
+        {
+          "text": "worked",
+          "start": 20.95,
+          "end": 21.225
+        },
+        {
+          "text": "out",
+          "start": 21.225,
+          "end": 21.55
+        },
+        {
+          "text": "from",
+          "start": 21.55,
+          "end": 21.725
+        },
+        {
+          "text": "that",
+          "start": 21.725,
+          "end": 21.962
+        },
+        {
+          "text": "one",
+          "start": 21.962,
+          "end": 22.275
+        },
+        {
+          "text": "seed",
+          "start": 22.275,
+          "end": 22.888
+        },
+        {
+          "text": "the",
+          "start": 22.888,
+          "end": 23.025
+        },
+        {
+          "text": "moment",
+          "start": 23.025,
+          "end": 23.425
+        },
+        {
+          "text": "you",
+          "start": 23.425,
+          "end": 23.55
+        },
+        {
+          "text": "pressed",
+          "start": 23.55,
+          "end": 23.913
+        },
+        {
+          "text": "run",
+          "start": 23.913,
+          "end": 24.6
+        },
+        {
+          "text": ".",
+          "start": 24.6,
+          "end": 24.775
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "text": "Change the number, and the whole city changes with it — street by street — and none of it was stored anywhere.",
+      "start": 25.475,
+      "end": 32.825,
+      "words": [
+        {
+          "text": "Change",
+          "start": 25.75,
+          "end": 26.1
+        },
+        {
+          "text": "the",
+          "start": 26.1,
+          "end": 26.2
+        },
+        {
+          "text": "number",
+          "start": 26.2,
+          "end": 26.775
+        },
+        {
+          "text": ",",
+          "start": 26.775,
+          "end": 26.9
+        },
+        {
+          "text": "and",
+          "start": 26.9,
+          "end": 27.013
+        },
+        {
+          "text": "the",
+          "start": 27.013,
+          "end": 27.1
+        },
+        {
+          "text": "whole",
+          "start": 27.1,
+          "end": 27.362
+        },
+        {
+          "text": "city",
+          "start": 27.362,
+          "end": 27.8
+        },
+        {
+          "text": "changes",
+          "start": 27.8,
+          "end": 28.35
+        },
+        {
+          "text": "with",
+          "start": 28.35,
+          "end": 28.525
+        },
+        {
+          "text": "it",
+          "start": 28.525,
+          "end": 28.725
+        },
+        {
+          "text": "—",
+          "start": 28.725,
+          "end": 28.8
+        },
+        {
+          "text": "street",
+          "start": 28.8,
+          "end": 29.15
+        },
+        {
+          "text": "by",
+          "start": 29.15,
+          "end": 29.363
+        },
+        {
+          "text": "street",
+          "start": 29.363,
+          "end": 30.163
+        },
+        {
+          "text": "—",
+          "start": 30.163,
+          "end": 30.25
+        },
+        {
+          "text": "and",
+          "start": 30.25,
+          "end": 30.375
+        },
+        {
+          "text": "none",
+          "start": 30.375,
+          "end": 30.563
+        },
+        {
+          "text": "of",
+          "start": 30.563,
+          "end": 30.675
+        },
+        {
+          "text": "it",
+          "start": 30.675,
+          "end": 30.825
+        },
+        {
+          "text": "was",
+          "start": 30.825,
+          "end": 31.012
+        },
+        {
+          "text": "stored",
+          "start": 31.012,
+          "end": 31.6
+        },
+        {
+          "text": "anywhere",
+          "start": 31.6,
+          "end": 32.6
+        },
+        {
+          "text": ".",
+          "start": 32.6,
+          "end": 32.725
+        }
+      ]
+    }
+  ]
+}

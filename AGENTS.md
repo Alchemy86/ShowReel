@@ -35,6 +35,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
 | A clip's own soundtrack (`ClipAudio`, on `Content::Clip`) is a level, not a placement — its `at`/`from`/`duration` are the clip's own timing, so `clip_track` builds its `AudioInput` by delegating to `Audio::resolve` rather than re-deriving fade clamping | `src/audio.rs`, `src/layer.rs` (`Layer::clip_audio_track`), `src/timeline.rs` (`Film::clip_audio`) |
 | Generated music (`Audio.music: Option<Music>`) is a *source*, not a parallel audio path: a `Music` spec resolves to a synthesised WAV exactly where a file track's `asset` resolves to a path (`Film::resolve_audio_tracks`), so from `Audio::resolve` on it is an ordinary `AudioInput` — fades/gain/mixing/mobile compose for free. One idiom (the NES/SID chiptune the devlog's `chiptune.py` proved, ported faithfully — envelope/spectrum correlation ≈0.9997/0.9999 vs the reference), not a synthesiser: a `Mood` is *data* (a progression + step patterns). Authoring mirrors `Grade`'s bare-word-or-object shorthand. Deterministic (a seeded `splitmix64`, unlike the reference's `numpy` global RNG) so renders reproduce and the temp WAV can be content-addressed. `MusicFit::Film` nudges the tempo so a whole number of bars spans the film (ends on a downbeat); the general per-cut-time solver is a documented next step, not half-built | `src/music.rs`, `src/audio.rs` (`Audio::music`), `src/timeline.rs` (`resolve_audio_tracks`, `resolve_music`) |
+| Narration (`Audio.narration: Option<Narration>`) is a *source* like music — a third arm in `resolve_audio_tracks` beside `music`/`asset`, so from `Audio::resolve` on it is an ordinary `AudioInput` — but with one deliberate difference: it does **not** synthesise at render. The voice is Kokoro, a Python model; synthesising per-render would make every `render` need that stack and break wasm. So it follows the clip/`web-pack` pattern instead: an explicit `showreel narrate` bakes it to a WAV **ahead of time**, and render only *finds* that WAV (`resolve_narration`, content-addressed by `Narration::baked_name` → un-findable if the script changed → loud "run narrate", never a stale take). A narration track's natural length is the *speech* (read from the baked WAV header in `resolve_audio_tracks`), not "to end of film". Direction is per-line (`pace`→synth speed, `pause_before`/`pause_after`→inserted silence). The engine **and** voice are film-declared (`engine`,`voice`); Kokoro/`bm_george` is one `SynthEngine` behind `narrate::engine_for`, not the design — a per-engine default voice (`default_voice`) and a `KNOWN_ENGINES` list checked in `validate` | `src/narration.rs` (spec/assembly/corruption check, all pure), `src/narrate.rs` (the `SynthEngine` seam + Kokoro bake), `src/audio.rs` (`Audio::narration`), `src/timeline.rs` (`resolve_narration`) |
 | Film files accept a narrow JSONC subset (comments, trailing commas) — deliberately not full JSON5 | `src/timeline.rs` |
 | The browser studio polls (the film file's mtime, and `/api/state`) rather than holding a socket open — one `tiny_http` worker thread per held connection is the cost a blocking server can't hide | `src/studio.rs` |
 | "API access" means the local HTTP surface, not the (already stable, already documented) Rust library — and it rides the studio's own server rather than a second, stateless one: `/api/render`/`still`/`info`/`check` answer against whatever film the running `showreel studio` instance already has loaded and validated, so there is one code path for "load a film," not two that can drift | `src/studio.rs`, `README.md`'s "API access" |
@@ -451,6 +452,30 @@ got before this round of features touched it.
   cuts by hand and re-verify audio (`ffprobe`/`volumedetect` a real level on the
   mobile cut, the same as the showreel reel).
 
+- **`examples/narration_demo.film.jsonc` is the proof film for narration
+  (`src/narration.rs`)** — the ASCII-city pitch read by Kokoro `bm_george` over
+  that engine's footage, the chiptune ducked underneath, captions cued from the
+  bake's word manifest. Its baked narration WAV + `.words.json` **are** committed
+  (in `examples/narration_demo/`) — the whole point is that render needs no voice
+  model — but the footage `city-film.mp4` is **not** (it is ASCII-city-engine
+  output, `.gitignore`d; see `examples/narration_demo.assets.md`). Two steps, in
+  order: `showreel narrate examples/narration_demo.film.jsonc -A
+  examples/narration_demo -o examples/narration_demo` (needs the Kokoro venv),
+  then `showreel render examples/narration_demo.film.jsonc -A
+  examples/narration_demo --crf 30 -o docs/narration-demo.mp4`. If you edit the
+  narration lines, the WAV's content-addressed name changes — re-bake, commit the
+  new WAV/manifest, delete the old, re-render both cuts, and re-verify audio on
+  each (measured on the committed cut: master −23.7 dB, voice ~10 dB over the
+  ducked bed, corruption ZCR 0.047, prosody `pitch_var_st` 3.21 st).
+
+- **`tools/narrate/` and `tools/prosody/` are the narration support tools.**
+  `tools/narrate/kokoro_narrate.py` is the thin Kokoro driver `showreel narrate`
+  embeds (`narrate::DRIVER` — keep them byte-identical, a test asserts it).
+  `tools/prosody/` holds the naturalness harness (`prosody.py`, numpy-only) and
+  the standalone corruption check (`check.py`, stdlib-only); `python3
+  tools/prosody/test_prosody.py` tests both with synthetic signals, no voice
+  model. These are the tools the voice was measured with — see their READMEs.
+
 - **Generated music needs the wasm blob rebuilt.** `Audio.asset` became
   `#[serde(default)]` when `Audio.music` was added, so a film with a music track
   fails to load in a browser running an *older* `tools/web/showreel.wasm`
@@ -462,6 +487,54 @@ got before this round of features touched it.
   film-level track — editing a music track's mood/key/bpm needs a repackage to be
   heard, the same staleness a `.srclip` carries. Inline-in-the-browser synthesis
   (a wasm PCM export → Web Audio) is a documented next step, unbuilt.
+
+- **Narration bakes ahead of render; the render path only *finds* the WAV.**
+  Unlike music (pure Rust, synthesised every render), narration needs `showreel
+  narrate` run first (Kokoro is Python — see below). `render`/`still`/`check` do
+  **not** synthesise; `resolve_narration` looks up the content-addressed
+  `Narration::baked_name` on the `-A` asset path and fails loudly ("run
+  `showreel narrate`") if absent. So the contract is: bake into your assets dir,
+  then render with that same `-A`. The name is a hash of the script (engine,
+  voice, every line's text/pace/pauses), so editing a line makes the old bake
+  un-findable rather than letting a stale take through — the same freshness
+  discipline `.srclip` and `Music::render_to_temp` have. `check` validates the
+  *spec* (engine known, voices/lines non-empty) but not that it is baked, exactly
+  as it does not synthesise music — the missing bake surfaces at render.
+
+- **The corruption gate is native and runs before any WAV is written.** A neural
+  vocoder can emit plausible-looking white noise that passes every codec/decode
+  check; zero-crossing rate of the loudest window separates it (speech ~0.13,
+  noise ~0.49). `narration::zero_crossing_rate`/`looks_like_speech` (a Rust port
+  of `tools/prosody/check.py`, so verification never depends on the Python stack
+  that produced the audio) checks **every synthesised line and the assembly**,
+  and `bake_narration` bails rather than write a corrupt file. Keep this — the
+  captain was sent broken audio twice before this check existed.
+
+- **The Python dependency is at *bake* time only, and the engine is a seam.**
+  `showreel narrate` shells out to a venv running Kokoro (`SHOWREEL_KOKORO_PYTHON`
+  / `--python` / default `~/.local/share/kokoro-venv/bin/python`); `render` needs
+  no Python at all. The driver `tools/narrate/kokoro_narrate.py` is `include_str!`d
+  into the binary (`narrate::DRIVER`) so `showreel narrate` is self-contained.
+  Two venv gotchas, handled in `run_driver` but worth knowing: **unset
+  `VIRTUAL_ENV`** (Kokoro's spaCy install throws a confusing error otherwise),
+  and the venv needs **`pip` inside it** (Kokoro shells out to install a model on
+  first use). Kokoro pins numpy 1.26/2.x → **Python 3.12** (not 3.14). The engine
+  is chosen by `narration.engine` via `narrate::engine_for`; adding a model (e.g.
+  voice-cloning) is a new `impl SynthEngine`, one row in `engine_for`, and one in
+  `narration::KNOWN_ENGINES` (keep those two in lock step) — `bm_george`/Kokoro is
+  a default, not the design. `tools/narrate/README.md` has the full setup.
+
+- **Narration also needs the wasm blob rebuilt (same reason as music), and it
+  is a browser *snapshot*.** Adding `Audio.narration` is an `Audio`-schema change,
+  so `./build-wasm.sh` and commit the blob — confirmed the hard way: an older blob
+  ignores the unknown `narration` field, sees an empty track and fails
+  validation. In the browser a narration track plays like music: `web-pack`
+  copies the **already-baked** WAV (it does *not* synthesise — no Python in
+  `web-pack`) and lists it in `narration.json` with its at/gain/fades + the
+  speech's own length; `tools/web/main.js`/`audio.js` play it as a cue through the
+  exact same envelope a music cue uses. A missing bake is the same loud failure
+  `render` gives. Editing the narration needs a re-bake **and** a re-`web-pack` to
+  be heard, the snapshot staleness `.srclip`/`music.json` already carry.
 
 - **`Rect::to_aspect` grows, `Rect::inscribed_aspect` crops.** `Fit::Cover` needs the
   second. Using the first letterboxes a square source into a wide frame — the exact

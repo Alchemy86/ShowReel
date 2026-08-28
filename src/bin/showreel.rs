@@ -171,6 +171,28 @@ enum Command {
         #[arg(short = 'A', long = "assets")]
         asset_roots: Vec<PathBuf>,
     },
+    /// Bake a film's narration to WAV, ahead of rendering. Runs the Kokoro
+    /// voice model through a Python venv once, verifies the audio is speech and
+    /// not noise, and writes a WAV plus word-timing manifest into the assets
+    /// directory. `render` then needs only ffmpeg — never Python. See the
+    /// README's "Narration" section and `tools/narrate/README.md`.
+    Narrate {
+        film: PathBuf,
+        /// Where to look for assets (a clip the narration mixes over). Repeatable.
+        #[arg(short = 'A', long = "assets")]
+        asset_roots: Vec<PathBuf>,
+        /// Where to write the baked WAV and manifest. Point `render`'s
+        /// `-A/--assets` at this directory. Defaults to the film's own folder.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// The Python interpreter with Kokoro installed. Defaults to
+        /// $SHOWREEL_KOKORO_PYTHON, else ~/.local/share/kokoro-venv/bin/python.
+        #[arg(long)]
+        python: Option<PathBuf>,
+        /// Re-synthesise even if a matching bake is already present.
+        #[arg(long)]
+        force: bool,
+    },
     /// List the font families ShowReel can see.
     Fonts {
         /// Only families containing this text.
@@ -257,6 +279,9 @@ fn main() -> Result<()> {
         }
         Command::Info { film, asset_roots } => cmd_info(film, asset_roots),
         Command::Check { film, asset_roots } => cmd_check(film, asset_roots),
+        Command::Narrate { film, asset_roots, out, python, force } => {
+            cmd_narrate(film, asset_roots, out, python, force)
+        }
         Command::Fonts { filter } => cmd_fonts(filter),
         #[cfg(feature = "studio")]
         Command::Studio { film, asset_roots, port, host, scale } => {
@@ -835,6 +860,68 @@ fn cmd_check(film_path: PathBuf, roots: Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+fn cmd_narrate(
+    film_path: PathBuf,
+    roots: Vec<PathBuf>,
+    out: Option<PathBuf>,
+    python: Option<PathBuf>,
+    force: bool,
+) -> Result<()> {
+    use showreel::narrate::{NarrateOptions, bake_film};
+    let film = load(&film_path)?;
+    let narration_tracks = film.audio.iter().filter(|a| a.is_narration()).count();
+    if narration_tracks == 0 {
+        bail!(
+            "{} declares no narration — nothing to bake. Add a \"narration\" track to a \
+             film's audio (see the README's \"Narration\" section).",
+            film_path.display()
+        );
+    }
+
+    // Default the output to the film's own directory, so a plain `render` with
+    // the same `-A` (which already searches the film's folder) finds the bake.
+    let out_dir = out
+        .or_else(|| film_path.parent().map(|p| if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_path_buf() }))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let mut opts = NarrateOptions { out_dir: out_dir.clone(), force, ..Default::default() };
+    if let Some(p) = python {
+        opts.python = p;
+    }
+
+    println!(
+        "{}: baking {} narration track{} with {} → {}",
+        film_path.display(),
+        narration_tracks,
+        if narration_tracks == 1 { "" } else { "s" },
+        opts.python.display(),
+        out_dir.display(),
+    );
+    let _ = roots; // reserved for future previewing a bake against its footage
+
+    let reports = bake_film(&film, &opts)?;
+    for r in &reports {
+        println!(
+            "  track {} ({}): {} line{}, {:.2}s, ZCR {:.3} — {}{}",
+            r.track_index + 1,
+            r.voice,
+            r.lines,
+            if r.lines == 1 { "" } else { "s" },
+            r.duration,
+            r.zcr,
+            if r.cached { "cached " } else { "" },
+            r.wav.display(),
+        );
+        println!("           words {}", r.manifest.display());
+    }
+    println!(
+        "done. Render with: showreel render {} -A {}",
+        film_path.display(),
+        out_dir.display()
+    );
+    Ok(())
+}
+
 #[cfg(feature = "studio")]
 fn cmd_studio(
     film_path: PathBuf,
@@ -1076,6 +1163,48 @@ fn cmd_web_pack(
         }));
     }
     std::fs::write(out.join("music.json"), serde_json::to_string(&music_manifest)?)?;
+
+    // Baked narration tracks: the voice model is native-only (Python — see
+    // `src/narration.rs`), so unlike music the WAV is NOT synthesised here; it
+    // is the file `showreel narrate` already baked. Copy it and record its
+    // at/gain/fades plus its own speech length in `narration.json`, which the
+    // browser plays as a cue exactly like a music track (`tools/web/audio.js`).
+    // A missing bake is the same loud failure the render path gives.
+    let mut narration_manifest = Vec::new();
+    for (i, a) in film.audio.iter().enumerate() {
+        let Some(narr) = &a.narration else { continue };
+        let src = assets.resolve(&narr.baked_name()).map_err(|_| {
+            anyhow::anyhow!(
+                "narration not baked: no `{}` on the asset path — run `showreel narrate` before `web-pack`",
+                narr.baked_name()
+            )
+        })?;
+        let bytes = std::fs::read(&src)?;
+        let dur = showreel::narration::wav_duration(&bytes)?;
+        let name = format!("narration-{i}.wav");
+        let dest = out.join("assets").join(&name);
+        if let Some(dir) = dest.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&dest, &bytes)?;
+        asset_bytes += bytes.len() as u64;
+        println!(
+            "  narr   {name}  {} ({:.2}s), {:.0} KB",
+            narr.source_label(),
+            dur,
+            bytes.len() as f64 / 1024.0
+        );
+        narration_manifest.push(serde_json::json!({
+            "file": format!("assets/{name}"),
+            "at": a.at.as_secs(),
+            "from": 0.0,
+            "duration": dur,
+            "fade_in": a.fade_in.as_secs(),
+            "fade_out": a.fade_out.as_secs(),
+            "gain": a.gain,
+        }));
+    }
+    std::fs::write(out.join("narration.json"), serde_json::to_string(&narration_manifest)?)?;
 
     // A clip's own soundtrack is baked into its source video, which the
     // browser never has (only the pre-decoded `.srclip` frames — see

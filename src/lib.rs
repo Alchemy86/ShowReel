@@ -55,10 +55,18 @@ pub mod audio;
 // Pure DSP (sample buffers, no ffmpeg, no filesystem), so — unlike `encode` —
 // it stays available on every target, wasm included. See its module docs.
 pub mod music;
+// The narration *spec*, assembly and corruption check are pure (sample buffers,
+// no filesystem, no model), so they stay on every target. The Kokoro bake that
+// feeds them is native-only — see `narrate` below.
+pub mod narration;
 // Shells out to ffmpeg (`std::process::Command`), which has no browser
 // story — see src/wasm.rs's module docs — so it is native-only.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod encode;
+// Shells out to a Python venv running Kokoro to bake narration to a WAV — a
+// filesystem-and-subprocess operation with no browser story, so native-only.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod narrate;
 pub mod preview;
 pub mod prelude;
 #[cfg(feature = "studio")]

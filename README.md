@@ -115,6 +115,10 @@ which module it lives in.
 - **Generated music**: a chiptune synthesised from a one-line description,
   deterministic and sized to the film — tempo-fit so a beat lands on the cut,
   with no bed to license (`src/music.rs`)
+- **Directed narration**: a voice-over script the film owns, marked up line by
+  line for pace and pause, spoken by a voice model and baked ahead of time so
+  `render` needs no Python — with real per-word timings for cueing and captions
+  (`src/narration.rs`, `src/narrate.rs`)
 - Both the full-quality master and the 720p/30fps mobile cut carry audio —
   checked by an ffprobe-driven test, not assumed (`tests/render_pipeline.rs`)
 
@@ -358,6 +362,88 @@ and ships it as a snapshot the Web Audio preview plays (editing a music track's
 mood/key/bpm needs a repackage to be heard, the same as a clip's own audio). The
 general "align to N arbitrary interior cut times" solver is a documented next
 step, not a half-built one — see `src/music.rs`.
+
+### Narration, directed
+
+A track's source can also be *narration* — a script a voice model speaks. Like
+music it hangs off the film alongside the other tracks, but the script is
+written into the film and marked up **line by line**, the way you would direct a
+voice actor:
+
+```jsonc
+"audio": [
+  {
+    "narration": {
+      "engine": "kokoro",           // which synthesiser (a seam — see below)
+      "voice": "bm_george",         // interpreted by the engine; here a British male read
+      "gap": 0.45,                  // default beat after a line
+      "lines": [
+        { "text": "Everything you are about to see is built from a single number.",
+          "pace": 0.95, "pause_after": 0.7 },   // a shade slower, hold a beat
+        { "text": "No artist drew this city, and nobody decided where the street lamps go.",
+          "pace": 1.0 },
+        { "text": "Change the number, and the whole city changes with it.",
+          "pace": 0.92 }            // slow, to land the point
+      ]
+    },
+    "at": 1.4
+  }
+]
+```
+
+Or the terse forms — `"narration": "One line."`, or `"narration": ["First.",
+"Second."]` — the same bare-word-or-object shorthand music and the colour grade
+use. **`pace`** is the synthesiser's speed for that one line, and **`pause_before`
+/ `pause_after`** are silence around it. One flat speed across a whole script is
+exactly what sounds generated; per-line direction is what makes it sound
+*directed*, and it is the single biggest lever after the voice itself. From `at`
+on it is an ordinary track — gain, fades, mixing and the mobile cut all apply,
+because narration becomes a WAV and from there is just an audio input.
+
+**Bake it once, then render needs no Python.** This is the one thing that works
+differently from music. Music is pure Rust and synthesises on every render;
+a voice model is a heavy Python stack, so narration is *baked ahead of time*
+into a plain WAV asset beside the film — the same shape as `web-pack`
+pre-decoding a clip:
+
+```
+showreel narrate examples/narration_demo.film.jsonc -A examples/narration_demo -o examples/narration_demo
+showreel render  examples/narration_demo.film.jsonc -A examples/narration_demo -o docs/narration-demo.mp4
+```
+
+`narrate` runs the model, **verifies the audio is speech and not noise** (a
+neural vocoder can emit plausible-looking white noise that passes every codec
+check — the zero-crossing gate catches it), and writes a content-addressed WAV
+plus a **word-timing manifest**. `render` then only mixes that WAV with ffmpeg —
+no Python, no model. The WAV is named by a hash of the script, so editing a line
+makes the old bake un-findable and `render` says so, naming the fix, rather than
+quietly using a stale take. Committing the baked WAV (it is small) means anyone
+who clones the repo can render the audio with no voice model at all — narration
+as a first-class, pre-rendered asset.
+
+**Word timings are real.** The model predicts a duration for every word, so the
+manifest beside the WAV carries a genuine start/end for each word (not a
+characters-per-second guess). That is what lets narration be cued against what
+is on screen — in `examples/narration_demo.film.jsonc` the lower-third captions'
+`from`/`duration` come straight out of the manifest — and is the groundwork for
+captions.
+
+**The synthesiser is a seam, not the design.** `engine` and `voice` are both
+declared in the film. Kokoro (voice `bm_george`) is the one engine implemented,
+but it sits behind a `SynthEngine` trait and an engine registry: a different
+model — a voice-cloning engine, say — is a new entry there and a one-word change
+in the film, with nothing in the format to unpick.
+
+**What a stranger who clones the repo needs.** To *render* a film whose
+narration is already baked (like the committed demo): nothing but ffmpeg. To
+*bake their own* narration, they need a Python environment with Kokoro
+installed; `tools/narrate/README.md` has the exact setup, and `showreel narrate
+--python <path>` (or `$SHOWREEL_KOKORO_PYTHON`) points at it. This is a real
+dependency, honestly: narration is the one ShowReel feature whose *authoring*
+needs a stack behind the terminal — but its *use* does not, which is the whole
+reason it bakes to an asset. `examples/narration_demo.film.jsonc` is the proof
+film: the ASCII-city pitch read over that engine's footage, the chiptune ducked
+underneath, rendered to `docs/narration-demo.mp4`.
 
 ### A clip's own audio
 
