@@ -63,8 +63,8 @@ Everything else was claimed as already-working and holds up on screen.
 | **Transitions** | cut, dissolve, fade-through-colour, wipe, slide, push, iris, zoom and a cross-blur dissolve, each composable with any easing curve or spring |
 | **Overlays** | titles, lower-thirds, callouts that point at things, counters that count, a **pull-up** that lifts a piece of the frame, dims the rest and annotates it, and a progress bar that fills like a counter but draws no digits |
 | **Sound** | any audio file, placed and trimmed on the film's clock like a clip, with fades in and out, gain, and several tracks mixed. It reaches the master **and** the mobile cut. A video clip's own soundtrack joins the mix too, with the same gain, fades and a mute. A track can also be **generated music** — a chiptune synthesised to the film's own length, tempo-fit so a beat lands on the cut — see [below](#generated-music-timed-to-the-film) |
-| **Deterministic** | frame *n* is a pure function of the description. Two renders give byte-identical PNGs and byte-identical mp4s |
-| **Delivery** | a full-quality master and the 720p/30fps mobile cut, from one command — plus a palette-optimised, README-sized **GIF** of any window of the film, from another ([`showreel gif`](#gif-export)) |
+| **Deterministic** | frame *n* is a pure function of the description — always pixel-identical, and byte-identical PNGs and mp4s too, given the same render settings *and* worker count (`--max-workers` pins it; `showreel render`'s auto-planned default can pick a different worker count between two runs if the machine's available memory changed in between, which only ever varies the segmented default path's `ffmpeg` encode bytes, never a rendered pixel — see `docs/render-budget.md`) |
+| **Delivery** | a full-quality master and the 720p mobile cut (its frame rate defaults to the film's own, not a flattening fixed 30), from one command, its segments rendered across a bounded worker pool sized from real machine memory rather than a guess — plus a palette-optimised, README-sized **GIF** of any window of the film, from another ([`showreel gif`](#gif-export)) |
 | **A studio** | `showreel studio film.json` — a scrubber, live reload and the film's structure in a browser, behind an opt-in feature so the plain render path stays as light as it was |
 | **A colour grade** | a post-composite lift/contrast/saturation/vignette pass, `"documentary"` in one word or five raw knobs, over a still, a clip or a parallax stack alike — see [below](#a-colour-grade) |
 | **Animated charts** | a plotted function or line, or bars that grow, on deliberate axes — drawn in over the film's own clock, with data written inline **or read from a CSV/JSON file** — see [below](#an-animated-chart) |
@@ -119,7 +119,7 @@ which module it lives in.
   line for pace and pause, spoken by a voice model and baked ahead of time so
   `render` needs no Python — with real per-word timings for cueing and captions
   (`src/narration.rs`, `src/narrate.rs`)
-- Both the full-quality master and the 720p/30fps mobile cut carry audio —
+- Both the full-quality master and the 720p mobile cut carry audio —
   checked by an ffprobe-driven test, not assumed (`tests/render_pipeline.rs`)
 
 **Delivery**
@@ -127,7 +127,14 @@ which module it lives in.
   (`src/encode.rs`). The whole-film render is segmented and resumable: a
   killed render (a crash, a `Ctrl-C`) leaves finished chunks on disk, and a
   rerun with the same film/assets/settings picks up where it left off
-  instead of starting over (`src/segments.rs`, `docs/segmented-rendering.md`)
+  instead of starting over — and its segments render across a bounded,
+  machine-aware worker pool rather than strictly one at a time, sized from a
+  *measured* per-worker memory cost and a real memory ceiling it degrades
+  toward rather than risking an OOM (`src/segments.rs`, `src/budget.rs`,
+  `docs/segmented-rendering.md`, `docs/render-budget.md`). The mobile cut's
+  frame rate defaults to the film's own fps (not a fixed 30, which flattened
+  fast motion) — `--mobile-fps 30` restores the old, Telegram-safe delivery
+  rate explicitly
 - `showreel gif` — a window of the film as a palette-optimised, README-sized
   looping GIF, its 256 colours generated from the footage rather than a fixed
   web palette (`src/encode.rs`, [GIF export](#gif-export))

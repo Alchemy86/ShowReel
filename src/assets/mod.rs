@@ -66,6 +66,18 @@ impl Resolver for AbsoluteResolver {
 /// `Arc`s, so worker threads rendering different frames share one copy.
 pub struct AssetStore {
     resolvers: Vec<Box<dyn Resolver>>,
+    /// Every directory handed to [`AssetStore::add_root`], in order — kept
+    /// alongside `resolvers` (which only exposes resolution, not enumeration)
+    /// so a caller can rebuild an equivalent, independently-caching store
+    /// without re-deriving the roots itself. `src/segments.rs`'s concurrent
+    /// segment workers are the reason this exists: each gets its own
+    /// `AssetStore` (its own `ffmpeg` decode child for any clip, rather than
+    /// contending one streaming clip's single decoder across threads — see
+    /// that module's doc), built from this list. A store built only from
+    /// programmatically inserted assets (`insert_still`/`insert_clip`/
+    /// `insert_data`, no roots at all) can't be rebuilt this way; callers
+    /// that need concurrency must go through the filesystem.
+    roots: Vec<PathBuf>,
     stills: Mutex<HashMap<String, Arc<Still>>>,
     clips: Mutex<HashMap<String, Arc<Clip>>>,
     datas: Mutex<HashMap<String, Arc<DataTable>>>,
@@ -75,6 +87,7 @@ impl AssetStore {
     pub fn new() -> Self {
         AssetStore {
             resolvers: vec![Box::new(AbsoluteResolver)],
+            roots: Vec::new(),
             clips: Mutex::new(HashMap::new()),
             stills: Mutex::new(HashMap::new()),
             datas: Mutex::new(HashMap::new()),
@@ -89,8 +102,16 @@ impl AssetStore {
     }
 
     pub fn add_root(&mut self, root: impl Into<PathBuf>) -> &mut Self {
-        self.resolvers.push(Box::new(DirResolver(root.into())));
+        let root = root.into();
+        self.resolvers.push(Box::new(DirResolver(root.clone())));
+        self.roots.push(root);
         self
+    }
+
+    /// Every root this store searches, in the order they were added — see
+    /// the field doc on why this exists.
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
     }
 
     pub fn add_resolver(&mut self, r: Box<dyn Resolver>) -> &mut Self {

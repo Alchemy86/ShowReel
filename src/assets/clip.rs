@@ -368,9 +368,32 @@ fn stream_cache_frames(stride: usize) -> usize {
     by_concurrency.min(by_budget)
 }
 
+thread_local! {
+    /// Caps how many threads ffmpeg uses to *decode* a clip started from
+    /// this thread — see [`set_decode_threads_hint`].
+    static DECODE_THREADS_HINT: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Sets (or clears, with `None`) a per-thread cap on how many threads
+/// ffmpeg's *decoder* uses for any clip subsequently loaded/streamed from
+/// this thread. Left unset, ffmpeg auto-detects and uses every core it can
+/// see — fine for one decode, but `src/segments.rs`'s concurrent segment
+/// workers each start their own decoder, and N of them left at the default
+/// oversubscribes the machine N-fold rather than sharing it. A thread-local
+/// (not a global) so one worker's cap never leaks onto another thread's
+/// unrelated decode. See that module's doc for the measurement that found
+/// this: four unthrottled concurrent workers were *slower* than one serial
+/// pass.
+pub fn set_decode_threads_hint(threads: Option<u32>) {
+    DECODE_THREADS_HINT.with(|c| c.set(threads));
+}
+
 fn ffmpeg_decode_command(path: &Path, fps: f64, out_w: u32, out_h: u32, trim: Option<(f64, f64)>) -> Command {
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-nostdin").arg("-loglevel").arg("error");
+    if let Some(threads) = DECODE_THREADS_HINT.with(|c| c.get()) {
+        cmd.arg("-threads").arg(threads.to_string());
+    }
     if let Some((start, _)) = trim {
         cmd.arg("-ss").arg(format!("{start}"));
     }

@@ -51,6 +51,17 @@ pub struct EncodeOptions {
     /// browser and messenger decodes.
     pub audio_codec: String,
     pub audio_bitrate: String,
+    /// Caps the encoder's own thread count (`-threads N`). `None` leaves
+    /// ffmpeg's own auto-detection alone — every existing caller's
+    /// behaviour, unchanged. `src/segments.rs`'s concurrent segment workers
+    /// set this to roughly `cores / worker_count`: ffmpeg defaults to using
+    /// every core it can see for both decode and encode, so N workers each
+    /// left at the default would oversubscribe the machine N-fold and cost
+    /// wall clock rather than saving it — measured directly (see
+    /// `docs/render-budget.md`): four unthrottled concurrent workers on a
+    /// 20-core box were *slower* than one serial pass, confirmed by a 15×
+    /// jump in involuntary context switches.
+    pub threads: Option<u32>,
 }
 
 impl Default for EncodeOptions {
@@ -67,6 +78,7 @@ impl Default for EncodeOptions {
             audio: Vec::new(),
             audio_codec: "aac".into(),
             audio_bitrate: "192k".into(),
+            threads: None,
         }
     }
 }
@@ -356,6 +368,9 @@ impl FfmpegSink {
             .args(["-crf", &opts.crf.to_string()])
             .args(["-preset", &opts.preset])
             .args(["-pix_fmt", &opts.pixel_format]);
+        if let Some(threads) = opts.threads {
+            cmd.args(["-threads", &threads.to_string()]);
+        }
         if opts.faststart {
             cmd.args(["-movflags", "+faststart"]);
         }

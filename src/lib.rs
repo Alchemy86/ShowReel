@@ -67,6 +67,10 @@ pub mod encode;
 // same native-only gate applies.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod segments;
+// The machine-aware render budget `segments` sizes its worker pool from:
+// file locking, `/proc`, thread spawning. All native-only, same gate.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod budget;
 // Shells out to a Python venv running Kokoro to bake narration to a WAV — a
 // filesystem-and-subprocess operation with no browser story, so native-only.
 #[cfg(not(target_arch = "wasm32"))]

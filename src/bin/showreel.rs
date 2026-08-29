@@ -44,15 +44,25 @@ enum Command {
         /// Only these frames, as `start-end` (inclusive) or `start-`.
         #[arg(long)]
         frames: Option<String>,
-        /// Skip the 720p/30fps mobile cut.
+        /// Skip the 720p mobile cut.
         #[arg(long)]
         no_mobile: bool,
+        /// Frame rate of the mobile cut. Defaults to the film's own fps, so
+        /// motion (e.g. a Game Boy walk cycle) isn't lost to downsampling —
+        /// pass 30 for the old, Telegram-safe (it rejects 60fps) behaviour.
+        #[arg(long)]
+        mobile_fps: Option<u32>,
         /// Also write the frames as numbered PNGs into this directory.
         #[arg(long)]
         png: Option<PathBuf>,
         /// Quality/speed trade-off for the master (lower is better).
         #[arg(long, default_value_t = 17)]
         crf: u8,
+        /// Cap how many segments render at once. Unset plans automatically
+        /// from measured memory and machine state (see `src/budget.rs`); `1`
+        /// forces the old strictly-serial behaviour.
+        #[arg(long)]
+        max_workers: Option<usize>,
     },
     /// Render a section of a film to a palette-optimised animated GIF, sized
     /// for a README or a web page. A GIF is always a *window* of a film, never
@@ -279,8 +289,8 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Render { film, out, asset_roots, scale, frames, no_mobile, png, crf } => {
-            cmd_render(film, out, asset_roots, scale, frames, no_mobile, png, crf)
+        Command::Render { film, out, asset_roots, scale, frames, no_mobile, mobile_fps, png, crf, max_workers } => {
+            cmd_render(film, out, asset_roots, scale, frames, no_mobile, mobile_fps, png, crf, max_workers)
         }
         Command::Gif {
             film,
@@ -306,7 +316,7 @@ fn main() -> Result<()> {
             cmd_sheet(film, every, out, asset_roots, columns, thumb)
         }
         Command::Preview { film, out, asset_roots, scale } => {
-            cmd_render(film, Some(out), asset_roots, scale, None, true, None, 26)
+            cmd_render(film, Some(out), asset_roots, scale, None, true, None, None, 26, None)
         }
         Command::New { out, title, width, height, fps, force } => {
             cmd_new(out, title, width, height, fps, force)
@@ -390,8 +400,10 @@ fn cmd_render(
     scale: f64,
     frames: Option<String>,
     no_mobile: bool,
+    mobile_fps: Option<u32>,
     png: Option<PathBuf>,
     crf: u8,
+    max_workers: Option<usize>,
 ) -> Result<()> {
     if !ffmpeg_available() {
         bail!("ffmpeg is not on PATH; ShowReel needs it to encode");
@@ -443,7 +455,7 @@ fn cmd_render(
     // debugging/inspection paths, not the "long render that dies at 90%"
     // case that exists for, so they keep the old single-pass behaviour.
     let stats = if frames.is_none() && png.is_none() {
-        showreel::segments::render_segmented(&renderer, &film, &assets, &out, &opts)?
+        showreel::segments::render_segmented(&renderer, &film, &assets, &out, &opts, max_workers)?
     } else {
         let mut encoder =
             FfmpegSink::new(&out, film.width, film.height, film.fps, &opts, film.background)?;
@@ -463,9 +475,16 @@ fn cmd_render(
     println!("  master  {}", out.display());
     if !no_mobile {
         let mob = mobile_path(&out);
-        mobile_cut(&out, &mob, &MobileOptions::default())
-            .context("producing the mobile cut")?;
-        println!("  mobile  {} (720w, 30fps, +faststart)", mob.display());
+        // Default to the film's own fps rather than the library's
+        // Telegram-safe 30 (`MobileOptions::default()`, still what
+        // `studio`/`mcp` use): downsampling motion to 30fps reads as a hop
+        // rather than a walk on anything animated at a higher native rate
+        // (a Game Boy walk cycle prompted this). `--mobile-fps 30` restores
+        // the old, delivery-safe behaviour explicitly.
+        let fps = mobile_fps.unwrap_or_else(|| film.fps.round() as u32);
+        let mobile_opts = MobileOptions { fps, ..MobileOptions::default() };
+        mobile_cut(&out, &mob, &mobile_opts).context("producing the mobile cut")?;
+        println!("  mobile  {} (720w, {fps}fps, +faststart)", mob.display());
     }
     Ok(())
 }

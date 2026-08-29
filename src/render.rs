@@ -74,6 +74,14 @@ pub struct RenderStats {
     pub asset_bytes: usize,
     pub width: u32,
     pub height: u32,
+    /// System-wide memory this render used at its worst point, measured by
+    /// `src/budget.rs`'s `PeakSampler` — 0 for a path that doesn't run the
+    /// budget system (the plain, unsegmented `render_range`/`render_all`;
+    /// see `src/segments.rs`'s module doc for which path is which).
+    pub peak_memory_bytes: u64,
+    /// How many segment workers ran at once — 1 for a path with no
+    /// concurrent worker pool.
+    pub workers: usize,
 }
 
 impl RenderStats {
@@ -98,7 +106,17 @@ impl std::fmt::Display for RenderStats {
             self.ms_per_frame(),
             self.fps(),
             self.asset_bytes as f64 / 1e6
-        )
+        )?;
+        if self.peak_memory_bytes > 0 || self.workers > 1 {
+            write!(
+                f,
+                ", {} worker{} at once, {:.0} MB peak",
+                self.workers,
+                if self.workers == 1 { "" } else { "s" },
+                self.peak_memory_bytes as f64 / 1e6
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -256,6 +274,8 @@ impl<'a> Renderer<'a> {
             asset_bytes: self.assets.memory_bytes(),
             width: self.film.width,
             height: self.film.height,
+            peak_memory_bytes: 0,
+            workers: 1,
         })
     }
 
