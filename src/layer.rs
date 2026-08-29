@@ -336,6 +336,79 @@ fn border_w_default() -> f64 {
     3.0
 }
 
+/// Spec for [`Layer::burst`] — see that constructor's doc for the effect.
+/// Plain data: tune the fields you need with struct-update syntax
+/// (`BurstSpec { distance: 900.0, ..Default::default() }`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BurstSpec {
+    /// Where the clips start, clustered, in fractions of the frame.
+    pub centre: (f64, f64),
+    /// Each clip's own size at rest, in fractions of the frame.
+    pub clip_size: (f64, f64),
+    /// How far a clip travels from its resting placement, in pixels — the
+    /// same convention `Motion`'s own distances use (see `crate::motion`).
+    pub distance: f64,
+    /// How long each clip is on screen, travelling.
+    pub over: Time,
+    /// The gap between one clip launching and the next — what makes the
+    /// burst ripple rather than pop all at once.
+    pub stagger: Time,
+    /// Grow factor by the time a clip reaches `distance`.
+    pub scale_to: f64,
+    /// Eases both the outward travel and the grow together.
+    pub easing: Easing,
+    /// A quick pop so a clip doesn't just appear at full size. `None` skips it.
+    pub enter: Option<Motion>,
+    /// A quick fade so a clip doesn't just vanish mid-flight. `None` skips it.
+    pub exit: Option<Motion>,
+    /// Degrees of random wobble added to each evenly-fanned heading, so the
+    /// burst reads as organic rather than a mechanical pinwheel. 0 turns it off.
+    pub jitter_deg: f64,
+    /// Heading of the first clip, degrees clockwise from +x — see
+    /// [`Drift::heading`].
+    pub start_heading_deg: f64,
+    /// Seeds the (deterministic) jitter: the same seed always fans the same
+    /// way, so a burst looks identical render to render.
+    pub seed: u64,
+}
+
+impl Default for BurstSpec {
+    fn default() -> Self {
+        BurstSpec {
+            centre: (0.5, 0.5),
+            clip_size: (0.16, 0.16),
+            distance: 780.0,
+            over: Time::secs(1.5),
+            stagger: Time::secs(0.1),
+            scale_to: 1.7,
+            // Accelerating outward reads as energy; a constant speed reads
+            // as a slide. `InCubic` is barely-there at launch and fastest
+            // right as each clip leaves the frame.
+            easing: Easing::InCubic,
+            enter: Some(
+                Motion::new(crate::motion::MotionKind::Scale { from: 0.3 }, 0.18)
+                    .eased(Easing::OutBack),
+            ),
+            exit: Some(Motion::fade(0.25)),
+            jitter_deg: 16.0,
+            start_heading_deg: -90.0,
+            seed: 1,
+        }
+    }
+}
+
+/// A tiny deterministic hash (splitmix64's finaliser) so a burst's heading
+/// jitter is reproducible: the same `(seed, i)` always nudges the same way,
+/// render to render — the same reasoning `music::Rng` is seeded for.
+fn burst_jitter(seed: u64, i: usize) -> f64 {
+    let mut z = seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    let u = (z >> 11) as f64 / (1u64 << 53) as f64;
+    u * 2.0 - 1.0
+}
+
 /// One depth-plane image in a [`Content::Parallax`] stack.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParallaxPlane {
@@ -931,6 +1004,45 @@ impl Layer {
             crate::motion::MotionKind::Scale { from: 0.9 },
             0.6,
         ))
+    }
+
+    /// A burst: one clip layer per asset, clustered near `spec.centre`,
+    /// launching in turn — staggered by `spec.stagger`, so the burst ripples
+    /// rather than popping all at once — on headings fanned evenly around a
+    /// circle and nudged by `spec.jitter_deg` so it reads as organic rather
+    /// than a mechanical pinwheel. Each clip keeps playing while it travels.
+    ///
+    /// Not a new render primitive: every layer this returns is an ordinary
+    /// `Content::Clip`, placed with `Placement::Frac` and animated with
+    /// [`Drift`] — see the README's "A burst" section for the identical
+    /// effect written directly as film JSON, with no Rust involved.
+    pub fn burst<S: AsRef<str>>(assets: &[S], spec: &BurstSpec) -> Vec<Layer> {
+        let n = assets.len();
+        let (cx, cy) = spec.centre;
+        let (cw, ch) = spec.clip_size;
+        assets
+            .iter()
+            .enumerate()
+            .map(|(i, asset)| {
+                let fan = if n <= 1 { 0.0 } else { 360.0 * i as f64 / n as f64 };
+                let heading = spec.start_heading_deg + fan + burst_jitter(spec.seed, i) * spec.jitter_deg;
+                let mut layer = Layer::clip(asset.as_ref())
+                    .frac(cx - cw / 2.0, cy - ch / 2.0, cw, ch)
+                    .from(spec.stagger * i as f64)
+                    .lasting(spec.over)
+                    .drifting(
+                        Drift::heading(heading, spec.distance).grow_to(spec.scale_to).eased(spec.easing),
+                    )
+                    .z(i as i32);
+                if let Some(e) = spec.enter {
+                    layer = layer.entering(e);
+                }
+                if let Some(e) = spec.exit {
+                    layer = layer.exiting(e);
+                }
+                layer
+            })
+            .collect()
     }
 
     // ---- builders --------------------------------------------------------
@@ -2771,5 +2883,71 @@ mod tests {
         );
         let s = serde_json::to_string(&l.content).unwrap();
         assert_eq!(serde_json::from_str::<Content>(&s).unwrap(), l.content);
+    }
+
+    // ---- burst -------------------------------------------------------
+
+    #[test]
+    fn a_burst_makes_one_clip_per_asset_fanned_and_staggered() {
+        let assets = ["a.mp4", "b.mp4", "c.mp4", "d.mp4"];
+        let spec = BurstSpec { jitter_deg: 0.0, ..Default::default() };
+        let layers = Layer::burst(&assets, &spec);
+        assert_eq!(layers.len(), 4);
+
+        let mut headings = Vec::new();
+        for (i, l) in layers.iter().enumerate() {
+            let Content::Clip { asset, .. } = &l.content else { panic!("expected a clip") };
+            assert_eq!(asset.as_str(), assets[i]);
+            // Launches ripple, i seconds*stagger apart.
+            assert!((l.from.as_secs() - spec.stagger.as_secs() * i as f64).abs() < 1e-9);
+            // Later launches draw on top.
+            assert_eq!(l.z, i as i32);
+            let drift = l.drift.expect("a burst clip travels");
+            // Every clip travels the same distance, just a different way.
+            let mag = (drift.dx * drift.dx + drift.dy * drift.dy).sqrt();
+            assert!((mag - spec.distance).abs() < 1e-6, "{mag} != {}", spec.distance);
+            headings.push(drift.dy.atan2(drift.dx).to_degrees());
+        }
+        // Evenly fanned (no jitter here): consecutive headings 90 degrees apart.
+        for i in 1..headings.len() {
+            let step = (headings[i] - headings[i - 1]).rem_euclid(360.0);
+            assert!((step - 90.0).abs() < 1e-6, "{headings:?}");
+        }
+    }
+
+    #[test]
+    fn burst_jitter_is_deterministic_and_bounded() {
+        for i in 0..50 {
+            let j = burst_jitter(7, i);
+            assert!((-1.0..1.0).contains(&j), "{j} out of range at {i}");
+            assert_eq!(j, burst_jitter(7, i), "same seed+index must jitter the same way");
+        }
+        // A different seed generally nudges differently.
+        assert_ne!(burst_jitter(7, 3), burst_jitter(8, 3));
+    }
+
+    #[test]
+    fn a_single_clip_burst_still_places_and_drifts_it() {
+        let layers = Layer::burst(&["only.mp4"], &BurstSpec::default());
+        assert_eq!(layers.len(), 1);
+        assert!(layers[0].drift.is_some());
+    }
+
+    #[test]
+    fn a_burst_clip_round_trips_through_json() {
+        let layers = Layer::burst(&["a.mp4"], &BurstSpec { jitter_deg: 0.0, ..Default::default() });
+        let s = serde_json::to_string(&layers[0]).unwrap();
+        let back: Layer = serde_json::from_str(&s).unwrap();
+        // Struct equality on the whole layer is too strict here: a `dx`/`dy`
+        // this close to a machine-epsilon zero (heading -90 degrees) can lose
+        // its last bit through a JSON float round trip, the same float-noise
+        // every other f64 round-trip test in this crate works around.
+        assert_eq!(back.content, layers[0].content);
+        assert_eq!(back.placement, layers[0].placement);
+        assert_eq!(back.enter, layers[0].enter);
+        assert_eq!(back.exit, layers[0].exit);
+        let (a, b) = (back.drift.unwrap(), layers[0].drift.unwrap());
+        assert!((a.dx - b.dx).abs() < 1e-9 && (a.dy - b.dy).abs() < 1e-9);
+        assert_eq!((a.scale_to, a.easing), (b.scale_to, b.easing));
     }
 }
