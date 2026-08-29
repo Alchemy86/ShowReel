@@ -63,6 +63,10 @@ pub mod narration;
 // story — see src/wasm.rs's module docs — so it is native-only.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod encode;
+// Segmented, resumable rendering sits on top of `encode`/`render`, so the
+// same native-only gate applies.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod segments;
 // Shells out to a Python venv running Kokoro to bake narration to a WAV — a
 // filesystem-and-subprocess operation with no browser story, so native-only.
 #[cfg(not(target_arch = "wasm32"))]

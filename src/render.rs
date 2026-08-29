@@ -461,4 +461,82 @@ mod tests {
         let r = Renderer::new(&f, &store, FontDb::shared());
         assert_eq!(centre(&r.render_at(Time(0.2)).unwrap()), (255, 0, 0));
     }
+
+    /// `src/segments.rs`'s whole resumable-render design rests on one
+    /// invariant: rendering a streaming clip's frames through several
+    /// sequential `render_frame` sub-ranges must produce exactly the frames
+    /// one continuous pass would. This was in fact caught wrong once during
+    /// development — not here, but as a much bigger and slower symptom (a
+    /// visibly different on-screen number a few segments in, on real
+    /// footage, that turned out to be an aggressive-crf encoder artifact and
+    /// not a real bug — the raw pixels always matched). This test is the
+    /// fast, permanent, ffmpeg-encoder-free version of that investigation.
+    #[test]
+    fn sequential_render_ranges_over_a_streaming_clip_match_one_continuous_pass() {
+        use crate::assets::clip::Clip;
+        use std::process::Command;
+
+        let ffmpeg_ok =
+            Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false);
+        if !ffmpeg_ok {
+            eprintln!("skipping: ffmpeg is not on PATH");
+            return;
+        }
+        let dir = std::env::temp_dir().join("showreel-render-segment-composability");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("synth.mp4");
+        let status = Command::new("ffmpeg")
+            .args(["-y", "-nostdin", "-loglevel", "error", "-f", "lavfi"])
+            .arg("-i")
+            .arg("testsrc2=size=48x27:rate=20:duration=6")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "could not synthesise a test clip");
+
+        let fps = 20.0;
+        let max_w = 1920;
+        let total = 6.0 * fps;
+        let f = Film::new(48, 27, fps).open(Scene::new(6.0).layer(Layer::clip("synth.mp4").mute()));
+        let total = total.round() as u32;
+
+        // Two independent renderers, each given the same source clip forced
+        // onto the *streaming* backing (`load_with_eager_threshold(..., 0)`,
+        // well under the real eager threshold at this tiny size, but this is
+        // specifically to exercise the path a real long clip would take).
+        let render_all_at_once = || -> Vec<Vec<u8>> {
+            let store = AssetStore::new();
+            let clip = Clip::load_with_eager_threshold(&path, fps, max_w, None, 0).unwrap();
+            store.insert_clip("synth.mp4", fps, max_w, None, clip);
+            let r = Renderer::new(&f, &store, FontDb::shared());
+            (0..total).map(|i| r.render_frame(i).unwrap().to_rgb24(Color::BLACK)).collect()
+        };
+        let continuous = render_all_at_once();
+
+        let store = AssetStore::new();
+        let clip = Clip::load_with_eager_threshold(&path, fps, max_w, None, 0).unwrap();
+        store.insert_clip("synth.mp4", fps, max_w, None, clip);
+        let r = Renderer::new(&f, &store, FontDb::shared());
+        // Small, deliberately unaligned sub-ranges -- the same shape
+        // `src/segments.rs`'s fixed-size segments produce.
+        let mut segmented = Vec::new();
+        for (s, e) in [(0u32, 30), (30, 60), (60, 90), (90, total)] {
+            let e = e.min(total);
+            if s >= e {
+                continue;
+            }
+            for i in s..e {
+                segmented.push(r.render_frame(i).unwrap().to_rgb24(Color::BLACK));
+            }
+        }
+
+        assert_eq!(continuous.len(), segmented.len());
+        for (i, (a, b)) in continuous.iter().zip(segmented.iter()).enumerate() {
+            assert_eq!(
+                a, b,
+                "frame {i} differs between one continuous pass and several sequential sub-ranges over the same streaming clip"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

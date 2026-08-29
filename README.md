@@ -124,7 +124,10 @@ which module it lives in.
 
 **Delivery**
 - `showreel render` — full master plus the mobile cut, from one command
-  (`src/encode.rs`)
+  (`src/encode.rs`). The whole-film render is segmented and resumable: a
+  killed render (a crash, a `Ctrl-C`) leaves finished chunks on disk, and a
+  rerun with the same film/assets/settings picks up where it left off
+  instead of starting over (`src/segments.rs`, `docs/segmented-rendering.md`)
 - `showreel gif` — a window of the film as a palette-optimised, README-sized
   looping GIF, its 256 colours generated from the footage rather than a fixed
   web palette (`src/encode.rs`, [GIF export](#gif-export))

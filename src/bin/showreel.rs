@@ -399,16 +399,26 @@ fn cmd_render(
     }
 
     let opts = EncodeOptions { crf, ..EncodeOptions::default() }.with_audio(tracks);
-    let mut encoder =
-        FfmpegSink::new(&out, film.width, film.height, film.fps, &opts, film.background)?;
-    let stats = match png {
-        None => renderer.render_range(range, &mut encoder)?,
-        Some(dir) => {
-            let mut pngs = PngSequence::new(&dir, "frame")?;
-            let mut tee = Tee { a: &mut encoder, b: &mut pngs };
-            let s = renderer.render_range(range, &mut tee)?;
-            println!("  frames  {}", dir.display());
-            s
+
+    // The default whole-film render (no custom `--frames` sub-range, no
+    // `--png` dump alongside it) goes through the segmented, resumable path
+    // — see `src/segments.rs`'s module doc for why. Those two flags are
+    // debugging/inspection paths, not the "long render that dies at 90%"
+    // case that exists for, so they keep the old single-pass behaviour.
+    let stats = if frames.is_none() && png.is_none() {
+        showreel::segments::render_segmented(&renderer, &film, &assets, &out, &opts)?
+    } else {
+        let mut encoder =
+            FfmpegSink::new(&out, film.width, film.height, film.fps, &opts, film.background)?;
+        match png {
+            None => renderer.render_range(range, &mut encoder)?,
+            Some(dir) => {
+                let mut pngs = PngSequence::new(&dir, "frame")?;
+                let mut tee = Tee { a: &mut encoder, b: &mut pngs };
+                let s = renderer.render_range(range, &mut tee)?;
+                println!("  frames  {}", dir.display());
+                s
+            }
         }
     };
 

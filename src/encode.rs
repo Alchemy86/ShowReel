@@ -414,6 +414,68 @@ impl Drop for FfmpegSink {
     }
 }
 
+/// Finish a segmented, resumable render (`src/segments.rs`): remux a
+/// sequence of same-codec-settings `.ts` segments into one file, mixing in
+/// `opts.audio` in the same pass. `-c:v copy` — the segments already carry
+/// the exact codec settings the caller wants, so this never re-encodes the
+/// picture, only rewraps it (and, if there is audio, decodes/re-encodes
+/// *that*, exactly as [`FfmpegSink`] would for a non-segmented render).
+///
+/// Segments are concatenated via ffmpeg's `concat:` protocol rather than the
+/// concat *demuxer*: a straightforward stream-level splice for same-codec
+/// `.ts` files, with none of standalone `.mp4` files' per-file
+/// `moov`/edit-list metadata to cause timestamp discontinuities at the seams.
+pub fn finish_segmented_render(segments: &[PathBuf], output: &Path, opts: &EncodeOptions) -> Result<()> {
+    if segments.is_empty() {
+        bail!("no segments to concatenate");
+    }
+    if let Some(dir) = output.parent()
+        && !dir.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(dir).ok();
+    }
+    let concat_input =
+        format!("concat:{}", segments.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join("|"));
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-nostdin").args(["-loglevel", "error", "-y"]);
+    cmd.args(["-i", &concat_input]);
+    // Every audio track is its own ffmpeg input, declared after the
+    // concatenated video, so the video is input 0 and the tracks are 1..=n
+    // — the same convention `FfmpegSink::new` uses.
+    for t in &opts.audio {
+        cmd.arg("-i").arg(&t.path);
+    }
+    match mix_filter(&opts.audio, 1) {
+        Some((filter, label)) => {
+            cmd.args(["-filter_complex", &filter])
+                .args(["-map", "0:v"])
+                .args(["-map", &label])
+                .args(["-c:a", &opts.audio_codec])
+                .args(["-b:a", &opts.audio_bitrate])
+                .arg("-shortest");
+        }
+        None => {
+            cmd.args(["-an"]);
+        }
+    }
+    cmd.args(["-c:v", "copy"]);
+    if opts.faststart {
+        cmd.args(["-movflags", "+faststart"]);
+    }
+    cmd.arg(output);
+
+    let out = cmd.output().context("running ffmpeg to finish a segmented render")?;
+    if !out.status.success() {
+        bail!(
+            "ffmpeg failed finishing segmented render {}: {}",
+            output.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
 /// Produce the mobile-safe cut from a finished master.
 ///
 /// `scale=720:-2` sets the width and lets the height follow, rounded to an even
