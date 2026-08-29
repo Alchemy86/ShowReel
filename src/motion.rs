@@ -6,6 +6,14 @@
 //! "titles animate in and out" was asked for as a capability rather than as a
 //! recipe. [`MotionKind::Chars`] and [`MotionKind::Words`] are the kinetic text
 //! the brief named; the rest are the vocabulary an explainer actually uses.
+//!
+//! [`Motion`] only ever carries a layer *into* or *out of* a fixed placement —
+//! `enter`/`exit` are boundary states, and the middle of a layer's life always
+//! settles to [`MotionState::SETTLED`]. [`Drift`] fills the gap: continuous
+//! motion applied for a layer's *whole* active span, not just its edges. One
+//! vector plus an optional grow covers a pan, a parallax-adjacent drift, and —
+//! several of these staggered across sibling layers, on fanned headings — a
+//! burst. See [`crate::layer::Layer::burst`].
 
 use crate::ease::{Easing, Spring};
 use crate::time::Time;
@@ -211,6 +219,61 @@ impl Motion {
     }
 }
 
+/// Continuous motion over a layer's whole active span — see the module doc
+/// for how this differs from an [`Motion`] entrance/exit.
+///
+/// Position travels linearly (`dx`, `dy`, in the same frame pixels
+/// `MotionKind::SlideIn` already uses — not resolution-independent, matching
+/// the rest of this module) from the layer's resting placement; scale grows
+/// (or shrinks) toward `scale_to`. Both ride the same `easing` curve, because
+/// a burst clip wants its growth and its travel to read as one motion, not
+/// two racing each other.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Drift {
+    pub dx: f64,
+    pub dy: f64,
+    #[serde(default = "one")]
+    pub scale_to: f64,
+    #[serde(default)]
+    pub easing: Easing,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+impl Drift {
+    pub fn new(dx: f64, dy: f64) -> Self {
+        Drift { dx, dy, scale_to: 1.0, easing: Easing::OutCubic }
+    }
+
+    /// A drift pointed along `heading_deg` (0 = +x/right, 90 = +y/down — the
+    /// frame's own axes, degrees clockwise) for `distance` pixels.
+    pub fn heading(heading_deg: f64, distance: f64) -> Self {
+        let r = heading_deg.to_radians();
+        Drift::new(r.cos() * distance, r.sin() * distance)
+    }
+
+    pub fn grow_to(mut self, scale: f64) -> Self {
+        self.scale_to = scale;
+        self
+    }
+
+    pub fn eased(mut self, e: Easing) -> Self {
+        self.easing = e;
+        self
+    }
+
+    /// `(dx, dy, scale)` at `elapsed` seconds into a `duration`-second span.
+    /// `duration <= 0.0` snaps straight to the far end, the same convention
+    /// [`Motion::progress`] uses for a zero-length motion.
+    pub fn state_at(&self, elapsed: f64, duration: f64) -> (f64, f64, f64) {
+        let p = if duration <= 0.0 { 1.0 } else { (elapsed / duration).clamp(0.0, 1.0) };
+        let e = self.easing.apply(p);
+        (self.dx * e, self.dy * e, 1.0 + (self.scale_to - 1.0) * e)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +334,43 @@ mod tests {
         let m = Motion::chars(0.5, 0.04);
         let s = serde_json::to_string(&m).unwrap();
         assert_eq!(serde_json::from_str::<Motion>(&s).unwrap(), m);
+    }
+
+    #[test]
+    fn a_drift_starts_at_rest_and_ends_at_its_full_vector() {
+        let d = Drift::new(100.0, -40.0).grow_to(2.0).eased(Easing::Linear);
+        assert_eq!(d.state_at(0.0, 1.0), (0.0, 0.0, 1.0));
+        let (dx, dy, scale) = d.state_at(1.0, 1.0);
+        assert!((dx - 100.0).abs() < 1e-9 && (dy + 40.0).abs() < 1e-9);
+        assert!((scale - 2.0).abs() < 1e-9);
+        // Halfway, linear, is halfway on every axis.
+        let (dx, dy, scale) = d.state_at(0.5, 1.0);
+        assert!((dx - 50.0).abs() < 1e-9 && (dy + 20.0).abs() < 1e-9);
+        assert!((scale - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn heading_points_along_the_frames_own_axes() {
+        // 0 degrees is straight along +x.
+        let right = Drift::heading(0.0, 10.0);
+        assert!((right.dx - 10.0).abs() < 1e-9 && right.dy.abs() < 1e-9);
+        // 90 degrees is straight down (+y), matching SlideIn's convention.
+        let down = Drift::heading(90.0, 10.0);
+        assert!(down.dx.abs() < 1e-9 && (down.dy - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_zero_length_drift_snaps_to_its_end_state() {
+        let d = Drift::heading(45.0, 50.0);
+        let (dx, dy, _) = d.state_at(0.0, 0.0);
+        let full = d.state_at(1.0, 1.0);
+        assert!((dx - full.0).abs() < 1e-9 && (dy - full.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_drift_round_trips_through_json() {
+        let d = Drift::new(120.0, -80.0).grow_to(1.6).eased(Easing::InCubic);
+        let s = serde_json::to_string(&d).unwrap();
+        assert_eq!(serde_json::from_str::<Drift>(&s).unwrap(), d);
     }
 }

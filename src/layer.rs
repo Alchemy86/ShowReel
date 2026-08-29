@@ -19,7 +19,7 @@ use crate::canvas::Canvas;
 use crate::color::{Color, Paint};
 use crate::ease::Easing;
 use crate::geom::{Anchor, Fit, Rect};
-use crate::motion::{Motion, MotionState};
+use crate::motion::{Drift, Motion, MotionState};
 use crate::text::{Align, FontDb, GlyphTransform, Plate, Shadow, TextLayout, TextStyle};
 use crate::time::Time;
 use anyhow::{Context, Result};
@@ -646,6 +646,11 @@ pub struct Layer {
     pub enter: Option<Motion>,
     #[serde(default)]
     pub exit: Option<Motion>,
+    /// Continuous motion for the layer's whole active span — unlike
+    /// `enter`/`exit`, which carry it into or out of `placement`, this keeps
+    /// moving the entire time the layer is on screen. See [`Drift`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drift: Option<Drift>,
     /// A constant multiplier on top of any motion.
     #[serde(default = "one")]
     pub opacity: f64,
@@ -663,6 +668,7 @@ impl Layer {
             placement: None,
             enter: None,
             exit: None,
+            drift: None,
             opacity: 1.0,
             z: 0,
         }
@@ -966,6 +972,12 @@ impl Layer {
 
     pub fn exiting(mut self, m: Motion) -> Self {
         self.exit = Some(m);
+        self
+    }
+
+    /// Continuous motion for as long as the layer is on screen — see [`Drift`].
+    pub fn drifting(mut self, d: Drift) -> Self {
+        self.drift = Some(d);
         self
     }
 
@@ -1273,13 +1285,22 @@ impl Layer {
         if !self.active_at(t, scene_duration) {
             return Ok(());
         }
-        let state = self.motion_at(t, scene_duration);
+        let mut state = self.motion_at(t, scene_duration);
         let alpha = state.alpha * self.opacity;
         if alpha <= 0.001 && !matches!(self.content, Content::PullUp { .. }) {
             return Ok(());
         }
         let span = self.span(scene_duration);
         let local = span.local(t);
+        // Drift rides on top of any enter/exit displacement, over the
+        // layer's *whole* span rather than just its entrance/exit windows —
+        // it never touches alpha, only position and scale.
+        if let Some(drift) = &self.drift {
+            let (dx, dy, scale) = drift.state_at(local.as_secs(), span.duration.as_secs());
+            state.dx += dx;
+            state.dy += dy;
+            state.scale *= scale;
+        }
         self.draw_content(canvas, ctx, local, &state, alpha)
     }
 
