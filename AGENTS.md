@@ -25,6 +25,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | `Presentation::CrossBlur` blurs every RGBA channel (`canvas::blur_rgba`), not just alpha (`canvas::blur_alpha`, for shadows) — both share the same three-pass box-blur core, `canvas::box_blur3` | `src/canvas.rs`, `src/transition.rs` |
 | `Content::Bar`'s `BarSpec` (`from`/`to`/`over`/`easing`) deliberately mirrors `CounterSpec` rather than reusing it — a bar has no digits, grouping or prefix/suffix, and nests under `"progress"` for the same `from`-collides-with-`Layer::from` reason `CounterSpec` nests under `"count"` | `src/layer.rs` |
 | `Content::Parallax` (the fake-depth "screenshot" shot, `docs/anarchist-study.md`) is a composition convenience, not new render machinery: one authored `Camera` move, and each plane's own viewport is `Camera::viewport_at`'s *result* blended toward its resting framing by `ParallaxPlane::depth` — position linearly, height geometrically, the same reasoning `Camera::viewport_at` itself uses for zoom | `src/layer.rs` (`draw_parallax`, `parallax_viewport`) |
+| `Layer.drift: Option<Drift>` is the animated-placement primitive `enter`/`exit` deliberately don't provide: `Motion` only ever carries a layer INTO or OUT OF a fixed `placement` (the middle of a layer's life always settles to `MotionState::SETTLED`), where `Drift` runs continuously across the layer's *whole* active span, added onto `motion_at`'s result in `Layer::draw` before any `shift`/`shift_scaled` call — so it composes for free with a still, a clip, a camera or a parallax stack with zero new drawing code. `Layer::burst`/`BurstSpec` builds a burst effect (several clips clustered near a point, fanned onto evenly-spaced-and-jittered headings, staggered launches) purely from `Drift` + `Placement::Frac` + `.framed()` — a convenience, not a fourteenth `Content` kind, and every field it sets is ordinary layer JSON (`examples/burst_demo.film.jsonc` is exactly what it produces). Default easing is `in-quad` (accelerating outward reads as energy; `in-cubic` was tried and sat nearly still for the first 40% of its own travel — a constant speed reads as a slide) | `src/motion.rs` (`Drift`), `src/layer.rs` (`Layer::draw`, `Layer::burst`, `BurstSpec`) |
 | `Grade` (the colour-grade pass, `docs/anarchist-study.md`'s other confirmed gap) follows the same idiom as `Content::Parallax`: a composition convenience, not a new render path. It is `Film.grade`/`Scene.grade` — an `Option`, the same override shape `background` already has — applied once per scene by `Renderer::draw_scene` *after* every layer has drawn, so it composes with a still, a clip or a parallax stack with zero knowledge of what any of them contain. Written as a bare word (`"documentary"`) or a full object, the same untagged shorthand `Placement` uses | `src/grade.rs`, `src/canvas.rs` (`apply_grade`), `src/render.rs` |
 | `Content::Chart` (animated charts — a plotted function/line or growing bars) is one layer content kind, not a parallel system: `ChartSpec` is data like every other layer, and its one animation is a **reveal sweep** — a single eased 0..1 crossing the plot left-to-right on the film clock, the same `value_at(local)` idiom `BarSpec`/`CounterSpec` use, not a private animation vocabulary. A function series is a string (`"40*log(x+1)"`) parsed once by `src/expr.rs` (a tiny arithmetic evaluator — the four ops, `^`, `x`, a fixed function set, `pi`/`tau`/`e`; anything else is a `validate()` error, never a silent zero). Composition is inherited, not built: the grade lands on the finished pixels, a callout/title is a higher-`z` layer, and "push in on a chart" is `PullUp` (a bitmap lift of the drawn region) — the showreel `Camera` is a still/clip mip feature and is deliberately *not* bolted onto procedural drawing. Audio-mapped-to-curve (the reference short does it) was deliberately **not** started | `src/chart.rs`, `src/expr.rs`, `src/layer.rs` (`Content::Chart`, `draw_content`) |
 | A chart reads its series from an external **CSV/JSON** via `Series::Data { file, x, y, bars }`, resolved through `AssetStore` like a still (`AssetStore::data`, cached `DataTable`) — *not* a second mechanism. `ChartSpec::resolve(assets)` expands every `Data` series into a concrete `Line`/`Bars` (borrowed `Cow` when there is none), so `chart::draw` is unchanged below that one call and stays a pure function of `(spec, assets)`. `chart::draw` therefore returns `Result` and the `Content::Chart` arm propagates `?` — that is what makes a bad file/column/row loud in `still`/`render` (no preload) as well as `check` (`Film::resolve_chart_data`). The film names the columns, so it still reads as *x against y* without opening the data | `src/assets/data.rs`, `src/chart.rs` (`Series::Data`, `resolve`), `src/timeline.rs` (`resolve_chart_data`, `AssetUse::Data`) |
@@ -114,6 +115,20 @@ got before this round of features touched it.
   as the crate was silent. A film can play perfectly and arrive on the phone
   mute; `tests/render_pipeline.rs` ffprobes both outputs and asserts a level,
   because "has an audio stream" and "is audible" are different claims.
+- **An unmuted `Content::Clip` whose *source file has no audio stream at all*
+  fails the whole render, not just that clip.** `Audio::clip_track` builds an
+  `AudioInput` from `ClipAudio::default()` (`muted: false`) without checking
+  the file actually has an audio stream, so `encode.rs` wires a `[i:a]`
+  reference into ffmpeg's mix filtergraph that matches nothing, and ffmpeg
+  errors out ("Stream specifier ... matches no streams") rather than the
+  crate skipping that one track. This is a real, common shape — confirmed
+  against actual screen-captured gameplay footage (`~/pokemon-run/*.mp4`),
+  which is video-only — not a synthetic-test-clip edge case. `Layer::burst`
+  works around it by defaulting `BurstSpec::mute_audio` to `true`, but the
+  underlying gap is in `clip_track`/`encode.rs`, not `layer.rs`; a real fix
+  would probe the source (or catch and skip the failing input) before
+  building the filtergraph. Found and worked around, not fixed, while adding
+  the burst effect — a good next session's task.
 - **`afade` with `d=0` is not a no-op** — it mutes a sample. `AudioInput::filter`
   therefore *omits* a stage rather than passing neutral parameters, and
   `amix` is always given `normalize=0` (its default divides every input by the
@@ -475,6 +490,21 @@ got before this round of features touched it.
   new WAV/manifest, delete the old, re-render both cuts, and re-verify audio on
   each (measured on the committed cut: master −23.7 dB, voice ~10 dB over the
   ducked bed, corruption ZCR 0.047, prosody `pitch_var_st` 3.21 st).
+
+- **`examples/burst_demo.film.jsonc` is the proof film for the burst effect
+  (`Drift`, `Layer::burst` — src/motion.rs, src/layer.rs)**, hand-written
+  JSONC. It uses six small synthetic (`ffmpeg testsrc2`, hue-shifted so they
+  stay visually distinguishable) clips rather than real footage, on purpose:
+  the effect is subject-agnostic, and its own proof film's assets follow the
+  same "nothing in the crate may know what its films are about" rule as
+  `src/`. Not committed — see `examples/burst_demo.assets.md` to regenerate
+  them. Rendered cut at `docs/burst-demo.mp4` (+ `.mobile.mp4`, both silent —
+  every clip has `audio.muted: true`, see the sharp edge on an audio-less
+  clip below); re-render with `showreel render examples/burst_demo.film.jsonc
+  -A examples/burst_demo --crf 23 -o docs/burst-demo.mp4`. The film's own
+  header comments record what was actually tuned by watching it (easing,
+  `.framed()`'s rounded corners/border/shadow, timing) rather than guessed —
+  read those before changing the effect's defaults.
 
 - **`tools/narrate/` and `tools/prosody/` are the narration support tools.**
   `tools/narrate/kokoro_narrate.py` is the thin Kokoro driver `showreel narrate`

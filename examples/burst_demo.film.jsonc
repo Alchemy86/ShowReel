@@ -1,0 +1,152 @@
+// =====================================================================
+//  ShowReel — a burst: several clips erupting outward from the centre
+// =====================================================================
+//
+//  The proof film for two things:
+//   - `Drift` (src/motion.rs): continuous animated placement over a layer's
+//     *whole* active life, not just an entrance or an exit. `enter`/`exit`
+//     only ever carry a layer INTO or OUT OF a fixed placement — nothing
+//     about them lets a clip keep travelling while it plays. `drift` is
+//     that missing middle: a vector plus an optional grow, eased, applied
+//     for as long as the layer is on screen.
+//   - `Layer::burst` (src/layer.rs): a convenience over `drift` and
+//     `Placement::Frac` — not a new render primitive. It fans N clips'
+//     headings evenly around a circle (nudged by a little deterministic
+//     jitter so it reads as organic, not a mechanical pinwheel), staggers
+//     their launch so the burst ripples rather than pops all at once, and
+//     returns ordinary `Content::Clip` layers.
+//
+//  This file is exactly what `Layer::burst` produces — six clip layers with
+//  `placement`/`drift` fields any of them could equally be hand-written
+//  without touching Rust at all. That is the point: the effect is fully
+//  declarable in a film file, the same way any other motion is.
+//
+//  RENDER IT
+//    showreel render examples/burst_demo.film.jsonc \
+//      -A examples/burst_demo --crf 23 -o docs/burst-demo.mp4
+//  (needs the six synthetic clips this proof uses — see
+//  examples/burst_demo.assets.md to regenerate them; they are not committed.)
+//
+//  TUNING NOTES, watched via `showreel sheet`/`still` before committing to a
+//  full render (see AGENTS.md: use the preview path, not a render, to judge):
+//   - `easing: "in-quad"` on every clip's `drift`, not the crate's own
+//     default `out-cubic`: outward motion that ACCELERATES reads as energy,
+//     a constant speed reads as a slide. `in-cubic` (t^3) was tried first
+//     and stayed almost motionless for the first ~40% of its own travel —
+//     the burst read as hesitant before it caught up. `in-quad` (t^2)
+//     separates the clips noticeably sooner while still ending in the same
+//     accelerating snap, and let the whole scene shrink from 2.2s to 1.3s
+//     with no dead frame at either end.
+//   - `.framed(10.0, ...)` (rounded corners, a light border, and the drop
+//     shadow `framed` adds by default) made a bigger difference than any
+//     timing change: six flat, hard-edged, identically-sized rectangles
+//     piled near the centre read as a stack of colour swatches. The shadow
+//     alone is what makes overlapping clips read as separate flying objects
+//     rather than a flat collage — worth it even though this is a synthetic
+//     proof clip, not real footage with its own depth cues.
+//   - `enter: { kind: "scale", from: 0.25, ... "out-back" }` is a *fast*
+//     160ms pop, not a fade — a burst clip needs to feel like it is already
+//     moving the instant it appears; a slow fade-in read as hesitant.
+//   - Each clip's own `exit` (a 220ms fade) matters even though most clips
+//     have long since left the visible frame by the time it fires: without
+//     it, a clip whose heading points more toward a corner than an edge
+//     (short axis clears the frame well before the long one) visibly pops
+//     out rather than fading.
+//   - `z` ascending by launch order: the most recently launched clip draws
+//     on top of ones already in flight, which reads as the burst continuing
+//     to erupt rather than older clips occluding newer ones.
+//   - Every clip's `audio.muted` is `true` — not a stylistic choice here, a
+//     load-bearing one: this proof's synthetic clips have no audio stream at
+//     all, and `Audio::clip_track` wires an unmuted clip's `[i:a]` into
+//     ffmpeg's mix filtergraph without checking the source has one, which
+//     fails the whole render. Real gameplay-capture footage is often silent
+//     the same way (confirmed against actual Pokemon-run clips), which is
+//     why `Layer::burst` mutes by default — see `BurstSpec::mute_audio`.
+// =====================================================================
+{
+  "width": 1280,
+  "height": 720,
+  "fps": 30.0,
+  "title": "ShowReel — a burst",
+  "background": "#060810",
+
+  "opening": {
+    "name": "burst",
+    "duration": 1.15,
+    "layers": [
+      {
+        "type": "clip", "asset": "battle-1.mp4", "fit": "cover",
+        "from": 0.0, "duration": 1.1,
+        "placement": { "fx": 0.425, "fy": 0.425, "fw": 0.15, "fh": 0.15 },
+        "radius": 10.0, "border": ["#ffffffb4", 2.0],
+        "shadow": { "colour": "#000000a0", "blur": 30.0, "dx": 0.0, "dy": 10.0 },
+        "audio": { "muted": true },
+        "enter": { "kind": "scale", "from": 0.25, "duration": 0.16, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 },
+        "drift": { "dx": -49.0, "dy": -618.1, "scale_to": 1.9, "easing": "in-quad" },
+        "z": 0
+      },
+      {
+        "type": "clip", "asset": "battle-2.mp4", "fit": "cover",
+        "from": 0.12, "duration": 1.1,
+        "placement": { "fx": 0.425, "fy": 0.425, "fw": 0.15, "fh": 0.15 },
+        "radius": 10.0, "border": ["#ffffffb4", 2.0],
+        "shadow": { "colour": "#000000a0", "blur": 30.0, "dx": 0.0, "dy": 10.0 },
+        "audio": { "muted": true },
+        "enter": { "kind": "scale", "from": 0.25, "duration": 0.16, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 },
+        "drift": { "dx": 586.3, "dy": -201.5, "scale_to": 1.9, "easing": "in-quad" },
+        "z": 1
+      },
+      {
+        "type": "clip", "asset": "battle-3.mp4", "fit": "cover",
+        "from": 0.24, "duration": 1.1,
+        "placement": { "fx": 0.425, "fy": 0.425, "fw": 0.15, "fh": 0.15 },
+        "radius": 10.0, "border": ["#ffffffb4", 2.0],
+        "shadow": { "colour": "#000000a0", "blur": 30.0, "dx": 0.0, "dy": 10.0 },
+        "audio": { "muted": true },
+        "enter": { "kind": "scale", "from": 0.25, "duration": 0.16, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 },
+        "drift": { "dx": 495.9, "dy": 372.1, "scale_to": 1.9, "easing": "in-quad" },
+        "z": 2
+      },
+      {
+        "type": "clip", "asset": "battle-4.mp4", "fit": "cover",
+        "from": 0.36, "duration": 1.1,
+        "placement": { "fx": 0.425, "fy": 0.425, "fw": 0.15, "fh": 0.15 },
+        "radius": 10.0, "border": ["#ffffffb4", 2.0],
+        "shadow": { "colour": "#000000a0", "blur": 30.0, "dx": 0.0, "dy": 10.0 },
+        "audio": { "muted": true },
+        "enter": { "kind": "scale", "from": 0.25, "duration": 0.16, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 },
+        "drift": { "dx": 84.7, "dy": 614.2, "scale_to": 1.9, "easing": "in-quad" },
+        "z": 3
+      },
+      {
+        "type": "clip", "asset": "battle-5.mp4", "fit": "cover",
+        "from": 0.48, "duration": 1.1,
+        "placement": { "fx": 0.425, "fy": 0.425, "fw": 0.15, "fh": 0.15 },
+        "radius": 10.0, "border": ["#ffffffb4", 2.0],
+        "shadow": { "colour": "#000000a0", "blur": 30.0, "dx": 0.0, "dy": 10.0 },
+        "audio": { "muted": true },
+        "enter": { "kind": "scale", "from": 0.25, "duration": 0.16, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 },
+        "drift": { "dx": -528.3, "dy": 324.5, "scale_to": 1.9, "easing": "in-quad" },
+        "z": 4
+      },
+      {
+        "type": "clip", "asset": "battle-6.mp4", "fit": "cover",
+        "from": 0.6, "duration": 1.1,
+        "placement": { "fx": 0.425, "fy": 0.425, "fw": 0.15, "fh": 0.15 },
+        "radius": 10.0, "border": ["#ffffffb4", 2.0],
+        "shadow": { "colour": "#000000a0", "blur": 30.0, "dx": 0.0, "dy": 10.0 },
+        "audio": { "muted": true },
+        "enter": { "kind": "scale", "from": 0.25, "duration": 0.16, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 },
+        "drift": { "dx": -503.1, "dy": -362.3, "scale_to": 1.9, "easing": "in-quad" },
+        "z": 5
+      }
+    ]
+  },
+  "then": []
+}

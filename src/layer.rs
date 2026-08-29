@@ -370,6 +370,22 @@ pub struct BurstSpec {
     /// Seeds the (deterministic) jitter: the same seed always fans the same
     /// way, so a burst looks identical render to render.
     pub seed: u64,
+    /// Rounded corners and a border — see [`Layer::framed`], which this is
+    /// passed straight through to. A stack of hard-edged rectangles piled
+    /// near the centre reads as flat; `framed` also adds the drop shadow
+    /// that gives overlapping clips real separation.
+    pub radius: f64,
+    pub border: Option<(Color, f64)>,
+    /// Mute every burst clip's own soundtrack. Defaults to `true`: several
+    /// clips' native audio mixed together rarely reads as intentional (a
+    /// trailer wants its music or an SFX hit driving this moment, not a
+    /// cacophony of overlapping source audio), and — more sharply — a source
+    /// clip with no audio stream at all (a common shape for screen-captured
+    /// gameplay footage) makes an unmuted `Content::Clip` fail to render:
+    /// `Audio::clip_track` never checks the file actually has an audio
+    /// stream before wiring `[i:a]` into ffmpeg's mix filtergraph. Set to
+    /// `false` if every clip you pass genuinely has a soundtrack you want.
+    pub mute_audio: bool,
 }
 
 impl Default for BurstSpec {
@@ -393,6 +409,9 @@ impl Default for BurstSpec {
             jitter_deg: 16.0,
             start_heading_deg: -90.0,
             seed: 1,
+            radius: 10.0,
+            border: Some((Color::rgba(255, 255, 255, 180), 2.0)),
+            mute_audio: true,
         }
     }
 }
@@ -1028,6 +1047,7 @@ impl Layer {
                 let heading = spec.start_heading_deg + fan + burst_jitter(spec.seed, i) * spec.jitter_deg;
                 let mut layer = Layer::clip(asset.as_ref())
                     .frac(cx - cw / 2.0, cy - ch / 2.0, cw, ch)
+                    .framed(spec.radius, spec.border)
                     .from(spec.stagger * i as f64)
                     .lasting(spec.over)
                     .drifting(
@@ -1039,6 +1059,9 @@ impl Layer {
                 }
                 if let Some(e) = spec.exit {
                     layer = layer.exiting(e);
+                }
+                if spec.mute_audio {
+                    layer = layer.mute();
                 }
                 layer
             })
@@ -2924,6 +2947,21 @@ mod tests {
         }
         // A different seed generally nudges differently.
         assert_ne!(burst_jitter(7, 3), burst_jitter(8, 3));
+    }
+
+    #[test]
+    fn a_burst_mutes_clip_audio_by_default() {
+        // A source clip with no audio stream at all (common for
+        // screen-captured gameplay footage) makes an unmuted clip fail to
+        // render — see BurstSpec::mute_audio's doc. Muted by default so
+        // Layer::burst is safe to reach for without knowing that.
+        let layers = Layer::burst(&["a.mp4"], &BurstSpec::default());
+        let Content::Clip { audio, .. } = &layers[0].content else { panic!("expected a clip") };
+        assert!(audio.muted);
+
+        let layers = Layer::burst(&["a.mp4"], &BurstSpec { mute_audio: false, ..Default::default() });
+        let Content::Clip { audio, .. } = &layers[0].content else { panic!("expected a clip") };
+        assert!(!audio.muted);
     }
 
     #[test]

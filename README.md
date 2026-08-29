@@ -765,6 +765,63 @@ Rendering the worked example itself (`examples/parallax_demo.rs`, three
 whole clip, because most of it spends time at the wide end of the push, where
 every plane's mip pyramid picks a small, cheap level.
 
+### A burst
+
+Several clips, small and clustered near a point, launching outward on their
+own headings while still playing — several battle clips erupting from the
+middle of the frame is the case this was built for, but it works for any
+clip. Two pieces make it up:
+
+- **`drift`**, on any layer: continuous animated placement for the layer's
+  *whole* active life, unlike `enter`/`exit`, which only ever carry a layer
+  INTO or OUT OF a fixed `placement`. A vector plus an optional grow, eased —
+  the general capability a pan, a drift, or a burst all need.
+- **`Layer::burst`**, a convenience over `drift` and `Placement::Frac` — not
+  a new render primitive: it fans each clip's heading evenly around a circle
+  (nudged by a little deterministic jitter so it reads as organic, not a
+  pinwheel), staggers the launches so the burst ripples rather than pops all
+  at once, and returns ordinary `Content::Clip` layers.
+
+```rust
+Layer::burst(
+    &["hit-1.mp4", "hit-2.mp4", "hit-3.mp4", "hit-4.mp4", "hit-5.mp4", "hit-6.mp4"],
+    &BurstSpec { distance: 620.0, scale_to: 1.9, ..Default::default() },
+)
+```
+returns six layers to add to a scene — a `Vec<Layer>`, spliced in like any
+other. Every field it sets is ordinary JSON, so the identical effect is just
+as declarable by hand, with no Rust involved:
+
+```jsonc
+{
+  "type": "clip", "asset": "hit-1.mp4", "fit": "cover",
+  "from": 0.0, "duration": 1.1,
+  "placement": { "fx": 0.425, "fy": 0.425, "fw": 0.15, "fh": 0.15 },
+  "drift": { "dx": -49.0, "dy": -618.1, "scale_to": 1.9, "easing": "in-quad" }
+}
+```
+
+`BurstSpec`'s knobs: how many clips (implied by the list you pass), how far
+(`distance`, in pixels — the same convention `Motion`'s own distances use),
+how long each is on screen (`over`), the gap between launches (`stagger`),
+how much each grows (`scale_to`), the easing, and how much random wobble to
+add to the even fan (`jitter_deg`, seeded by `seed` so it is reproducible).
+It defaults to muting every clip's own audio (`mute_audio`) — several clips'
+native sound mixed together rarely reads as intentional, and a source clip
+with no audio stream at all (a common shape for screen-captured gameplay
+footage) makes an *unmuted* clip fail to render outright.
+
+The full proof film is `examples/burst_demo.film.jsonc` — six synthetic
+clips (see `examples/burst_demo.assets.md` to regenerate them), rendered to
+`docs/burst-demo.mp4`. Its header comments record what was actually tuned by
+watching it, not guessed: `in-quad` easing over the crate's own `out-cubic`
+default (accelerating outward reads as energy, a constant speed reads as a
+slide — and `in-cubic` proved *too* front-loaded, sitting nearly still for
+the first 40% of its own travel), and `.framed()`'s rounded corners, border
+and drop shadow, which did more for the look than any timing change — six
+flat, hard-edged rectangles piled near the centre read as a stack of colour
+swatches without it.
+
 ### A colour grade
 
 The desaturated, contrast-pushed "serious documentary" look
