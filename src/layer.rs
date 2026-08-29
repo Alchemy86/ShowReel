@@ -392,21 +392,26 @@ impl Default for BurstSpec {
     fn default() -> Self {
         BurstSpec {
             centre: (0.5, 0.5),
-            clip_size: (0.16, 0.16),
-            distance: 780.0,
-            over: Time::secs(1.5),
-            stagger: Time::secs(0.1),
-            scale_to: 1.7,
+            clip_size: (0.15, 0.15),
+            distance: 620.0,
+            over: Time::secs(1.1),
+            stagger: Time::secs(0.12),
+            scale_to: 1.9,
             // Accelerating outward reads as energy; a constant speed reads
-            // as a slide. `InCubic` is barely-there at launch and fastest
-            // right as each clip leaves the frame.
-            easing: Easing::InCubic,
+            // as a slide (watch `docs/burst-demo.mp4`'s own "linear" scene
+            // for the direct comparison). `InQuad`, not the steeper
+            // `InCubic`: `InCubic` (t^3) was tried first and stayed nearly
+            // motionless for the first ~40% of a clip's own travel, which
+            // read as hesitant rather than energetic — `InQuad` (t^2)
+            // separates the clips noticeably sooner while still ending in
+            // the same accelerating snap.
+            easing: Easing::InQuad,
             enter: Some(
-                Motion::new(crate::motion::MotionKind::Scale { from: 0.3 }, 0.18)
+                Motion::new(crate::motion::MotionKind::Scale { from: 0.25 }, 0.16)
                     .eased(Easing::OutBack),
             ),
-            exit: Some(Motion::fade(0.25)),
-            jitter_deg: 16.0,
+            exit: Some(Motion::fade(0.22)),
+            jitter_deg: 14.0,
             start_heading_deg: -90.0,
             seed: 1,
             radius: 10.0,

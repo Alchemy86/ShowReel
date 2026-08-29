@@ -492,19 +492,34 @@ got before this round of features touched it.
   ducked bed, corruption ZCR 0.047, prosody `pitch_var_st` 3.21 st).
 
 - **`examples/burst_demo.film.jsonc` is the proof film for the burst effect
-  (`Drift`, `Layer::burst` — src/motion.rs, src/layer.rs)**, hand-written
-  JSONC. It uses six small synthetic (`ffmpeg testsrc2`, hue-shifted so they
-  stay visually distinguishable) clips rather than real footage, on purpose:
-  the effect is subject-agnostic, and its own proof film's assets follow the
-  same "nothing in the crate may know what its films are about" rule as
-  `src/`. Not committed — see `examples/burst_demo.assets.md` to regenerate
-  them. Rendered cut at `docs/burst-demo.mp4` (+ `.mobile.mp4`, both silent —
-  every clip has `audio.muted: true`, see the sharp edge on an audio-less
-  clip below); re-render with `showreel render examples/burst_demo.film.jsonc
-  -A examples/burst_demo --crf 23 -o docs/burst-demo.mp4`. The film's own
-  header comments record what was actually tuned by watching it (easing,
-  `.framed()`'s rounded corners/border/shadow, timing) rather than guessed —
-  read those before changing the effect's defaults.
+  (`Drift`, `Layer::burst` — src/motion.rs, src/layer.rs)**, and unlike most
+  proof films it is *generated*, `kanto.film.jsonc`'s pattern rather than
+  `showreel_demo.film.jsonc`'s: seven scenes' worth of computed fan headings
+  and per-scene timing is too much to hand-maintain without a drift guard,
+  so `examples/burst_demo.rs` is canonical and the committed file is checked
+  against it (`cargo run --release --example burst_demo -- --check -o
+  examples/burst_demo.film.jsonc`; regenerate with the same command minus
+  `--check`, then hand-restore the header comment the generator can't
+  reconstruct — see `kanto_reel.rs` for the identical convention). It is a
+  **comparison reel**, not a single clip: baseline plus six variations
+  (linear easing, no jitter, heavy jitter, slow+big, fast+tight, a 12-clip
+  dense burst), each held long enough to read its on-screen label, ~12s
+  total — a single burst's worth of footage is too short to judge whether a
+  tuning choice actually matters. It uses six small synthetic (`ffmpeg
+  testsrc2`, hue-shifted so they stay visually distinguishable) clips rather
+  than real footage, on purpose: the effect is subject-agnostic, and its own
+  proof film's assets follow the same "nothing in the crate may know what
+  its films are about" rule as `src/`. Not committed — see
+  `examples/burst_demo.assets.md` to regenerate them. Rendered cut at
+  `docs/burst-demo.mp4` (+ `.mobile.mp4`, both silent — every clip has
+  `audio.muted: true`, see the sharp edge on an audio-less clip below);
+  re-render with `showreel render examples/burst_demo.film.jsonc -A
+  examples/burst_demo --crf 23 -o docs/burst-demo.mp4`. The film's own
+  header comments record what watching each variation actually showed
+  (easing, jitter, `.framed()`'s rounded corners/border/shadow, timing)
+  rather than guessed — read those before changing the effect's defaults,
+  and `BurstSpec::default()` in `src/layer.rs` before assuming a value in
+  the header comment is still what ships.
 
 - **`tools/narrate/` and `tools/prosody/` are the narration support tools.**
   `tools/narrate/kokoro_narrate.py` is the thin Kokoro driver `showreel narrate`
