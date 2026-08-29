@@ -1,0 +1,8 @@
+[
+  { "name": "call-1", "bars": 2, "intensity": "kick" },
+  { "name": "hush-1", "bars": 1, "intensity": "silence" },
+  { "name": "call-2", "bars": 2, "intensity": "pulse" },
+  { "name": "hush-2", "bars": 1, "intensity": "silence" },
+  { "name": "build", "bars": 2, "intensity": "build" },
+  { "name": "theme", "bars": 8, "intensity": "full" }
+]

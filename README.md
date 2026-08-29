@@ -366,6 +366,91 @@ mood/key/bpm needs a repackage to be heard, the same as a clip's own audio). The
 general "align to N arbitrary interior cut times" solver is a documented next
 step, not a half-built one — see `src/music.rs`.
 
+Three moods ship: `funk` (the reference tune), `dreamy` (gentler, slower), and
+`title` (a bright major-key I-V-vi-IV climb — a marching bass and a sparkling
+arpeggio lead, for an opener that wants to lift rather than groove).
+
+#### Arrangement: a track that builds
+
+By default every voice plays at full intensity from the first sample — right
+for a bed under a scene, wrong for an opener that wants to start sparse and
+lonely and only later "really get going". `arrangement` gives a track
+structure over time: named sections, each a length in bars and how present
+each voice is:
+
+```jsonc
+"music": {
+  "mood": "title",
+  "bpm": 104,
+  "arrangement": [
+    { "name": "intro", "bars": 6, "intensity": "kick" },   // just a lonely downbeat kick
+    { "name": "build", "bars": 2, "intensity": "build" },  // bass and kick join, lead still off
+    { "name": "theme", "bars": 8, "intensity": "full" }    // the whole band arrives
+  ]
+}
+```
+
+```rust
+use showreel::music::{Music, Mood, Section, Intensity};
+let opener = Music::mood(Mood::Title).bpm(104.0).arrangement([
+    Section::new("intro", 6, Intensity::KICK),
+    Section::new("build", 2, Intensity::BUILD),
+    Section::new("theme", 8, Intensity::FULL),
+]);
+```
+
+`intensity` is a named preset (`silence`, `kick`, `pulse`, `build`, `full`) or
+an object naming each voice's level directly —
+`{"bass":"sparse","kick":"full","hat":"sparse"}` — the same
+bare-word-or-object shorthand `mood`/`grade` already use. A section may also
+carry its own `"bpm"` — a real tempo lift into the theme, not just a density
+change. The chord progression keeps advancing bar over bar through every
+section regardless of arrangement — a build is a change in *who is playing*,
+never a change in the mood's own harmony. An arrangement shorter than the
+track's own length simply loops; a track with no `arrangement` at all plays
+exactly as it always did — this is capability added, not a mode to opt into.
+
+#### Beat and bar timing, and a standalone export
+
+An arranged (or plain) track's beat grid can be read back as a manifest —
+where every beat, bar and section boundary lands — the same
+manifest-beside-the-audio idiom `showreel narrate` already established for
+word timings:
+
+```rust
+let man = opener.manifest(opener.natural_duration().unwrap());
+// man.sections: [{name: "intro", start: 0.0, end: 13.85, bar_count: 6}, ...]
+// man.bars[0].beats: [0.0, 0.577, 1.154, 1.731]  — exact, not hand-timed
+```
+
+That is what makes a shot like "a terminal cursor flashes in pace with the
+beat, then the logo drops on the section boundary, then narration starts on
+the next bar" buildable without ever eyeballing a waveform: the film (or a
+video editor) reads the JSON times directly, and they are exactly what the
+audio plays because both are computed by the same walk over the arrangement.
+
+`showreel music` renders a spec to a standalone WAV, for auditioning a track
+(or baking a trailer opener) without rendering a whole film:
+
+```console
+$ showreel music --out opener.wav --mood title --bpm 104 \
+    --arrangement examples/pokemon_opener/lonely-pulse.arrangement.json
+opener.wav: title mood, key A, 104.0 bpm (free fit), 36.92s
+  arrangement: intro (6 bars) -> build (2 bars) -> theme (8 bars)
+  wav: opener.wav
+  beats: opener.beats.json
+```
+
+`--duration` is optional when `--arrangement` is given — it defaults to the
+arrangement's own natural length (its bars, at its tempo). `examples/pokemon_opener/`
+holds three such arrangements — an original title-screen opener in the spirit
+of a Game Boy title theme (not a transcription of any specific game's tune):
+`lonely-pulse` (one constant tempo, density alone does the building),
+`tempo-lift` (the intro plays at its own slower `bpm`, then the theme jumps to
+the track's own tempo — a real tempo lift, not just a density change), and
+`call-and-answer` (two short calls separated by a bar of true silence before
+the build).
+
 ### Narration, directed
 
 A track's source can also be *narration* — a script a voice model speaks. Like

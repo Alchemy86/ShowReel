@@ -1,0 +1,5 @@
+[
+  { "name": "intro", "bars": 4, "bpm": 70, "intensity": "kick" },
+  { "name": "build", "bars": 2, "bpm": 100, "intensity": "build" },
+  { "name": "theme", "bars": 8, "intensity": "full" }
+]
