@@ -195,17 +195,20 @@ impl Voicing {
                 kick_gain: 0.34,
                 hat_gain: 0.08,
             },
-            // C-G-Am-F (I-V-vi-IV), the bright four-chord climb every hopeful
+            // A-E-F#m-D (I-V-vi-IV), the bright four-chord climb every hopeful
             // title screen leans on — a progression, not a melody, so it is
-            // free to reuse. A steady marching bass, a wider-duty lead than
-            // Funk's (fuller, more "brass") with a touch more vibrato for
-            // sparkle, and a harder-hitting kick for a fanfare feel.
+            // free to reuse. Written on the same A tonic Funk and Dreamy use,
+            // so `key: 0` (the default) reads as "A" and actually means it —
+            // unlike those two, Title's "A" is a major tonic, not a minor
+            // one. A steady marching bass, a wider-duty lead than Funk's
+            // (fuller, more "brass") with a touch more vibrato for sparkle,
+            // and a harder-hitting kick for a fanfare feel.
             Mood::Title => Voicing {
                 bars: &[
-                    Bar { root: 48, tones: &[60, 64, 67, 72] }, // C  : C E G C
-                    Bar { root: 43, tones: &[55, 59, 62, 67] }, // G  : G B D G
-                    Bar { root: 45, tones: &[57, 60, 64, 69] }, // Am : A C E A
-                    Bar { root: 41, tones: &[53, 57, 60, 65] }, // F  : F A C F
+                    Bar { root: 45, tones: &[57, 61, 64, 69] }, // A   : A C# E A
+                    Bar { root: 40, tones: &[52, 56, 59, 64] }, // E   : E G# B E
+                    Bar { root: 42, tones: &[54, 57, 61, 66] }, // F#m : F# A C# F#
+                    Bar { root: 38, tones: &[50, 54, 57, 62] }, // D   : D F# A D
                 ],
                 bass_gate: b"x...x...x...x...",
                 lead_pat: &[0, 1, 2, 3, 3, 2, 1, 0, 0, 1, 2, 3, 3, 2, 1, 0],
