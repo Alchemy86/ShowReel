@@ -363,7 +363,7 @@ fn bass_on(level: VoiceLevel, gated: bool, s: usize) -> bool {
 fn lead_on(level: VoiceLevel, s: usize) -> bool {
     match level {
         VoiceLevel::Off => false,
-        VoiceLevel::Sparse => s % 4 == 0,
+        VoiceLevel::Sparse => s.is_multiple_of(4),
         VoiceLevel::Full => true,
     }
 }
@@ -375,7 +375,7 @@ fn kick_on(level: VoiceLevel, s: usize) -> bool {
     match level {
         VoiceLevel::Off => false,
         VoiceLevel::Sparse => s == 0,
-        VoiceLevel::Full => s % 4 == 0,
+        VoiceLevel::Full => s.is_multiple_of(4),
     }
 }
 
@@ -1297,6 +1297,187 @@ mod tests {
     #[test]
     fn zero_duration_is_empty_not_a_panic() {
         assert!(Music::chiptune().render_samples(0.0).is_empty());
+    }
+
+    #[test]
+    fn an_empty_arrangement_is_bit_identical_to_the_old_unstructured_tune() {
+        // Capability added, not a new mode to opt into: a track with no
+        // arrangement must still be exactly what it always was.
+        let plain = Music::chiptune();
+        let explicitly_empty = Music::chiptune().arrangement(Vec::new());
+        assert_eq!(plain.render_samples(3.0), explicitly_empty.render_samples(3.0));
+    }
+
+    #[test]
+    fn a_silent_section_renders_true_silence() {
+        let m = Music::chiptune().arrangement([Section::new("hush", 4, Intensity::SILENCE)]);
+        let duration = m.natural_duration().unwrap();
+        let s = m.render_samples(duration);
+        assert!(s.iter().all(|&x| x == 0), "a SILENCE section must produce no sound at all");
+    }
+
+    #[test]
+    fn a_sparse_kick_section_makes_sound_but_less_of_it_than_full() {
+        let bars = 4;
+        let sparse = Music::chiptune().arrangement([Section::new("intro", bars, Intensity::KICK)]);
+        let full = Music::chiptune().arrangement([Section::new("theme", bars, Intensity::FULL)]);
+        let duration = sparse.natural_duration().unwrap();
+        let s = sparse.render_samples(duration);
+        let f = full.render_samples(duration);
+        assert!(s.iter().any(|&x| x != 0), "a lonely kick still makes some sound");
+        let energy = |v: &[i16]| v.iter().map(|&x| (x as i64).abs()).sum::<i64>();
+        assert!(
+            energy(&s) < energy(&f) / 2,
+            "kick-only ({}) must be markedly sparser than the full band ({})",
+            energy(&s),
+            energy(&f)
+        );
+    }
+
+    #[test]
+    fn natural_duration_sums_the_arrangements_bars_at_the_tracks_bpm() {
+        let m = Music::chiptune().bpm(120.0).arrangement([
+            Section::new("a", 2, Intensity::KICK),
+            Section::new("b", 4, Intensity::FULL),
+        ]);
+        // 6 bars at 120 bpm: a bar is 4 beats, 240/bpm seconds each = 2s/bar.
+        assert_eq!(m.natural_duration(), Some(12.0));
+    }
+
+    #[test]
+    fn natural_duration_respects_a_sections_own_tempo_override() {
+        let m = Music::chiptune().bpm(120.0).arrangement([
+            Section::new("slow", 2, Intensity::KICK).bpm(60.0), // 240/60 = 4s/bar
+            Section::new("fast", 2, Intensity::FULL),           // 240/120 = 2s/bar
+        ]);
+        assert_eq!(m.natural_duration(), Some(2.0 * 4.0 + 2.0 * 2.0));
+    }
+
+    #[test]
+    fn natural_duration_is_none_without_an_arrangement() {
+        assert_eq!(Music::chiptune().natural_duration(), None);
+    }
+
+    #[test]
+    fn an_arrangement_shorter_than_the_requested_duration_loops() {
+        // A single one-bar section, asked to fill several times its own length,
+        // must keep sounding for the whole requested duration rather than
+        // trailing off to silence once its one bar has played.
+        let one_bar = Music::chiptune().bpm(120.0).arrangement([Section::new("loop", 1, Intensity::FULL)]);
+        let duration = 10.0; // one bar at 120bpm is 2s, so this loops 5x
+        let s = one_bar.render_samples(duration);
+        let sr = SAMPLE_RATE as usize;
+        let tail = &s[s.len() - sr * 2..]; // last second, stereo
+        assert!(tail.iter().any(|&x| x != 0), "the arrangement must still be sounding near the end");
+    }
+
+    #[test]
+    fn the_manifest_agrees_with_the_arrangement_bar_by_bar() {
+        let m = Music::chiptune().bpm(120.0).arrangement([
+            Section::new("intro", 2, Intensity::KICK),
+            Section::new("theme", 3, Intensity::FULL),
+        ]);
+        let duration = m.natural_duration().unwrap();
+        let man = m.manifest(duration);
+        assert_eq!(man.bars.len(), 5, "2 + 3 bars");
+        assert_eq!(man.sections.len(), 2);
+        assert_eq!(man.sections[0].name, "intro");
+        assert_eq!(man.sections[0].bar_count, 2);
+        assert_eq!(man.sections[1].name, "theme");
+        assert_eq!(man.sections[1].bar_count, 3);
+        // First bar starts on the downbeat at t=0.
+        assert_eq!(man.bars[0].start, 0.0);
+        assert_eq!(man.bars[0].beats[0], 0.0);
+        // A bar at 120bpm is 2s; each of its 4 beats is 0.5s apart.
+        assert_eq!(man.bars[0].beats, vec![0.0, 0.5, 1.0, 1.5]);
+        assert_eq!(man.bars[1].start, 2.0);
+        // The theme section starts right where the intro's 2 bars end.
+        assert_eq!(man.sections[1].start, 4.0);
+        assert_eq!(man.sections[0].end, man.sections[1].start);
+        assert!((man.duration - duration).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_manifest_never_reports_a_bar_at_or_past_the_requested_duration() {
+        let m = Music::chiptune().bpm(140.0).arrangement([Section::new("loop", 1, Intensity::FULL)]);
+        let man = m.manifest(7.0);
+        assert!(man.bars.last().unwrap().start < 7.0);
+        for b in &man.bars {
+            assert!(b.start < 7.0);
+        }
+    }
+
+    #[test]
+    fn section_bpm_override_reaches_the_manifest() {
+        let m = Music::chiptune().bpm(120.0).arrangement([
+            Section::new("slow", 1, Intensity::KICK).bpm(60.0), // 4s bar
+            Section::new("fast", 1, Intensity::FULL),           // 2s bar (base bpm)
+        ]);
+        let man = m.manifest(m.natural_duration().unwrap());
+        assert_eq!(man.bars[0].beats, vec![0.0, 1.0, 2.0, 3.0], "60bpm: 1s/beat");
+        assert_eq!(man.bars[1].start, 4.0);
+        assert_eq!(man.bars[1].beats, vec![4.0, 4.5, 5.0, 5.5], "120bpm: 0.5s/beat");
+    }
+
+    #[test]
+    fn intensity_named_presets_round_trip_to_their_word() {
+        for (word, preset) in [
+            ("silence", Intensity::SILENCE),
+            ("full", Intensity::FULL),
+            ("kick", Intensity::KICK),
+            ("pulse", Intensity::PULSE),
+            ("build", Intensity::BUILD),
+        ] {
+            let parsed: Intensity = serde_json::from_str(&format!("{word:?}")).unwrap();
+            assert_eq!(parsed, preset, "{word}");
+            let s = serde_json::to_string(&preset).unwrap();
+            assert_eq!(s, format!("{word:?}"), "{word} must round-trip to its own word");
+        }
+    }
+
+    #[test]
+    fn a_custom_intensity_object_defaults_unset_voices_to_off() {
+        let i: Intensity = serde_json::from_str(r#"{"kick":"sparse"}"#).unwrap();
+        assert_eq!(i, Intensity::KICK, "an unset voice in the object form stays off, not full");
+    }
+
+    #[test]
+    fn an_unrecognised_intensity_word_falls_back_to_silence_not_a_guess() {
+        let i: Intensity = serde_json::from_str("\"chaos\"").unwrap();
+        assert_eq!(i, Intensity::SILENCE);
+    }
+
+    #[test]
+    fn arrangement_round_trips_through_json() {
+        let m = Music::mood(Mood::Title).bpm(150.0).arrangement([
+            Section::new("intro", 6, Intensity::KICK),
+            Section::new("build", 2, Intensity::BUILD).bpm(120.0),
+            Section::new("theme", 8, Intensity::FULL),
+        ]);
+        let s = serde_json::to_string(&m).unwrap();
+        assert_eq!(serde_json::from_str::<Music>(&s).unwrap(), m);
+    }
+
+    #[test]
+    fn validation_catches_a_zero_length_section_and_a_bad_section_tempo() {
+        let m = Music::chiptune()
+            .arrangement([Section::new("oops", 0, Intensity::FULL), Section::new("bad", 2, Intensity::FULL).bpm(-5.0)]);
+        let errs = m.validate("music");
+        assert!(errs.iter().any(|e| e.contains("0 bars")), "{errs:?}");
+        assert!(errs.iter().any(|e| e.contains("non-positive bpm")), "{errs:?}");
+    }
+
+    #[test]
+    fn the_title_mood_is_a_distinct_bright_progression_and_makes_sound() {
+        let s = Music::mood(Mood::Title).render_samples(2.0);
+        let peak = s.iter().map(|&v| v.unsigned_abs()).max().unwrap_or(0);
+        assert!(peak > 8000, "peak sample {peak} is implausibly quiet");
+        assert_ne!(
+            Music::mood(Mood::Title).render_samples(2.0),
+            Music::mood(Mood::Funk).render_samples(2.0),
+            "title must not just be funk with a label change"
+        );
+        assert!(Mood::is_known("title"));
     }
 
     // A/B listening aid, not a CI test: writes WAVs to $SR_MUSIC_OUT for a
