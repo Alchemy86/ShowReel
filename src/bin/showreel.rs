@@ -193,6 +193,40 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Render generated music to a standalone WAV, with its beat/bar/section
+    /// manifest beside it — audition a track, or bake a trailer opener,
+    /// without rendering a whole film. See the README's "Generated music"
+    /// section and `src/music.rs`'s arrangement docs.
+    Music {
+        /// Where to write the WAV. Defaults to `music.wav`.
+        #[arg(short, long, default_value = "music.wav")]
+        out: PathBuf,
+        /// The mood: `funk`, `dreamy` or `title`.
+        #[arg(long, default_value = "funk")]
+        mood: String,
+        /// Tonal centre, e.g. `A`, `C#`, `F`. Defaults to the mood's own key.
+        #[arg(long)]
+        key: Option<String>,
+        /// Tempo in BPM. Defaults to the mood's own tempo.
+        #[arg(long)]
+        bpm: Option<f64>,
+        /// `free` (play at `bpm`) or `film` (nudge `bpm` so a whole number of
+        /// bars spans `--duration` exactly).
+        #[arg(long, default_value = "free")]
+        fit: String,
+        /// Seeds the drums' noise texture.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Track length in seconds. Defaults to the arrangement's own natural
+        /// length (its bars, at its tempo); required when `--arrangement` is
+        /// not given, since an unstructured tune has no length of its own.
+        #[arg(long)]
+        duration: Option<f64>,
+        /// A JSON array of arrangement sections — the same shape a film's
+        /// `"music": {"arrangement": [...]}` takes. Path to a `.json` file.
+        #[arg(long)]
+        arrangement: Option<PathBuf>,
+    },
     /// List the font families ShowReel can see.
     Fonts {
         /// Only families containing this text.
@@ -281,6 +315,9 @@ fn main() -> Result<()> {
         Command::Check { film, asset_roots } => cmd_check(film, asset_roots),
         Command::Narrate { film, asset_roots, out, python, force } => {
             cmd_narrate(film, asset_roots, out, python, force)
+        }
+        Command::Music { out, mood, key, bpm, fit, seed, duration, arrangement } => {
+            cmd_music(out, mood, key, bpm, fit, seed, duration, arrangement)
         }
         Command::Fonts { filter } => cmd_fonts(filter),
         #[cfg(feature = "studio")]
@@ -930,6 +967,113 @@ fn cmd_narrate(
         out_dir.display()
     );
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_music(
+    out: PathBuf,
+    mood: String,
+    key: Option<String>,
+    bpm: Option<f64>,
+    fit: String,
+    seed: Option<u64>,
+    duration: Option<f64>,
+    arrangement: Option<PathBuf>,
+) -> Result<()> {
+    use showreel::music::{Mood, Music};
+
+    if !Mood::is_known(&mood) {
+        bail!("unknown mood {mood:?} — known moods: funk, dreamy, title");
+    }
+
+    // Built through the same word-or-object JSON a film's own `"music"`
+    // block accepts, rather than a second, hand-rolled path to a `Music` —
+    // so this CLI and a film file can never disagree about what a spec means.
+    let mut spec = serde_json::json!({ "mood": mood, "fit": fit });
+    if let Some(k) = &key {
+        spec["key"] = serde_json::Value::String(k.clone());
+    }
+    if let Some(b) = bpm {
+        spec["bpm"] = serde_json::json!(b);
+    }
+    if let Some(s) = seed {
+        spec["seed"] = serde_json::json!(s);
+    }
+    if let Some(path) = &arrangement {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading arrangement {}", path.display()))?;
+        let sections: serde_json::Value = serde_json::from_str(&text)
+            .with_context(|| format!("parsing arrangement {} as JSON", path.display()))?;
+        spec["arrangement"] = sections;
+    }
+    let music: Music = serde_json::from_value(spec).context("building the music spec")?;
+
+    let errs = music.validate("music");
+    if !errs.is_empty() {
+        bail!(errs.join("\n"));
+    }
+
+    let duration = match duration {
+        Some(d) => d,
+        None => music.natural_duration().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no --duration given and this track has no arrangement to derive a natural \
+                 length from — pass --duration <secs> or --arrangement <file.json>"
+            )
+        })?,
+    };
+    if duration <= 0.0 {
+        bail!("duration must be positive, got {duration}");
+    }
+
+    if let Some(parent) = out.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&out, music.wav_bytes(duration))
+        .with_context(|| format!("writing {}", out.display()))?;
+
+    let manifest = music.manifest(duration);
+    let manifest_path = sibling_json_path(&out, "beats.json");
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
+        .with_context(|| format!("writing {}", manifest_path.display()))?;
+
+    println!(
+        "{}: {} mood, key {}, {:.1} bpm ({} fit), {:.2}s",
+        out.display(),
+        manifest.mood,
+        manifest.key,
+        manifest.bpm,
+        music.fit.name(),
+        manifest.duration,
+    );
+    if manifest.sections.iter().any(|s| !s.name.is_empty()) {
+        let summary: Vec<String> = manifest
+            .sections
+            .iter()
+            .map(|s| {
+                let name = if s.name.is_empty() { "—" } else { &s.name };
+                format!("{name} ({} bar{})", s.bar_count, if s.bar_count == 1 { "" } else { "s" })
+            })
+            .collect();
+        println!("  arrangement: {}", summary.join(" -> "));
+    }
+    println!("  wav: {}", out.display());
+    println!("  beats: {}", manifest_path.display());
+    Ok(())
+}
+
+/// `music.wav` -> `music.beats.json`: same stem and directory, a different
+/// suffix — the sidecar-beside-the-audio convention `showreel narrate`
+/// already uses for its own `.words.json` manifest.
+fn sibling_json_path(out: &Path, suffix: &str) -> PathBuf {
+    let stem = out.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "music".to_string());
+    let dir = out.parent().filter(|p| !p.as_os_str().is_empty());
+    match dir {
+        Some(d) => d.join(format!("{stem}.{suffix}")),
+        None => PathBuf::from(format!("{stem}.{suffix}")),
+    }
 }
 
 #[cfg(feature = "studio")]
