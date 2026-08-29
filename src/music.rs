@@ -65,7 +65,7 @@ pub const SAMPLE_RATE: u32 = 48_000;
 /// different. Native only — it exists solely for that on-disk cache, which the
 /// browser (no filesystem) has no equivalent of.
 #[cfg(not(target_arch = "wasm32"))]
-const SYNTH_VERSION: u32 = 1;
+const SYNTH_VERSION: u32 = 2;
 
 /// A mood: the musical content behind the one chiptune idiom.
 ///
@@ -81,6 +81,12 @@ pub enum Mood {
     /// Gentler and slower: lush seventh chords, a sparse bass, a softer lead —
     /// for a calmer film. Same three voices, tuned down.
     Dreamy,
+    /// Bright and hopeful: a major-key I-V-vi-IV progression, a marching pulse
+    /// bass and a sparkling arpeggio lead an octave up — the title-screen
+    /// character, for an opener that wants to lift rather than groove. Same
+    /// three voices as every other mood; an original progression, not a
+    /// transcription of any specific game's theme.
+    Title,
 }
 
 impl Mood {
@@ -90,6 +96,7 @@ impl Mood {
             // not yet know the mood names — it resolves to the reference tune.
             "funk" | "chiptune" | "" => Mood::Funk,
             "dreamy" => Mood::Dreamy,
+            "title" => Mood::Title,
             // Like `Grade`'s word shorthand, an unrecognised name is the default
             // rather than a hard error: a typo should cost you a mood, not a
             // render. `showreel check` still names it — see [`Music::validate`].
@@ -102,19 +109,21 @@ impl Mood {
         match self {
             Mood::Funk => "funk",
             Mood::Dreamy => "dreamy",
+            Mood::Title => "title",
         }
     }
 
     /// Whether `s` names a mood this synth knows — so a typo is reported at
     /// load rather than silently swapped for the default.
     pub fn is_known(s: &str) -> bool {
-        matches!(s.trim().to_ascii_lowercase().as_str(), "funk" | "chiptune" | "dreamy")
+        matches!(s.trim().to_ascii_lowercase().as_str(), "funk" | "chiptune" | "dreamy" | "title")
     }
 
     fn default_bpm(self) -> f64 {
         match self {
             Mood::Funk => 128.0,
             Mood::Dreamy => 96.0,
+            Mood::Title => 150.0,
         }
     }
 }
@@ -186,6 +195,29 @@ impl Voicing {
                 kick_gain: 0.34,
                 hat_gain: 0.08,
             },
+            // C-G-Am-F (I-V-vi-IV), the bright four-chord climb every hopeful
+            // title screen leans on — a progression, not a melody, so it is
+            // free to reuse. A steady marching bass, a wider-duty lead than
+            // Funk's (fuller, more "brass") with a touch more vibrato for
+            // sparkle, and a harder-hitting kick for a fanfare feel.
+            Mood::Title => Voicing {
+                bars: &[
+                    Bar { root: 48, tones: &[60, 64, 67, 72] }, // C  : C E G C
+                    Bar { root: 43, tones: &[55, 59, 62, 67] }, // G  : G B D G
+                    Bar { root: 45, tones: &[57, 60, 64, 69] }, // Am : A C E A
+                    Bar { root: 41, tones: &[53, 57, 60, 65] }, // F  : F A C F
+                ],
+                bass_gate: b"x...x...x...x...",
+                lead_pat: &[0, 1, 2, 3, 3, 2, 1, 0, 0, 1, 2, 3, 3, 2, 1, 0],
+                bass_duty: 0.5,
+                bass_gain: 0.38,
+                lead_duty: 0.35,
+                lead_vib: 3.0,
+                lead_gain: 0.24,
+                lead_octave: 12,
+                kick_gain: 0.55,
+                hat_gain: 0.12,
+            },
         }
     }
 }
@@ -220,6 +252,321 @@ impl MusicFit {
     }
 }
 
+/// How present one voice is in a bar. Not a volume knob — [`Intensity`] decides
+/// *whether a voice speaks this bar and how often*, using the mood's own
+/// step patterns, so a sparse section still plays the mood's music rather than
+/// a quieter copy of the full arrangement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VoiceLevel {
+    /// Silent this section.
+    #[default]
+    Off,
+    /// One hit a bar — the downbeat only. This is the "lonely repeated beat"
+    /// an opener's intro wants: a kick at [`VoiceLevel::Sparse`] plays once
+    /// per bar with silence around it, not the full four-per-bar pattern.
+    Sparse,
+    /// The mood's own pattern for this voice, unabridged — what every voice
+    /// plays when no arrangement is declared at all.
+    Full,
+}
+
+impl VoiceLevel {
+    fn parse(s: &str) -> VoiceLevel {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "sparse" => VoiceLevel::Sparse,
+            "full" => VoiceLevel::Full,
+            _ => VoiceLevel::Off,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            VoiceLevel::Off => "off",
+            VoiceLevel::Sparse => "sparse",
+            VoiceLevel::Full => "full",
+        }
+    }
+}
+
+/// Which of the three voices play in a bar, and how densely — the knob an
+/// [`Section`] turns. Named presets cover the common shapes; the object form
+/// sets each voice independently.
+///
+/// ```jsonc
+/// "intensity": "kick"   // just the lonely downbeat kick — a slow opener
+/// "intensity": "full"   // the whole mood, unabridged — the default
+/// "intensity": { "bass": "sparse", "kick": "full", "hat": "sparse" }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Intensity {
+    pub bass: VoiceLevel,
+    pub lead: VoiceLevel,
+    pub kick: VoiceLevel,
+    pub hat: VoiceLevel,
+}
+
+impl Intensity {
+    /// Nothing plays — a held silence, useful before the first hit of an
+    /// opener or as a dramatic beat between sections.
+    pub const SILENCE: Intensity =
+        Intensity { bass: VoiceLevel::Off, lead: VoiceLevel::Off, kick: VoiceLevel::Off, hat: VoiceLevel::Off };
+    /// Every voice at its mood's own full pattern — what a track with no
+    /// arrangement plays throughout, and what the whole tune returns to once
+    /// it "really gets going".
+    pub const FULL: Intensity =
+        Intensity { bass: VoiceLevel::Full, lead: VoiceLevel::Full, kick: VoiceLevel::Full, hat: VoiceLevel::Full };
+    /// Just the kick, once a bar — a slow, lonely pulse with nothing else
+    /// playing. The shape the captain asked for: "just like the first beat
+    /// several times before it really gets going".
+    pub const KICK: Intensity =
+        Intensity { bass: VoiceLevel::Off, lead: VoiceLevel::Off, kick: VoiceLevel::Sparse, hat: VoiceLevel::Off };
+    /// The kick joined by a light offbeat hat — a little air added to
+    /// [`Intensity::KICK`] without yet bringing in the tune.
+    pub const PULSE: Intensity =
+        Intensity { bass: VoiceLevel::Off, lead: VoiceLevel::Off, kick: VoiceLevel::Sparse, hat: VoiceLevel::Sparse };
+    /// Bass and kick both present (kick at its full four-per-bar pattern),
+    /// still no lead — the rhythm section arriving just ahead of the melody,
+    /// for the bar or two right before a tune "really gets going".
+    pub const BUILD: Intensity =
+        Intensity { bass: VoiceLevel::Sparse, lead: VoiceLevel::Off, kick: VoiceLevel::Full, hat: VoiceLevel::Sparse };
+
+    fn named(s: &str) -> Option<Intensity> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "silence" | "off" => Some(Intensity::SILENCE),
+            "full" => Some(Intensity::FULL),
+            "kick" => Some(Intensity::KICK),
+            "pulse" => Some(Intensity::PULSE),
+            "build" => Some(Intensity::BUILD),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Intensity {
+    fn default() -> Self {
+        Intensity::FULL
+    }
+}
+
+/// Whether `level` triggers the bass at step `s` of a bar, given the mood's
+/// own gate pattern for that step.
+fn bass_on(level: VoiceLevel, gated: bool, s: usize) -> bool {
+    match level {
+        VoiceLevel::Off => false,
+        VoiceLevel::Sparse => s == 0,
+        VoiceLevel::Full => gated,
+    }
+}
+
+/// The lead plays every step at [`VoiceLevel::Full`] (a continuous arpeggio);
+/// at [`VoiceLevel::Sparse`] it thins to one note a beat.
+fn lead_on(level: VoiceLevel, s: usize) -> bool {
+    match level {
+        VoiceLevel::Off => false,
+        VoiceLevel::Sparse => s % 4 == 0,
+        VoiceLevel::Full => true,
+    }
+}
+
+/// The kick sits on every beat at [`VoiceLevel::Full`] (four a bar); at
+/// [`VoiceLevel::Sparse`] it drops to once a bar, on the downbeat — the
+/// "lonely repeated beat" of a slow opener.
+fn kick_on(level: VoiceLevel, s: usize) -> bool {
+    match level {
+        VoiceLevel::Off => false,
+        VoiceLevel::Sparse => s == 0,
+        VoiceLevel::Full => s % 4 == 0,
+    }
+}
+
+/// The hat sits on every offbeat eighth at [`VoiceLevel::Full`] (eight a bar);
+/// at [`VoiceLevel::Sparse`] it thins to two.
+fn hat_on(level: VoiceLevel, s: usize) -> bool {
+    match level {
+        VoiceLevel::Off => false,
+        VoiceLevel::Sparse => s % 4 == 1,
+        VoiceLevel::Full => s % 2 == 1,
+    }
+}
+
+/// One stretch of a [`Music`] track's [`arrangement`](Music::arrangement): a
+/// length in bars and how present each voice is over it. A film asks for a
+/// build the same way it asks for anything else here — as data:
+///
+/// ```jsonc
+/// "arrangement": [
+///   { "name": "intro", "bars": 6, "intensity": "kick" },
+///   { "name": "build", "bars": 2, "intensity": "build" },
+///   { "name": "theme", "bars": 8, "intensity": "full" }
+/// ]
+/// ```
+///
+/// A section may also override the tempo (`"bpm"`) — a real tempo lift into
+/// the theme, not just a density change — but most arrangements need only
+/// `bars` and `intensity`; the track's own `bpm` covers a section that leaves
+/// it unset. The chord progression keeps advancing bar over bar through every
+/// section, arrangement or not — a build is a change in who is playing, never
+/// a change in the mood's own harmony.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Section {
+    /// A label carried into the [`MusicManifest`] for the film crew to key
+    /// off — `"intro"`, `"build"`, `"theme"`. Cosmetic to the audio itself.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Length in bars (four beats each). Must be at least 1 — see
+    /// [`Music::validate`].
+    pub bars: u32,
+    /// Tempo override for this section only. Unset plays at the track's own
+    /// [`Music::effective_bpm`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpm: Option<f64>,
+    #[serde(default, skip_serializing_if = "is_full_intensity")]
+    pub intensity: Intensity,
+}
+
+fn is_full_intensity(i: &Intensity) -> bool {
+    *i == Intensity::FULL
+}
+
+impl Section {
+    pub fn new(name: impl Into<String>, bars: u32, intensity: Intensity) -> Self {
+        Section { name: name.into(), bars, bpm: None, intensity }
+    }
+
+    pub fn bpm(mut self, bpm: f64) -> Self {
+        self.bpm = Some(bpm);
+        self
+    }
+}
+
+// --- serde: intensity as a named word, or an object of per-voice levels -------
+
+impl Serialize for Intensity {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        IntensityRepr::from(*self).serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Intensity {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(IntensityRepr::deserialize(d)?.into())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum IntensityRepr {
+    Word(String),
+    Full(IntensityFull),
+}
+
+#[derive(Serialize, Deserialize)]
+struct IntensityFull {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bass: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lead: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kick: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hat: Option<String>,
+}
+
+impl From<IntensityRepr> for Intensity {
+    fn from(r: IntensityRepr) -> Intensity {
+        match r {
+            // A named preset, or (mirroring `Mood`'s tolerance for a typo) the
+            // safest fallback: silence, not a guess at what was meant.
+            IntensityRepr::Word(w) => Intensity::named(&w).unwrap_or(Intensity::SILENCE),
+            // Each voice defaults to Off when unset — the object form is for
+            // deliberate, explicit control, so a voice left out of it is meant
+            // to stay quiet rather than quietly inherit Full.
+            IntensityRepr::Full(f) => Intensity {
+                bass: f.bass.as_deref().map(VoiceLevel::parse).unwrap_or_default(),
+                lead: f.lead.as_deref().map(VoiceLevel::parse).unwrap_or_default(),
+                kick: f.kick.as_deref().map(VoiceLevel::parse).unwrap_or_default(),
+                hat: f.hat.as_deref().map(VoiceLevel::parse).unwrap_or_default(),
+            },
+        }
+    }
+}
+
+impl From<Intensity> for IntensityRepr {
+    fn from(i: Intensity) -> IntensityRepr {
+        // A recognised preset round-trips as its terse word; anything else
+        // (a custom mix) is the full object.
+        let word = if i == Intensity::SILENCE {
+            Some("silence")
+        } else if i == Intensity::FULL {
+            Some("full")
+        } else if i == Intensity::KICK {
+            Some("kick")
+        } else if i == Intensity::PULSE {
+            Some("pulse")
+        } else if i == Intensity::BUILD {
+            Some("build")
+        } else {
+            None
+        };
+        match word {
+            Some(w) => IntensityRepr::Word(w.to_string()),
+            None => IntensityRepr::Full(IntensityFull {
+                bass: Some(i.bass.name().to_string()),
+                lead: Some(i.lead.name().to_string()),
+                kick: Some(i.kick.name().to_string()),
+                hat: Some(i.hat.name().to_string()),
+            }),
+        }
+    }
+}
+
+/// One resolved stretch [`Music::render_samples`] and [`Music::manifest`] both
+/// walk — either a borrowed [`Section`]'s fields, or the synthetic single
+/// section [`Music::plan`] builds when no arrangement is declared.
+struct PlanSection<'a> {
+    bars: u32,
+    bpm: Option<f64>,
+    intensity: Intensity,
+    name: &'a str,
+}
+
+/// Where every beat, bar and section boundary of a rendered track falls — see
+/// [`Music::manifest`]. Written beside a standalone export
+/// (`showreel music`) and mirrors the shape
+/// [`crate::narration::NarrationManifest`] already established: sections
+/// nesting the bars they own, each bar nesting its own beat times, so a film
+/// crew reads exactly the granularity it needs without flattening anything
+/// itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MusicManifest {
+    pub mood: String,
+    pub key: String,
+    pub bpm: f64,
+    pub duration: f64,
+    pub sections: Vec<SectionTiming>,
+    pub bars: Vec<BarBeat>,
+}
+
+/// One arrangement section's span on the rendered track's own clock.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionTiming {
+    pub name: String,
+    pub start: f64,
+    pub end: f64,
+    pub bar_start: usize,
+    pub bar_count: usize,
+}
+
+/// One bar's downbeat and its four beat times, absolute on the track's clock —
+/// what a terminal cursor or a logo drop cues off to land exactly on the beat.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarBeat {
+    pub index: usize,
+    pub start: f64,
+    pub section: String,
+    pub beats: Vec<f64>,
+}
+
 /// A generated chiptune. Written in a film file as a bare mood word —
 /// `"music": "funk"` — or an object for full control:
 ///
@@ -229,7 +576,18 @@ impl MusicFit {
 ///
 /// The bare-word form mirrors [`crate::grade::Grade`]'s `"documentary"`: the
 /// common case is the word an author wants to type, not `{"mood": "funk"}`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// # Arrangement
+///
+/// By default a track plays every voice at [`Intensity::FULL`] from its first
+/// sample — fine for a bed under a scene, wrong for an opener that wants to
+/// build. [`Music::arrangement`] gives it structure over time: named
+/// [`Section`]s, each a length in bars and how present each voice is, walked
+/// in order and looped if the track needs to run longer than the arrangement's
+/// own length. An empty arrangement (the default) is exactly the old
+/// single-intensity behaviour — this is capability added, not a new mode to
+/// opt out of.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Music {
     pub mood: Mood,
     /// Tonal centre as semitones above A (the reference tonic). Written as a
@@ -241,13 +599,24 @@ pub struct Music {
     /// Seeds the drums' noise. A fixed default keeps renders reproducible;
     /// change it only to reroll the drum texture.
     pub seed: u64,
+    /// Structure over time — see the "Arrangement" section above. Empty means
+    /// no structure: every bar plays at [`Intensity::FULL`], the original
+    /// behaviour.
+    pub arrangement: Vec<Section>,
 }
 
 const DEFAULT_SEED: u64 = 0xC17;
 
 impl Default for Music {
     fn default() -> Self {
-        Music { mood: Mood::Funk, key: 0, bpm: Mood::Funk.default_bpm(), fit: MusicFit::Free, seed: DEFAULT_SEED }
+        Music {
+            mood: Mood::Funk,
+            key: 0,
+            bpm: Mood::Funk.default_bpm(),
+            fit: MusicFit::Free,
+            seed: DEFAULT_SEED,
+            arrangement: Vec::new(),
+        }
     }
 }
 
@@ -279,6 +648,13 @@ impl Music {
 
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
+        self
+    }
+
+    /// Give the track structure over time — see the "Arrangement" section on
+    /// [`Music`]'s own docs.
+    pub fn arrangement(mut self, sections: impl IntoIterator<Item = Section>) -> Self {
+        self.arrangement = sections.into_iter().collect();
         self
     }
 
@@ -314,7 +690,114 @@ impl Music {
         if self.bpm <= 0.0 {
             errs.push(format!("{label}: bpm must be positive"));
         }
+        for (i, s) in self.arrangement.iter().enumerate() {
+            if s.bars == 0 {
+                errs.push(format!("{label}: arrangement section {i} ({:?}) has 0 bars", s.name));
+            }
+            if let Some(bpm) = s.bpm
+                && bpm <= 0.0
+            {
+                errs.push(format!("{label}: arrangement section {i} ({:?}) has a non-positive bpm", s.name));
+            }
+        }
         errs
+    }
+
+    /// The track's own natural length in seconds, when it has an
+    /// [`arrangement`](Self::arrangement): the arrangement's own bars at the
+    /// track's authored `bpm`, section tempo overrides included. `None` with
+    /// no arrangement — an unstructured tune has no length of its own, only
+    /// however long it is asked to fill (a film's length, or an explicit
+    /// `--duration`). Used as the default duration for a standalone `showreel
+    /// music` export.
+    pub fn natural_duration(&self) -> Option<f64> {
+        if self.arrangement.is_empty() {
+            return None;
+        }
+        let mut secs = 0.0;
+        for s in &self.arrangement {
+            let bpm = s.bpm.unwrap_or(self.bpm);
+            if bpm <= 0.0 {
+                continue;
+            }
+            secs += s.bars as f64 * (240.0 / bpm);
+        }
+        Some(secs)
+    }
+
+    /// The concrete plan render and [`manifest`](Self::manifest) both walk:
+    /// either the authored [`arrangement`](Self::arrangement), or — when none
+    /// is declared — one synthetic section spanning [`Intensity::FULL`] for
+    /// long enough to cover `duration`. One function so the two can never
+    /// disagree about where a bar or a beat falls.
+    fn plan(&self, duration: f64, base_bpm: f64) -> Vec<PlanSection<'_>> {
+        if !self.arrangement.is_empty() {
+            return self
+                .arrangement
+                .iter()
+                .map(|s| PlanSection { bars: s.bars, bpm: s.bpm, intensity: s.intensity, name: s.name.as_str() })
+                .collect();
+        }
+        let bar_len = if base_bpm > 0.0 { 240.0 / base_bpm } else { 1.0 };
+        // Enough bars to cover the padded duration the synth renders (see
+        // render_samples' one-second ring-out tail), plus one for headroom.
+        let bars = (((duration + 1.0) / bar_len).ceil() as u32 + 1).max(1);
+        vec![PlanSection { bars, bpm: None, intensity: Intensity::FULL, name: "" }]
+    }
+
+    /// Where every beat, bar and section boundary falls — the sidecar a
+    /// standalone export or a film's render writes beside the audio, so a
+    /// terminal cursor, a logo drop or a narration cue can land on the beat
+    /// exactly rather than by hand-timing against a waveform. Pure — walks
+    /// the same [`plan`](Self::plan) [`render_samples`](Self::render_samples)
+    /// does, so the two can never drift apart.
+    pub fn manifest(&self, duration: f64) -> MusicManifest {
+        let base_bpm = self.effective_bpm(duration);
+        let plan = self.plan(duration, base_bpm);
+        let mut bars = Vec::new();
+        let mut sections: Vec<SectionTiming> = Vec::new();
+        let mut t = 0.0f64;
+        let mut bar_index = 0usize;
+        'outer: loop {
+            for sec in &plan {
+                let bpm = sec.bpm.unwrap_or(base_bpm);
+                let beat = if bpm > 0.0 { 60.0 / bpm } else { 0.0 };
+                let bar_len = 4.0 * beat;
+                if bar_len <= 0.0 {
+                    break 'outer;
+                }
+                let sec_start = t;
+                let sec_bar_start = bar_index;
+                let mut bars_here = 0u32;
+                for _ in 0..sec.bars {
+                    if t >= duration {
+                        break 'outer;
+                    }
+                    let beats = (0..4).map(|i| round3(t + i as f64 * beat)).collect();
+                    bars.push(BarBeat { index: bar_index, start: round3(t), section: sec.name.to_string(), beats });
+                    t += bar_len;
+                    bar_index += 1;
+                    bars_here += 1;
+                }
+                if bars_here > 0 {
+                    sections.push(SectionTiming {
+                        name: sec.name.to_string(),
+                        start: round3(sec_start),
+                        end: round3(t),
+                        bar_start: sec_bar_start,
+                        bar_count: bars_here as usize,
+                    });
+                }
+            }
+        }
+        MusicManifest {
+            mood: self.mood.name().to_string(),
+            key: format_key(self.key),
+            bpm: base_bpm,
+            duration: round3(duration),
+            sections,
+            bars,
+        }
     }
 
     /// Synthesise `duration` seconds of the tune as interleaved stereo `i16`
@@ -327,11 +810,8 @@ impl Music {
             return Vec::new();
         }
         let voicing = Voicing::of(self.mood);
-        let bpm = self.effective_bpm(duration);
-        let beat = 60.0 / bpm;
-        let step = beat / 4.0; // a sixteenth note
-        let bar_len = 16.0 * step;
-        let loop_len = voicing.bars.len() as f64 * bar_len;
+        let base_bpm = self.effective_bpm(duration);
+        let plan = self.plan(duration, base_bpm);
 
         // A one-second tail so a note struck near the end still has room to ring
         // before the buffer is truncated — the same pad chiptune.py used.
@@ -339,35 +819,48 @@ impl Music {
         let mut mix = vec![0.0f32; total];
         let mut rng = Rng::new(self.seed);
 
-        let nloops = ((duration / loop_len).ceil() as usize) + 1;
-        for l in 0..nloops {
-            for (b, bar) in voicing.bars.iter().enumerate() {
-                let bar_t = l as f64 * loop_len + b as f64 * bar_len;
-                if bar_t >= duration + 1.0 {
-                    break;
+        let mut t = 0.0f64;
+        let mut chord_bar = 0usize;
+        'outer: loop {
+            for sec in &plan {
+                let bpm = sec.bpm.unwrap_or(base_bpm);
+                if bpm <= 0.0 {
+                    break 'outer;
                 }
-                for s in 0..16 {
-                    let at = bar_t + s as f64 * step;
-                    // Bass: root dropped an octave, punchy short pulse.
-                    if voicing.bass_gate[s] == b'x' {
-                        let f = midi(bar.root - 12 + self.key);
-                        let sig = pulse(f, step * 0.9, voicing.bass_duty, 0.0, sr);
-                        place(&mut mix, &sig, at, sr, voicing.bass_gain);
+                let beat = 60.0 / bpm;
+                let step = beat / 4.0; // a sixteenth note
+                for _ in 0..sec.bars {
+                    if t >= duration + 1.0 {
+                        break 'outer;
                     }
-                    // Lead: bright arpeggio, thin duty, a little vibrato.
-                    let tone = bar.tones[voicing.lead_pat[s] % bar.tones.len()];
-                    let f = midi(tone + voicing.lead_octave + self.key);
-                    let sig = pulse(f, step * 0.95, voicing.lead_duty, voicing.lead_vib, sr);
-                    place(&mut mix, &sig, at, sr, voicing.lead_gain);
-                    // Drums: kick on the beat, hat on the offbeat eighths.
-                    if s % 4 == 0 {
-                        let sig = kick(&mut rng, sr);
-                        place(&mut mix, &sig, at, sr, voicing.kick_gain);
+                    let bar = &voicing.bars[chord_bar % voicing.bars.len()];
+                    for s in 0..16 {
+                        let at = t + s as f64 * step;
+                        // Bass: root dropped an octave, punchy short pulse.
+                        if bass_on(sec.intensity.bass, voicing.bass_gate[s] == b'x', s) {
+                            let f = midi(bar.root - 12 + self.key);
+                            let sig = pulse(f, step * 0.9, voicing.bass_duty, 0.0, sr);
+                            place(&mut mix, &sig, at, sr, voicing.bass_gain);
+                        }
+                        // Lead: bright arpeggio, thin duty, a little vibrato.
+                        if lead_on(sec.intensity.lead, s) {
+                            let tone = bar.tones[voicing.lead_pat[s] % bar.tones.len()];
+                            let f = midi(tone + voicing.lead_octave + self.key);
+                            let sig = pulse(f, step * 0.95, voicing.lead_duty, voicing.lead_vib, sr);
+                            place(&mut mix, &sig, at, sr, voicing.lead_gain);
+                        }
+                        // Drums: kick on the beat, hat on the offbeat eighths.
+                        if kick_on(sec.intensity.kick, s) {
+                            let sig = kick(&mut rng, sr);
+                            place(&mut mix, &sig, at, sr, voicing.kick_gain);
+                        }
+                        if hat_on(sec.intensity.hat, s) {
+                            let sig = noise(0.04, 120.0, &mut rng, sr);
+                            place(&mut mix, &sig, at, sr, voicing.hat_gain);
+                        }
                     }
-                    if s % 2 == 1 {
-                        let sig = noise(0.04, 120.0, &mut rng, sr);
-                        place(&mut mix, &sig, at, sr, voicing.hat_gain);
-                    }
+                    t += 16.0 * step;
+                    chord_bar += 1;
                 }
             }
         }
@@ -411,6 +904,15 @@ impl Music {
         self.bpm.to_bits().hash(&mut h);
         self.fit.name().hash(&mut h);
         self.seed.hash(&mut h);
+        for s in &self.arrangement {
+            s.name.hash(&mut h);
+            s.bars.hash(&mut h);
+            s.bpm.map(f64::to_bits).hash(&mut h);
+            s.intensity.bass.name().hash(&mut h);
+            s.intensity.lead.name().hash(&mut h);
+            s.intensity.kick.name().hash(&mut h);
+            s.intensity.hat.name().hash(&mut h);
+        }
         // Rounded to the sample the synth will actually produce, so a float
         // wobble in `duration` does not spawn a near-identical second file.
         ((duration * SAMPLE_RATE as f64).round() as i64).hash(&mut h);
@@ -433,6 +935,13 @@ impl Music {
 /// MIDI note number to frequency in Hz. `midi(69)` is A4 = 440 Hz.
 fn midi(n: i32) -> f64 {
     440.0 * 2f64.powf((n as f64 - 69.0) / 12.0)
+}
+
+/// Round to milliseconds — the same precision
+/// [`crate::narration`]'s manifest timings use, plenty for cueing a visual to
+/// a beat.
+fn round3(x: f64) -> f64 {
+    (x * 1000.0).round() / 1000.0
 }
 
 /// A duty-cycled pulse (square) wave with a short attack/release so a stepped
@@ -591,7 +1100,7 @@ fn format_key(semitones: i32) -> String {
 
 impl Serialize for Music {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        MusicRepr::from(*self).serialize(s)
+        MusicRepr::from(self.clone()).serialize(s)
     }
 }
 
@@ -621,6 +1130,8 @@ struct MusicFull {
     fit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     seed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    arrangement: Vec<Section>,
 }
 
 impl From<MusicRepr> for Music {
@@ -638,6 +1149,7 @@ impl From<MusicRepr> for Music {
                     bpm: f.bpm.unwrap_or_else(|| mood.default_bpm()),
                     fit: f.fit.as_deref().map(MusicFit::parse).unwrap_or_default(),
                     seed: f.seed.unwrap_or(DEFAULT_SEED),
+                    arrangement: f.arrangement,
                 }
             }
         }
@@ -655,6 +1167,7 @@ impl From<Music> for MusicRepr {
             bpm: Some(m.bpm),
             fit: Some(m.fit.name().to_string()),
             seed: (m.seed != DEFAULT_SEED).then_some(m.seed),
+            arrangement: m.arrangement,
         })
     }
 }
