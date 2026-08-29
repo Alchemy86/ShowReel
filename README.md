@@ -383,7 +383,7 @@ each voice is:
   "mood": "title",
   "bpm": 104,
   "arrangement": [
-    { "name": "intro", "bars": 6, "intensity": "kick" },   // just a lonely downbeat kick
+    { "name": "intro", "bars": 6, "intensity": "tone" },   // a single held, ringing note — not a drum
     { "name": "build", "bars": 2, "intensity": "build" },  // bass and kick join, lead still off
     { "name": "theme", "bars": 8, "intensity": "full" }    // the whole band arrives
   ]
@@ -393,22 +393,30 @@ each voice is:
 ```rust
 use showreel::music::{Music, Mood, Section, Intensity};
 let opener = Music::mood(Mood::Title).bpm(104.0).arrangement([
-    Section::new("intro", 6, Intensity::KICK),
+    Section::new("intro", 6, Intensity::TONE),
     Section::new("build", 2, Intensity::BUILD),
     Section::new("theme", 8, Intensity::FULL),
 ]);
 ```
 
-`intensity` is a named preset (`silence`, `kick`, `pulse`, `build`, `full`) or
-an object naming each voice's level directly —
+`intensity` is a named preset (`silence`, `tone`, `kick`, `pulse`, `build`,
+`full`) or an object naming each voice's level directly —
 `{"bass":"sparse","kick":"full","hat":"sparse"}` — the same
-bare-word-or-object shorthand `mood`/`grade` already use. A section may also
-carry its own `"bpm"` — a real tempo lift into the theme, not just a density
-change. The chord progression keeps advancing bar over bar through every
-section regardless of arrangement — a build is a change in *who is playing*,
-never a change in the mood's own harmony. An arrangement shorter than the
-track's own length simply loops; a track with no `arrangement` at all plays
-exactly as it always did — this is capability added, not a mode to opt into.
+bare-word-or-object shorthand `mood`/`grade` already use. Open an opener on
+`tone`, not `kick`/`pulse`: the drums are noise-burst and unpitched by design
+(see `src/music.rs`'s module docs), so a kick-only intro is a lonely
+*percussive* beat with no note in it at all — right for a rhythm building
+under a tune, wrong for the first thing an opener sounds. `tone` (bass and
+lead both at `VoiceLevel::Held`) rings a single held note across the whole
+bar instead, decaying naturally rather than sustaining flat or clicking off,
+so the theme's own lead voice later sounds like it grew out of that note.
+A section may also carry its own `"bpm"` — a real tempo lift into the theme,
+not just a density change. The chord progression keeps advancing bar over bar
+through every section regardless of arrangement — a build is a change in
+*who is playing*, never a change in the mood's own harmony. An arrangement
+shorter than the track's own length simply loops; a track with no
+`arrangement` at all plays exactly as it always did — this is capability
+added, not a mode to opt into.
 
 #### Beat and bar timing, and a standalone export
 

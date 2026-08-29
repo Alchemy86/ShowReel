@@ -1,7 +1,7 @@
 [
-  { "name": "call-1", "bars": 2, "intensity": "kick" },
+  { "name": "call-1", "bars": 2, "intensity": "tone" },
   { "name": "hush-1", "bars": 1, "intensity": "silence" },
-  { "name": "call-2", "bars": 2, "intensity": "pulse" },
+  { "name": "call-2", "bars": 2, "intensity": { "bass": "held", "lead": "held", "hat": "sparse" } },
   { "name": "hush-2", "bars": 1, "intensity": "silence" },
   { "name": "build", "bars": 2, "intensity": "build" },
   { "name": "theme", "bars": 8, "intensity": "full" }
