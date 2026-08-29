@@ -264,10 +264,23 @@ pub enum VoiceLevel {
     /// Silent this section.
     #[default]
     Off,
-    /// One hit a bar — the downbeat only. This is the "lonely repeated beat"
-    /// an opener's intro wants: a kick at [`VoiceLevel::Sparse`] plays once
-    /// per bar with silence around it, not the full four-per-bar pattern.
+    /// One hit a bar — the downbeat only. On the drums (kick/hat) this is a
+    /// lonely repeated *percussive* beat; the drums are noise-burst and
+    /// therefore unpitched (see [`kick`] and [`noise`]), so a [`Sparse`]
+    /// kick alone carries no tonal content at all — right for a rhythm
+    /// building under a tune, wrong for the first thing an opener sounds.
+    /// For a lonely *note* to open on, use [`VoiceLevel::Held`] on the bass
+    /// or lead instead.
+    ///
+    /// [`Sparse`]: VoiceLevel::Sparse
     Sparse,
+    /// One long, decaying tone a bar — the downbeat rings and fades across
+    /// the whole bar rather than clicking on and off. Only meaningful on the
+    /// two pitched voices (bass/lead, via [`held_tone`]); on the drums it has
+    /// nothing to ring, so it is silent, the same as [`VoiceLevel::Off`].
+    /// This is what a slow opener wants to open *on* — a single held pitched
+    /// note, not a percussive hit.
+    Held,
     /// The mood's own pattern for this voice, unabridged — what every voice
     /// plays when no arrangement is declared at all.
     Full,
@@ -277,6 +290,7 @@ impl VoiceLevel {
     fn parse(s: &str) -> VoiceLevel {
         match s.trim().to_ascii_lowercase().as_str() {
             "sparse" => VoiceLevel::Sparse,
+            "held" => VoiceLevel::Held,
             "full" => VoiceLevel::Full,
             _ => VoiceLevel::Off,
         }
@@ -286,6 +300,7 @@ impl VoiceLevel {
         match self {
             VoiceLevel::Off => "off",
             VoiceLevel::Sparse => "sparse",
+            VoiceLevel::Held => "held",
             VoiceLevel::Full => "full",
         }
     }
@@ -296,9 +311,10 @@ impl VoiceLevel {
 /// sets each voice independently.
 ///
 /// ```jsonc
-/// "intensity": "kick"   // just the lonely downbeat kick — a slow opener
-/// "intensity": "full"   // the whole mood, unabridged — the default
-/// "intensity": { "bass": "sparse", "kick": "full", "hat": "sparse" }
+/// "intensity": "tone"    // a single held, decaying note — open an opener on this, not a drum
+/// "intensity": "kick"    // just the lonely downbeat kick — a rhythm, not a note
+/// "intensity": "full"    // the whole mood, unabridged — the default
+/// "intensity": { "bass": "held", "kick": "off", "hat": "off" }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Intensity {
@@ -318,13 +334,23 @@ impl Intensity {
     /// it "really gets going".
     pub const FULL: Intensity =
         Intensity { bass: VoiceLevel::Full, lead: VoiceLevel::Full, kick: VoiceLevel::Full, hat: VoiceLevel::Full };
-    /// Just the kick, once a bar — a slow, lonely pulse with nothing else
-    /// playing. The shape the captain asked for: "just like the first beat
-    /// several times before it really gets going".
+    /// A single held, decaying note a bar — bass and lead both ring the same
+    /// pitch class an octave apart (see [`VoiceLevel::Held`]), no drums at
+    /// all. **This is what a slow opener should open on**, not
+    /// [`Intensity::KICK`]: the drums are noise-burst and unpitched, so a
+    /// kick-only intro carries no tonal content — it reads as a slap, not a
+    /// beat. A tone rings and decays across the bar and the theme's own lead
+    /// voice later grows out of the same note.
+    pub const TONE: Intensity =
+        Intensity { bass: VoiceLevel::Held, lead: VoiceLevel::Held, kick: VoiceLevel::Off, hat: VoiceLevel::Off };
+    /// Just the kick, once a bar — a lonely percussive pulse with nothing
+    /// else playing. Unpitched (the kick is a noise burst, see [`kick`]): a
+    /// rhythm, not a note. Reach for [`Intensity::TONE`] instead when an
+    /// opener wants something to sing on rather than tap along to.
     pub const KICK: Intensity =
         Intensity { bass: VoiceLevel::Off, lead: VoiceLevel::Off, kick: VoiceLevel::Sparse, hat: VoiceLevel::Off };
     /// The kick joined by a light offbeat hat — a little air added to
-    /// [`Intensity::KICK`] without yet bringing in the tune.
+    /// [`Intensity::KICK`] without yet bringing in the tune. Still unpitched.
     pub const PULSE: Intensity =
         Intensity { bass: VoiceLevel::Off, lead: VoiceLevel::Off, kick: VoiceLevel::Sparse, hat: VoiceLevel::Sparse };
     /// Bass and kick both present (kick at its full four-per-bar pattern),
@@ -337,6 +363,7 @@ impl Intensity {
         match s.trim().to_ascii_lowercase().as_str() {
             "silence" | "off" => Some(Intensity::SILENCE),
             "full" => Some(Intensity::FULL),
+            "tone" => Some(Intensity::TONE),
             "kick" => Some(Intensity::KICK),
             "pulse" => Some(Intensity::PULSE),
             "build" => Some(Intensity::BUILD),
@@ -352,41 +379,50 @@ impl Default for Intensity {
 }
 
 /// Whether `level` triggers the bass at step `s` of a bar, given the mood's
-/// own gate pattern for that step.
+/// own gate pattern for that step. [`VoiceLevel::Held`] triggers once a bar
+/// like [`VoiceLevel::Sparse`] — the caller distinguishes the two by
+/// synthesising a long, ringing [`held_tone`] rather than a short [`pulse`].
 fn bass_on(level: VoiceLevel, gated: bool, s: usize) -> bool {
     match level {
         VoiceLevel::Off => false,
-        VoiceLevel::Sparse => s == 0,
+        VoiceLevel::Sparse | VoiceLevel::Held => s == 0,
         VoiceLevel::Full => gated,
     }
 }
 
 /// The lead plays every step at [`VoiceLevel::Full`] (a continuous arpeggio);
-/// at [`VoiceLevel::Sparse`] it thins to one note a beat.
+/// at [`VoiceLevel::Sparse`] it thins to one note a beat; at
+/// [`VoiceLevel::Held`] to one note a *bar* (see [`bass_on`]).
 fn lead_on(level: VoiceLevel, s: usize) -> bool {
     match level {
         VoiceLevel::Off => false,
         VoiceLevel::Sparse => s.is_multiple_of(4),
+        VoiceLevel::Held => s == 0,
         VoiceLevel::Full => true,
     }
 }
 
 /// The kick sits on every beat at [`VoiceLevel::Full`] (four a bar); at
-/// [`VoiceLevel::Sparse`] it drops to once a bar, on the downbeat — the
-/// "lonely repeated beat" of a slow opener.
+/// [`VoiceLevel::Sparse`] it drops to once a bar, on the downbeat — a lonely
+/// percussive pulse, not a note (the kick is an unpitched noise burst — see
+/// [`kick`]). [`VoiceLevel::Held`] has nothing to ring on a drum, so it is
+/// silent, same as [`VoiceLevel::Off`]: reach for a bass/lead voice at
+/// [`VoiceLevel::Held`] (or [`Intensity::TONE`]) for something pitched to
+/// open on instead.
 fn kick_on(level: VoiceLevel, s: usize) -> bool {
     match level {
-        VoiceLevel::Off => false,
+        VoiceLevel::Off | VoiceLevel::Held => false,
         VoiceLevel::Sparse => s == 0,
         VoiceLevel::Full => s.is_multiple_of(4),
     }
 }
 
 /// The hat sits on every offbeat eighth at [`VoiceLevel::Full`] (eight a bar);
-/// at [`VoiceLevel::Sparse`] it thins to two.
+/// at [`VoiceLevel::Sparse`] it thins to two. [`VoiceLevel::Held`] is silent
+/// on the hat for the same reason it is on the kick — see [`kick_on`].
 fn hat_on(level: VoiceLevel, s: usize) -> bool {
     match level {
-        VoiceLevel::Off => false,
+        VoiceLevel::Off | VoiceLevel::Held => false,
         VoiceLevel::Sparse => s % 4 == 1,
         VoiceLevel::Full => s % 2 == 1,
     }
@@ -398,7 +434,7 @@ fn hat_on(level: VoiceLevel, s: usize) -> bool {
 ///
 /// ```jsonc
 /// "arrangement": [
-///   { "name": "intro", "bars": 6, "intensity": "kick" },
+///   { "name": "intro", "bars": 6, "intensity": "tone" },
 ///   { "name": "build", "bars": 2, "intensity": "build" },
 ///   { "name": "theme", "bars": 8, "intensity": "full" }
 /// ]
@@ -502,6 +538,8 @@ impl From<Intensity> for IntensityRepr {
             Some("silence")
         } else if i == Intensity::FULL {
             Some("full")
+        } else if i == Intensity::TONE {
+            Some("tone")
         } else if i == Intensity::KICK {
             Some("kick")
         } else if i == Intensity::PULSE {
@@ -837,22 +875,43 @@ impl Music {
                         break 'outer;
                     }
                     let bar = &voicing.bars[chord_bar % voicing.bars.len()];
+                    let bar_len = 16.0 * step;
                     for s in 0..16 {
                         let at = t + s as f64 * step;
-                        // Bass: root dropped an octave, punchy short pulse.
+                        // Bass: root dropped an octave. A short punchy pulse
+                        // normally; at Held, one long tone ringing the whole
+                        // bar instead — see `held_tone`.
                         if bass_on(sec.intensity.bass, voicing.bass_gate[s] == b'x', s) {
                             let f = midi(bar.root - 12 + self.key);
-                            let sig = pulse(f, step * 0.9, voicing.bass_duty, 0.0, sr);
+                            let sig = if sec.intensity.bass == VoiceLevel::Held {
+                                held_tone(f, bar_len, voicing.bass_duty, 0.0, sr)
+                            } else {
+                                pulse(f, step * 0.9, voicing.bass_duty, 0.0, sr)
+                            };
                             place(&mut mix, &sig, at, sr, voicing.bass_gain);
                         }
-                        // Lead: bright arpeggio, thin duty, a little vibrato.
+                        // Lead: bright arpeggio, thin duty, a little vibrato,
+                        // normally. At Held — one long tone a bar — the pitch
+                        // stays the arpeggio's own written root (no extra
+                        // `lead_octave` lift, which is tuned for a fast,
+                        // cutting-through line, not a long note) at a rounder
+                        // duty and gentler vibrato, so a lonely opening note
+                        // rings warm rather than thin.
                         if lead_on(sec.intensity.lead, s) {
                             let tone = bar.tones[voicing.lead_pat[s] % bar.tones.len()];
-                            let f = midi(tone + voicing.lead_octave + self.key);
-                            let sig = pulse(f, step * 0.95, voicing.lead_duty, voicing.lead_vib, sr);
+                            let held = sec.intensity.lead == VoiceLevel::Held;
+                            let octave = if held { 0 } else { voicing.lead_octave };
+                            let f = midi(tone + octave + self.key);
+                            let sig = if held {
+                                held_tone(f, bar_len, voicing.bass_duty, voicing.lead_vib * 0.5, sr)
+                            } else {
+                                pulse(f, step * 0.95, voicing.lead_duty, voicing.lead_vib, sr)
+                            };
                             place(&mut mix, &sig, at, sr, voicing.lead_gain);
                         }
-                        // Drums: kick on the beat, hat on the offbeat eighths.
+                        // Drums: kick on the beat, hat on the offbeat
+                        // eighths — unpitched noise bursts, never triggered
+                        // at Held (see `kick_on`/`hat_on`).
                         if kick_on(sec.intensity.kick, s) {
                             let sig = kick(&mut rng, sr);
                             place(&mut mix, &sig, at, sr, voicing.kick_gain);
@@ -862,7 +921,7 @@ impl Music {
                             place(&mut mix, &sig, at, sr, voicing.hat_gain);
                         }
                     }
-                    t += 16.0 * step;
+                    t += bar_len;
                     chord_bar += 1;
                 }
             }
@@ -973,6 +1032,42 @@ fn pulse(freq: f64, dur: f64, duty: f64, vib: f64, sr: f64) -> Vec<f32> {
         } else {
             1.0
         };
+        *o = (wave * env) as f32;
+    }
+    out
+}
+
+/// A single held, ringing tone — [`VoiceLevel::Held`]'s voice, and what an
+/// opener should sound its first note on rather than a drum. Unlike
+/// [`pulse`]'s flat sustain-then-cutoff envelope (right for a short arpeggio
+/// note, but a *held* note on that envelope either drones flatly or clicks
+/// off at the end — exactly the "cheap"/"plucky" failure a slow opener can't
+/// afford), this one has a soft ~15 ms attack and then decays exponentially
+/// across its whole duration, the way a struck bell or a plucked string
+/// actually rings out. By the end of `dur` it has faded to roughly an eighth
+/// of its peak — audibly still ringing when the next bar's note lands (a
+/// little overlap is what a real ringing note does), rather than sitting at
+/// full volume the whole way and then being cut off.
+fn held_tone(freq: f64, dur: f64, duty: f64, vib: f64, sr: f64) -> Vec<f32> {
+    let n = (dur * sr).round() as usize;
+    if n == 0 {
+        return Vec::new();
+    }
+    let a = ((0.015 * sr).round() as usize).clamp(1, n.max(1) / 2).max(1);
+    // Decay so the tone is down to ~1/8 peak by the end of its written
+    // duration — a real, audible ring-out rather than a sustained drone.
+    let decay_rate = -(0.125f64.ln()) / dur.max(1e-6);
+    let mut out = vec![0.0f32; n];
+    for (i, o) in out.iter_mut().enumerate() {
+        let t = i as f64 / sr;
+        let ph = if vib != 0.0 {
+            (t * freq + vib * (2.0 * PI * 6.0 * t).sin() / freq).rem_euclid(1.0)
+        } else {
+            (t * freq).rem_euclid(1.0)
+        };
+        let wave = if ph < duty { 1.0 } else { -1.0 };
+        let attack = if i < a { i as f64 / a as f64 } else { 1.0 };
+        let env = attack * (-decay_rate * t).exp();
         *o = (wave * env) as f32;
     }
     out
@@ -1338,6 +1433,97 @@ mod tests {
     }
 
     #[test]
+    fn intensity_tone_is_pitched_voices_only_no_drums() {
+        // The whole fix: TONE must not be another drum-only preset. Bass and
+        // lead ring; the (unpitched, noise-burst) drums stay silent.
+        assert_eq!(Intensity::TONE.bass, VoiceLevel::Held);
+        assert_eq!(Intensity::TONE.lead, VoiceLevel::Held);
+        assert_eq!(Intensity::TONE.kick, VoiceLevel::Off);
+        assert_eq!(Intensity::TONE.hat, VoiceLevel::Off);
+    }
+
+    #[test]
+    fn held_tone_rings_through_most_of_its_duration_rather_than_clicking_off() {
+        let sig = held_tone(220.0, 2.0, 0.5, 0.0, SAMPLE_RATE as f64);
+        let rms = |w: &[f32]| (w.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / w.len().max(1) as f64).sqrt();
+        let sr = SAMPLE_RATE as usize;
+        let onset = &sig[sr / 10..sr / 5]; // 0.1s-0.2s in: past the attack ramp
+        let near_end = &sig[sig.len() - sr / 5..]; // the last 0.2s of a 2s note
+        let (onset_rms, end_rms) = (rms(onset), rms(near_end));
+        assert!(end_rms > 0.0, "a held tone must still be audible near the end, not silent");
+        assert!(
+            end_rms < onset_rms * 0.5,
+            "a held tone must audibly decay: onset_rms={onset_rms:.4} end_rms={end_rms:.4}"
+        );
+        // And it must not simply click to zero: the true final samples are not
+        // all zero (a linear-ramp release would end flush at 0).
+        assert!(sig[sig.len() - 1] != 0.0 || sig[sig.len() - 2] != 0.0, "must fade, not click to a hard stop");
+    }
+
+    #[test]
+    fn a_tone_section_rings_through_the_bar_unlike_a_kick_section() {
+        // The captain's own complaint, made numeric: a KICK bar's tail is
+        // near-silent (the noise burst has fully decayed); a TONE bar's tail
+        // is still clearly sounding, because it is a held note, not a slap.
+        let bpm = 100.0;
+        let tone = Music::chiptune().bpm(bpm).arrangement([Section::new("intro", 1, Intensity::TONE)]);
+        let kick = Music::chiptune().bpm(bpm).arrangement([Section::new("intro", 1, Intensity::KICK)]);
+        let bar_len = tone.natural_duration().unwrap();
+        let ts = tone.render_samples(bar_len);
+        let ks = kick.render_samples(bar_len);
+        // Last third of the buffer (both — identical — channels; the ratio
+        // is unaffected by including both).
+        let tail_of = |v: &[i16]| -> i64 {
+            let start = v.len() * 2 / 3;
+            v[start..].iter().map(|&x| (x as i64).abs()).sum()
+        };
+        let (tone_tail, kick_tail) = (tail_of(&ts), tail_of(&ks));
+        assert!(
+            tone_tail > kick_tail * 8,
+            "a held tone must still clearly sound in the bar's tail (tone={tone_tail}, kick={kick_tail}); \
+             a bar's worth of near-silence there is the original bug"
+        );
+    }
+
+    #[test]
+    fn a_tone_section_still_makes_sound_and_the_manifest_is_unaffected_by_intensity() {
+        // Voice choice must never change the timing grid — the whole point of
+        // sharing one `plan()` between render_samples and manifest.
+        let tone_track = Music::chiptune().bpm(110.0).arrangement([
+            Section::new("intro", 4, Intensity::TONE),
+            Section::new("theme", 4, Intensity::FULL),
+        ]);
+        let kick_track = Music::chiptune().bpm(110.0).arrangement([
+            Section::new("intro", 4, Intensity::KICK),
+            Section::new("theme", 4, Intensity::FULL),
+        ]);
+        let duration = tone_track.natural_duration().unwrap();
+        assert_eq!(duration, kick_track.natural_duration().unwrap());
+        let tone_man = tone_track.manifest(duration);
+        let kick_man = kick_track.manifest(duration);
+        assert_eq!(tone_man.bars.len(), kick_man.bars.len());
+        for (a, b) in tone_man.bars.iter().zip(kick_man.bars.iter()) {
+            assert_eq!(a.start, b.start);
+            assert_eq!(a.beats, b.beats);
+        }
+        assert_eq!(tone_man.sections, kick_man.sections);
+        let peak = tone_track.render_samples(duration).iter().map(|&v| v.unsigned_abs()).max().unwrap_or(0);
+        assert!(peak > 8000, "a tone-opened track must still make real sound, peak={peak}");
+    }
+
+    #[test]
+    fn tone_arrangement_round_trips_through_json() {
+        let m = Music::mood(Mood::Title).bpm(104.0).arrangement([
+            Section::new("intro", 6, Intensity::TONE),
+            Section::new("build", 2, Intensity::BUILD),
+            Section::new("theme", 8, Intensity::FULL),
+        ]);
+        let s = serde_json::to_string(&m).unwrap();
+        assert_eq!(serde_json::from_str::<Music>(&s).unwrap(), m);
+        assert!(s.contains("\"tone\""), "the TONE preset must round-trip as its terse word: {s}");
+    }
+
+    #[test]
     fn natural_duration_sums_the_arrangements_bars_at_the_tracks_bpm() {
         let m = Music::chiptune().bpm(120.0).arrangement([
             Section::new("a", 2, Intensity::KICK),
@@ -1427,6 +1613,7 @@ mod tests {
         for (word, preset) in [
             ("silence", Intensity::SILENCE),
             ("full", Intensity::FULL),
+            ("tone", Intensity::TONE),
             ("kick", Intensity::KICK),
             ("pulse", Intensity::PULSE),
             ("build", Intensity::BUILD),
