@@ -1187,6 +1187,37 @@ panicked on shutdown without `enable_time`, because `rmcp` uses a timer
 internally that a minimal `tokio::runtime::Builder` doesn't enable by
 default.
 
+## Audio isolation
+
+`showreel isolate` splits a video or audio file's soundtrack into a speech
+stem and a music/effects stem, and can put a chosen stem back against the
+original picture:
+
+```bash
+showreel isolate clip.mp4 -o stems              # writes stems/speech.wav, stems/music.wav
+showreel isolate clip.mp4 -o stems --mux music  # also writes stems/music-muxed.mp4
+```
+
+It shells out to a separation model through a pinned Python venv — the same
+"bake ahead of time, render needs none of it" shape as narration's Kokoro
+bake, applied to a different model — rather than pulling PyTorch/TensorFlow
+into this crate. **Which model, and on what terms, is a licence question
+answered in `docs/audio-isolation.md`**: the default, `spleeter`, is the only
+one of the three checked (Spleeter, Demucs, Open-Unmix) whose *pretrained
+weights*, not just its code, are actually MIT. `--model demucs` gives
+measurably better separation (0.98 vs. 0.88 waveform correlation to a known
+pre-mix reference, in that document's own measurement) but its weights are
+research-only — every invocation prints the restriction rather than shipping
+it quietly.
+
+| flag | default | |
+|---|---|---|
+| `-o`/`--out` | a folder named after the input, beside it | where stems (and any muxed video) land |
+| `--model` | `spleeter` | `spleeter` (MIT weights) or `demucs` (better, research-only weights) |
+| `--python` | the model's own venv convention | `$SHOWREEL_SPLEETER_PYTHON`/`$SHOWREEL_DEMUCS_PYTHON`, else `~/.local/share/<model>-venv/bin/python` |
+| `--mux` | none | `speech` or `music` — remux that stem against the input's own picture |
+| `--force` | off | re-run separation even if matching stems already exist |
+
 ## In the browser
 
 `showreel web-pack <film> -A <assets> -o dist` (needs `--features wasm`, and

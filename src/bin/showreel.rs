@@ -203,6 +203,38 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Split a video or audio file's soundtrack into a speech stem and a
+    /// music/effects stem, and optionally mux one back against the original
+    /// picture. Runs a separation model (Spleeter by default) through a
+    /// Python venv — see `docs/audio-isolation.md` for the licence position
+    /// of each model and how to set one up.
+    Isolate {
+        /// The video or audio file to separate.
+        input: PathBuf,
+        /// Where to write the stems (and any muxed video). Defaults to a
+        /// folder named after the input, beside it.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Separation model: `spleeter` (default — pretrained weights are
+        /// MIT) or `demucs` (higher quality; pretrained weights are
+        /// research-only, not for commercial use — see
+        /// `docs/audio-isolation.md`).
+        #[arg(long, default_value = "spleeter")]
+        model: String,
+        /// The Python interpreter with the model installed. Defaults to
+        /// $SHOWREEL_SPLEETER_PYTHON/$SHOWREEL_DEMUCS_PYTHON, else
+        /// ~/.local/share/<model>-venv/bin/python.
+        #[arg(long)]
+        python: Option<PathBuf>,
+        /// Also write a video with this stem's audio remuxed against the
+        /// original picture: `speech` or `music`. Only valid when the input
+        /// has a video stream.
+        #[arg(long)]
+        mux: Option<String>,
+        /// Re-run separation even if matching stems are already present.
+        #[arg(long)]
+        force: bool,
+    },
     /// Render generated music to a standalone WAV, with its beat/bar/section
     /// manifest beside it — audition a track, or bake a trailer opener,
     /// without rendering a whole film. See the README's "Generated music"
@@ -325,6 +357,9 @@ fn main() -> Result<()> {
         Command::Check { film, asset_roots } => cmd_check(film, asset_roots),
         Command::Narrate { film, asset_roots, out, python, force } => {
             cmd_narrate(film, asset_roots, out, python, force)
+        }
+        Command::Isolate { input, out, model, python, mux, force } => {
+            cmd_isolate(input, out, model, python, mux, force)
         }
         Command::Music { out, mood, key, bpm, fit, seed, duration, arrangement } => {
             cmd_music(out, mood, key, bpm, fit, seed, duration, arrangement)
@@ -985,6 +1020,53 @@ fn cmd_narrate(
         film_path.display(),
         out_dir.display()
     );
+    Ok(())
+}
+
+fn cmd_isolate(
+    input: PathBuf,
+    out: Option<PathBuf>,
+    model: String,
+    python: Option<PathBuf>,
+    mux: Option<String>,
+    force: bool,
+) -> Result<()> {
+    use showreel::isolate::{IsolateOptions, isolate};
+
+    let model = showreel::isolate::Model::parse(&model)?;
+    let out_dir = out.unwrap_or_else(|| {
+        let stem = input.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "isolated".to_string());
+        input.parent().map(|p| p.join(&stem)).unwrap_or_else(|| PathBuf::from(&stem))
+    });
+
+    let mut opts = IsolateOptions::for_model(model, out_dir.clone());
+    opts.mux = mux;
+    opts.force = force;
+    if let Some(p) = python {
+        opts.python = p;
+    }
+
+    println!(
+        "{}: separating with {} ({}) → {}",
+        input.display(),
+        model.id(),
+        opts.python.display(),
+        out_dir.display()
+    );
+
+    let report = isolate(&input, &opts)?;
+    println!(
+        "  {:.2}s{} — speech ZCR {:.3} ({})",
+        report.input_duration,
+        if report.cached { ", cached" } else { "" },
+        report.speech_zcr,
+        if report.speech_zcr < 0.30 { "looks like speech" } else { "looks like noise — see the warning above" }
+    );
+    println!("  speech: {}", report.speech.display());
+    println!("  music:  {}", report.music.display());
+    if let Some(m) = &report.muxed {
+        println!("  muxed:  {}", m.display());
+    }
     Ok(())
 }
 

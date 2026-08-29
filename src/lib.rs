@@ -71,6 +71,12 @@ pub mod segments;
 // file locking, `/proc`, thread spawning. All native-only, same gate.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod budget;
+// Shells out to a Python venv running a source-separation model (Spleeter by
+// default) to split speech from music/effects — a subprocess-and-filesystem
+// operation with no browser story, so native-only, the same reasoning as
+// `narrate` below.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod isolate;
 // Shells out to a Python venv running Kokoro to bake narration to a WAV — a
 // filesystem-and-subprocess operation with no browser story, so native-only.
 #[cfg(not(target_arch = "wasm32"))]

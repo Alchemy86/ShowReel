@@ -3,3 +3,7 @@
 /dist
 Cargo.lock.bak
 __pycache__/
+# Spleeter's own default model-weight cache dir when MODEL_PATH is unset —
+# should never land here (src/isolate.rs pins it into the venv instead), but
+# ignored defensively: never commit model weights.
+/pretrained_models
