@@ -31,16 +31,16 @@ pub const MAGIC: &[u8; 8] = b"SRCLIP1\0";
 pub fn encode(clip: &Clip, quality: u8) -> Result<Vec<u8>> {
     use image::codecs::jpeg::JpegEncoder;
     let (width, height) = clip.size();
-    let n = clip.frame_count();
-    let mut out = Vec::new();
-    out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&width.to_le_bytes());
-    out.extend_from_slice(&height.to_le_bytes());
-    out.extend_from_slice(&clip.fps().to_le_bytes());
-    out.extend_from_slice(&(n as u32).to_le_bytes());
-    for i in 0..n {
+    // Walk forward until the clip itself says there's nothing more, rather
+    // than trusting `frame_count()` up front: for a streaming `Clip` (see
+    // `assets/clip.rs`) that count can be an estimate until playback has
+    // actually reached the end, and this sequential, single-pass walk is
+    // exactly the access pattern the streaming decoder is fast for anyway.
+    let mut jpegs: Vec<Vec<u8>> = Vec::new();
+    loop {
+        let i = jpegs.len();
         let t = i as f64 / clip.fps();
-        let pm = clip.frame_at(t, ClipLoop::Stop).with_context(|| format!("frame {i} missing"))?;
+        let Some(pm) = clip.frame_at(t, ClipLoop::Stop)? else { break };
         // JPEG has no alpha; demultiply tiny-skia's premultiplied RGBA into
         // straight RGB the same way `Canvas::to_rgb24` does for the encoder.
         let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
@@ -58,6 +58,15 @@ pub fn encode(clip: &Clip, quality: u8) -> Result<Vec<u8>> {
         JpegEncoder::new_with_quality(&mut jpeg, quality)
             .encode(&rgb, width, height, image::ExtendedColorType::Rgb8)
             .with_context(|| format!("encoding frame {i}"))?;
+        jpegs.push(jpeg);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(MAGIC);
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    out.extend_from_slice(&clip.fps().to_le_bytes());
+    out.extend_from_slice(&(jpegs.len() as u32).to_le_bytes());
+    for jpeg in jpegs {
         out.extend_from_slice(&(jpeg.len() as u32).to_le_bytes());
         out.extend_from_slice(&jpeg);
     }

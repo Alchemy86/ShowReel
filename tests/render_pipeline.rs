@@ -423,8 +423,8 @@ fn a_clip_at_double_speed_renders_a_later_source_frame() {
     // And the frames it picked are exactly the ones a plain decode says they
     // should be: local time × speed, same as `Layer::draw_clip`.
     let clip = showreel::assets::Clip::load(dir.join("clip.mp4"), fps, 1920, Some((0.0, 4.0))).unwrap();
-    let expected_normal = clip.frame_at(1.0, ClipLoop::Hold).unwrap().data().to_vec();
-    let expected_doubled = clip.frame_at(2.0, ClipLoop::Hold).unwrap().data().to_vec();
+    let expected_normal = clip.frame_at(1.0, ClipLoop::Hold).unwrap().unwrap().data().to_vec();
+    let expected_doubled = clip.frame_at(2.0, ClipLoop::Hold).unwrap().unwrap().data().to_vec();
     assert_ne!(expected_normal, expected_doubled, "the source itself must differ at these two instants");
     assert_eq!(still_normal.data(), expected_normal.as_slice());
     assert_eq!(still_doubled.data(), expected_doubled.as_slice());

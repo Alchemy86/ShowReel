@@ -24,6 +24,7 @@ use crate::text::{Align, FontDb, GlyphTransform, Plate, Shadow, TextLayout, Text
 use crate::time::Time;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tiny_skia::Pixmap;
 
 /// What the renderer needs to draw a layer.
 pub struct RenderCtx<'a> {
@@ -1478,9 +1479,11 @@ impl Layer {
         let clip = ctx.assets.clip(asset, fps, max_width, trim)?;
         let (cw, ch) = clip.size();
         let box_ = shift_scaled(self.placement().resolve(&ctx.frame, (cw as f64, ch as f64)), state);
-        let Some(frame_px) = clip.frame_at(local.as_secs() * speed + start.as_secs(), mode) else {
+        let Some(frame_arc) = clip.frame_at(local.as_secs() * speed + start.as_secs(), mode)? else {
             return Ok(());
         };
+        // Arc<Pixmap> -> &Pixmap -> PixmapRef, for the zero-copy draw calls below.
+        let frame_px = Pixmap::as_ref(&frame_arc);
         // A camera always covers its placement box, the same rule a still's
         // camera follows; without one, `fit` decides the destination rect.
         let dst = match camera {

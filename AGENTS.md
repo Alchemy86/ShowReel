@@ -30,6 +30,7 @@ Each is documented at the top of its module; read the module rather than duplica
 | A chart reads its series from an external **CSV/JSON** via `Series::Data { file, x, y, bars }`, resolved through `AssetStore` like a still (`AssetStore::data`, cached `DataTable`) — *not* a second mechanism. `ChartSpec::resolve(assets)` expands every `Data` series into a concrete `Line`/`Bars` (borrowed `Cow` when there is none), so `chart::draw` is unchanged below that one call and stays a pure function of `(spec, assets)`. `chart::draw` therefore returns `Result` and the `Content::Chart` arm propagates `?` — that is what makes a bad file/column/row loud in `still`/`render` (no preload) as well as `check` (`Film::resolve_chart_data`). The film names the columns, so it still reads as *x against y* without opening the data | `src/assets/data.rs`, `src/chart.rs` (`Series::Data`, `resolve`), `src/timeline.rs` (`resolve_chart_data`, `AssetUse::Data`) |
 | A **plugin** is a new layer kind expressed as *data*, not code: `Content::Custom { use, with }` names a `Plugin` (a parameterised template of ordinary layers) in `Film.plugins`, and `Film::expand_plugins(assets)` substitutes `{{param}}` and replaces each `custom` layer with the concrete layers it denotes. Declarative was chosen over a Rust trait (forces compile-against-us, breaks "a film is JSON") and a dynamic library (unsafe, and `wasm32` has no `dlopen` — would split native/browser); the template runs identically in both builds because expansion is pure. It cannot draw a mark the primitives can't, and parameter arithmetic is deliberately unbuilt (direct substitution only) | `src/plugin.rs`, `src/timeline.rs` (`expand_plugins`), `src/layer.rs` (`Content::Custom`) |
 | ffmpeg is invoked directly rather than reusing `agentgb`'s Python `video.py` | `src/encode.rs` |
+| A `Clip`'s memory is bounded by a window, not by clip length: below an estimated-size threshold it decodes eagerly (unchanged, cheap for a sting reused across many cuts); above it, frames stream from a running `ffmpeg` through a cache sized to the render's own parallelism (`stream_cache_frames`, tied to `rayon::current_num_threads()` so `render.rs`'s intentionally out-of-order parallel chunk access mostly hits rather than reseeks) and capped by a byte budget regardless of resolution. `frame_at` returns `Result<Option<Arc<Pixmap>>>` rather than the old borrowed `PixmapRef`, because a streaming frame lives behind a `Mutex`-guarded cache and a real decode failure can now surface lazily rather than only at load. Measured before/after in `docs/clip-streaming.md` | `src/assets/clip.rs` |
 | GIF export (`showreel gif`) is a `FrameSink` (`GifSink`), not a second render path — the same renderer's raw `rgb24` frames pipe into one ffmpeg `palettegen`/`paletteuse` filtergraph (palette generated *from the footage*, Lanczos downscale, `fps` decimation, all one pass). A subcommand not a `render` flag, because a GIF is a *window* of the film (`--from`/`--to` in seconds) at its own width/fps. Default dither is **ordered (Bayer)**, not error-diffusion: a GIF loops, and ordered dithering is a fixed function of pixel position so a static background does not crawl | `src/encode.rs` (`GifOptions`, `GifSink`), `src/bin/showreel.rs` (`cmd_gif`) |
 | Assets are resolved through `AssetStore`, the seam for MCP/fetching later | `src/assets/mod.rs` |
 | Audio hangs off the *film*, not a scene; `Audio` describes, `AudioInput` is resolved | `src/audio.rs` |
@@ -82,8 +83,14 @@ got before this round of features touched it.
 - **A `Layer`'s `placement` is `Option`.** `None` means "wherever this content belongs"
   (`Content::default_placement`) — a lower-third goes bottom-left, a counter top-right. A
   JSON layer with no placement must land where the Rust builder would put it.
-- **`Content::Clip` without `trim` decodes the whole file into memory.** A six-minute
-  source at 480px is gigabytes. Always trim to the moment used.
+- **`Clip::load` no longer holds a whole decoded clip in memory** (it did,
+  until an OOM on 2026-08-29 — see `docs/clip-streaming.md` for the measured
+  before/after). A clip above `EAGER_MAX_BYTES` (256 MiB estimated) decodes
+  lazily from a running `ffmpeg` through a bounded frame cache instead;
+  `trim` still narrows what's probed and (for a small clip) decoded, but is
+  no longer the only thing standing between a long source and an
+  out-of-memory render. `Content::Clip.trim`'s own doc comment still says
+  "decoding is bounded by this" — true, just no longer the *whole* story.
 - **`serde(flatten)` + an internally-tagged enum cannot take a default.** That is why
   `Placement` is untagged with a string shorthand (`"centre"`) rather than flattened.
 - Counters nest under `"count"` rather than flattening: a counter's `from` is a value and a
