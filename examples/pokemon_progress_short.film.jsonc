@@ -1,5 +1,5 @@
 // =====================================================================
-//  AI COMPLETES POKÉMON — progress reel (YouTube Short) — v2
+//  AI COMPLETES POKÉMON — progress reel (YouTube Short) — v3
 // =====================================================================
 //
 //  A staged progress video: what the pixels-only Pokémon-playing agent
@@ -15,12 +15,15 @@
 //    showreel render examples/pokemon_progress_short.film.jsonc \
 //      -A <pixelgb-images-root> -A <derived-assets-dir> -A <swarm-clip-dir> \
 //      --crf 20 -o docs/pokemon-progress-short.mp4
+//  (the v3 walk-cycle clips and the cropped swarm-map insert both live under
+//  <derived-assets-dir> — no fourth root needed; see the .assets.md's §5)
 //
 //  Vertical 1080×1920 for YouTube Shorts. Nine chapters:
 //    1  ARRIVAL ............. the full-colour Kanto atlas, whole -> Pallet
-//                              Town -> Red's own front door, starters and
-//                              the game character reprised, a swarm bursts
-//                              out of the house — THEN the ambition, stated
+//                              Town -> Red's own front door, starters and the
+//                              game character reprised, a swarm WALKS out of
+//                              the house, a real swarm-map + real-run-grid
+//                              insert — THEN the ambition, stated
 //    2  nothing .............. it starts with zero
 //    3  bedroom → house ...... first two milestones
 //    4  Oak / starter / rival  the lab
@@ -31,26 +34,46 @@
 //    9  the goal .............. a short closing card, stated as a goal
 //
 //  v1 (11faace) opened on the ambition and closed on a slow zoom into the
-//  full-colour Kanto atlas. The captain watched it, liked it, and asked for
-//  one change: "the ending shot and upbeat tune I want as the start
-//  instead ... zoom in on pallet town, use the game character and starters
-//  again, trigger a swarm out of the house." Read literally that is five
-//  things — the map-zoom SHOT moves to the front (not the closing text: the
-//  goal statement itself stays, honesty-critical, as a short card at the
-//  end); the atlas earns more screen time, with a real destination (Pallet
-//  Town, then Red's own door, both located from `pixelgb atlas`'s own
-//  manifest, not eyeballed — see the .assets.md); the three starters and
-//  the player's own overworld sprite reappear; and a burst of that same
-//  character sprite pours out of the house — the money shot. What v1's
-//  crew already got right (chapters 2-8, the honesty framing, the
-//  documentary grade) is untouched.
+//  full-colour Kanto atlas. v2 (e0e748c) moved that zoom to the front and
+//  added a burst of the player's own sprite out of the door — but the burst
+//  was seven STILL IMAGES sliding across the screen (`Layer::burst` only
+//  ever builds `Content::Clip` layers, so v2 hand-authored a `Content::Still`
+//  workaround instead of solving that). The captain watched it and rejected
+//  everything after the opening on sight: "only the opening sequence is
+//  good... we should see a swarm of players run out, properly, moving,
+//  walking.. as we pan out to see them making progress as we battle swarm
+//  the screen with example runs as the map swarm is running."
+//
+//  v3 keeps the opening exactly as approved (the map zoom, the cast reprise,
+//  the music opening FULL) and rebuilds everything from the door onward:
+//    - The swarm now WALKS: each direction's real two-frame Gen-1 walk pose
+//      is baked to a short, real-alpha looping CLIP (`walk/walk-{down,left,
+//      right}.mov`) and `Content::Clip` + `Drift` — the same idiom
+//      `Layer::burst` itself is built from — carries it outward with the
+//      cycle actually playing. Twelve walkers, not seven, each direction
+//      picked to roughly match its own heading. See the burst comment below
+//      for why qtrle (not libvpx-vp9/webm) is the container.
+//    - After the burst, a real, full-bleed insert takes over for ~3.6s: the
+//      new `teacher-swarm-cerulean-mobile.mp4` (32 agents actually crossing
+//      the actual Kanto map, recorded the night this brief landed) on top,
+//      a different trim window of the existing 16-agent real-run grid
+//      (`mgba-grid-16agents-mobile.mp4`, TODAY's own clip, reused with a
+//      different `trim` so it isn't the same pixels twice) on the bottom —
+//      "pan out... battle swarm the screen with example runs... as the map
+//      swarm is running" is two real recordings playing at once, not one
+//      dressed up as two. Representative footage, captioned as such, never
+//      as proof of any on-screen stat.
+//    - The ambition-stated title/logo group shifts later (it still only
+//      appears once the spectacle has cleared) and the opening scene's own
+//      duration grows from 6.6s to 11.1s to fit; nothing before the burst
+//      changed.
 //
 //  Grade is "documentary" (muted) over the journey chapters (3–7) and
 //  natural colour on the new opener, TODAY, and the closing card — grounded
 //  journey, vivid arrival and payoff. Music is the built-in generated
-//  chiptune (`src/music.rs`), mood "title", now arranged to open FULL
-//  (upbeat, at the front, per the captain's note) rather than build to it,
-//  settle for the journey chapters, and climax again on TODAY.
+//  chiptune (`src/music.rs`), mood "title", arranged to open FULL (upbeat,
+//  at the front), settle for the journey chapters, and climax again on
+//  TODAY — untouched by v3.
 // =====================================================================
 {
   "width": 1080,
@@ -95,7 +118,7 @@
   // ===============================================================
   "opening": {
     "name": "arrival",
-    "duration": 6.6,
+    "duration": 11.1,
     "background": "#05070d",
     "layers": [
       {
@@ -126,69 +149,141 @@
         "placement": { "fx": 0.695, "fy": 0.07, "fw": 0.19, "fh": 0.16 }, "from": 2.85, "duration": 1.0, "z": 3,
         "enter": { "kind": "rise", "distance": 20.0, "duration": 0.3 }, "exit": { "kind": "fade", "duration": 0.25 } },
 
-      // -- the swarm, bursting out of the house. Seven copies of the same
-      //    game-character sprite, launched from the door (frame-centred
-      //    once the camera holds — see above) on headings fanned across
-      //    the town square in front of the house (20°-160° clockwise from
-      //    +x/right, i.e. mostly downward and outward, never back into the
-      //    building) — the drift/Placement::Frac idiom `Layer::burst`
-      //    itself is built from (AGENTS.md), written by hand here for a
-      //    still rather than a clip. `in-quad` easing (accelerating
-      //    outward reads as energy, per the burst-demo finding). --
-      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-down-walk.png", "fit": "contain",
-        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.00, "duration": 0.85, "z": 5,
-        "drift": { "dx": 456.5, "dy": 148.3, "scale_to": 1.6, "easing": "in-quad" },
+      // -- v3: the swarm, WALKING out of the house. v2 shipped seven
+      //    copies of a still sprite sliding across the screen and the
+      //    captain rejected it on sight ("only the opening is good...
+      //    when we get on the house we should see a swarm run out,
+      //    properly, moving, walking"). `Layer::burst` only ever builds
+      //    `Content::Clip` layers (AGENTS.md) — so rather than a third
+      //    still-sprite workaround, the walk cycle IS a clip: each
+      //    direction's own two-frame Gen-1 walk pose
+      //    (`overworld-red-{down,side}[-walk].png` — "side" and its
+      //    horizontal flip cover left/right, the game's own mirroring
+      //    trick) baked to a 6-frame, 12fps, real-alpha loop
+      //    (`walk/walk-{down,left,right}.mov`, qtrle in a .mov container
+      //    — libvpx-vp9/webm was tried first and silently drops alpha on
+      //    decode in this ffmpeg build; qtrle's lossless RLE alpha round-
+      //    trips correctly, proven end to end with `showreel still`
+      //    before use, see `pokemon_progress_short.assets.md`). Twelve
+      //    walkers now, not seven — headings fanned 12°-168° clockwise
+      //    from +x (mostly downward and outward, never back into the
+      //    building) with the crate's own `burst_jitter` hash (seed 7)
+      //    for the same reproducible-organic wobble `Layer::burst` uses,
+      //    and each walker's direction sprite picked to roughly match its
+      //    own heading (right/down/left) rather than cycled for texture
+      //    only, as v2's comment admitted. `mode: "loop"` repeats the
+      //    0.5s cycle for the walker's whole 0.95s flight — enough to
+      //    read as running, not stepping once. --
+      { "type": "clip", "asset": "walk/walk-right.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.0, "duration": 0.95, "z": 5,
+        "drift": { "dx": 498.0, "dy": 45.0, "scale_to": 1.6, "easing": "in-quad" },
         "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
-        "exit": { "kind": "fade", "duration": 0.2 } },
-      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-side-walk.png", "fit": "contain",
-        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.10, "duration": 0.85, "z": 6,
-        "drift": { "dx": 327.4, "dy": 351.0, "scale_to": 1.6, "easing": "in-quad" },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-right.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.09, "duration": 0.95, "z": 6,
+        "drift": { "dx": 416.3, "dy": 277.0, "scale_to": 1.6, "easing": "in-quad" },
         "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
-        "exit": { "kind": "fade", "duration": 0.2 } },
-      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-up-walk.png", "fit": "contain",
-        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.20, "duration": 0.85, "z": 7,
-        "drift": { "dx": 225.3, "dy": 423.8, "scale_to": 1.6, "easing": "in-quad" },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-right.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.18, "duration": 0.95, "z": 7,
+        "drift": { "dx": 362.3, "dy": 344.6, "scale_to": 1.6, "easing": "in-quad" },
         "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
-        "exit": { "kind": "fade", "duration": 0.2 } },
-      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-down-walk.png", "fit": "contain",
-        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.30, "duration": 0.85, "z": 8,
-        "drift": { "dx": -16.8, "dy": 479.7, "scale_to": 1.6, "easing": "in-quad" },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-right.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.27, "duration": 0.95, "z": 8,
+        "drift": { "dx": 242.0, "dy": 437.6, "scale_to": 1.6, "easing": "in-quad" },
         "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
-        "exit": { "kind": "fade", "duration": 0.2 } },
-      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-side-walk.png", "fit": "contain",
-        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.40, "duration": 0.85, "z": 9,
-        "drift": { "dx": -172.0, "dy": 448.1, "scale_to": 1.6, "easing": "in-quad" },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-down.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.36, "duration": 0.95, "z": 9,
+        "drift": { "dx": 191.0, "dy": 462.1, "scale_to": 1.6, "easing": "in-quad" },
         "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
-        "exit": { "kind": "fade", "duration": 0.2 } },
-      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-up-walk.png", "fit": "contain",
-        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.50, "duration": 0.85, "z": 10,
-        "drift": { "dx": -362.3, "dy": 314.9, "scale_to": 1.6, "easing": "in-quad" },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-down.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.45, "duration": 0.95, "z": 10,
+        "drift": { "dx": 104.7, "dy": 488.9, "scale_to": 1.6, "easing": "in-quad" },
         "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
-        "exit": { "kind": "fade", "duration": 0.2 } },
-      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-down-walk.png", "fit": "contain",
-        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.60, "duration": 0.85, "z": 11,
-        "drift": { "dx": -459.0, "dy": 140.3, "scale_to": 1.6, "easing": "in-quad" },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-down.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.54, "duration": 0.95, "z": 11,
+        "drift": { "dx": -11.0, "dy": 499.9, "scale_to": 1.6, "easing": "in-quad" },
         "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
-        "exit": { "kind": "fade", "duration": 0.2 } },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-left.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.63, "duration": 0.95, "z": 12,
+        "drift": { "dx": -229.4, "dy": 444.3, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-left.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.72, "duration": 0.95, "z": 13,
+        "drift": { "dx": -270.1, "dy": 420.7, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-left.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.81, "duration": 0.95, "z": 14,
+        "drift": { "dx": -363.3, "dy": 343.5, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-left.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.9, "duration": 0.95, "z": 15,
+        "drift": { "dx": -469.9, "dy": 170.7, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      { "type": "clip", "asset": "walk/walk-left.mov", "fit": "contain", "mode": "loop",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.99, "duration": 0.95, "z": 16,
+        "drift": { "dx": -492.3, "dy": 87.5, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.22 }, "audio": { "muted": true } },
+      // last walker launches at 3.99, on screen through 4.94 (from+duration).
 
-      // -- the ambition, stated once the swarm has actually cleared the
-      //    frame (burst's last sprite fades by ~4.45s) — not stacked under
-      //    it: a solid backing bar this size sitting on top of the burst
-      //    from the start smothered "the single most watchable idea" the
-      //    first time this was rendered and checked. The default title
-      //    style (104px; AGENTS.md's own sharp edge: a Title's placement
-      //    box does not clip or clamp wrapped text) also wrapped "AI
-      //    COMPLETES POKÉMON" onto three lines and ran the subtitle off
-      //    the bottom of the frame — an explicit, smaller size here, same
-      //    as every other chapter's Title in this film already sets. --
-      { "type": "solid", "colour": "#05070de6", "placement": { "fx": 0.03, "fy": 0.35, "fw": 0.94, "fh": 0.40 }, "from": 4.4, "duration": 2.2, "z": 15,
+      // -- v3: pan out to real progress, not the hand-authored burst.
+      //    Full-bleed insert covering the atlas for ~3.6s: TOP half is a
+      //    real 32-agent swarm actually crossing the actual Kanto map
+      //    (`teacher-swarm-cerulean-mobile.mp4`, recorded the night this
+      //    brief landed — "USE IT"), cropped to drop its debug
+      //    sidebar/footer (see the .assets.md for the exact ffmpeg crop);
+      //    BOTTOM half is a *different* trim window of the same 16-agent
+      //    real-run grid TODAY uses later (`mgba-grid-16agents-mobile.mp4`,
+      //    a different `trim` so the two beats don't repeat pixels) —
+      //    "battle swarm the screen with example runs ... as the map
+      //    swarm is running" is two real recordings playing at once, not
+      //    one dressed up as two. A solid backer under both covers the
+      //    0.25s cross-fade seam so the atlas never flickers through.
+      //    Representative footage — never captioned as proof of any
+      //    on-screen stat (AGENTS.md's own rule for this footage). --
+      { "type": "solid", "colour": "#05070d", "placement": { "fx": 0.0, "fy": 0.0, "fw": 1.0, "fh": 1.0 }, "from": 4.95, "duration": 3.85, "z": 24 },
+      { "type": "clip", "asset": "swarm-map-progress.mp4", "fit": "cover",
+        "placement": { "fx": 0.0, "fy": 0.0, "fw": 1.0, "fh": 0.5 }, "from": 5.05, "duration": 3.6, "z": 25,
+        "audio": { "muted": true },
+        "enter": { "kind": "fade", "duration": 0.25 }, "exit": { "kind": "fade", "duration": 0.25 } },
+      { "type": "clip", "asset": "mgba-grid-16agents-mobile.mp4", "fit": "cover",
+        "trim": [40.0, 3.6], "decode_fps": 30.0, "max_width": 720,
+        "placement": { "fx": 0.0, "fy": 0.5, "fw": 1.0, "fh": 0.5 }, "from": 5.05, "duration": 3.6, "z": 25,
+        "audio": { "muted": true },
+        "enter": { "kind": "fade", "duration": 0.25 }, "exit": { "kind": "fade", "duration": 0.25 } },
+      { "type": "solid", "colour": "#ffd147", "placement": { "fx": 0.0, "fy": 0.494, "fw": 1.0, "fh": 0.012 }, "from": 5.05, "duration": 3.6, "z": 26,
+        "enter": { "kind": "fade", "duration": 0.25 }, "exit": { "kind": "fade", "duration": 0.25 } },
+      { "type": "lower-third", "text": "the swarm, at scale.", "detail": "representative footage, not proof", "accent": "#ffd147",
+        "placement": { "fx": 0.06, "fy": 0.86, "fw": 0.88, "fh": 0.10 }, "from": 5.35, "duration": 2.6, "z": 27,
+        "enter": { "kind": "fade", "duration": 0.4 }, "exit": { "kind": "fade", "duration": 0.3 } },
+
+      // -- the ambition, stated once the swarm-progress insert has
+      //    cleared the frame (ends 8.65s) — not stacked under it, the
+      //    same "let the spectacle clear first" call v2 made for the
+      //    burst. The default title style (104px; AGENTS.md's own sharp
+      //    edge: a Title's placement box does not clip or clamp wrapped
+      //    text) wraps "AI COMPLETES POKÉMON" onto three lines and runs
+      //    the subtitle off the bottom of the frame — an explicit,
+      //    smaller size here, same as every other chapter's Title in
+      //    this film already sets. --
+      { "type": "solid", "colour": "#05070de6", "placement": { "fx": 0.03, "fy": 0.35, "fw": 0.94, "fh": 0.40 }, "from": 8.85, "duration": 2.2, "z": 15,
         "enter": { "kind": "fade", "duration": 0.3 } },
       {
         "type": "still",
         "asset": "title/four-shade/8x/pokemon-logo.png",
         "fit": "contain",
         "placement": { "fx": 0.20, "fy": 0.37, "fw": 0.60, "fh": 0.09 },
-        "from": 4.6, "duration": 2.0, "z": 20,
+        "from": 9.05, "duration": 2.0, "z": 20,
         "enter": { "kind": "fade", "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } }
       },
       {
@@ -196,7 +291,7 @@
         "text": "AI COMPLETES POKÉMON",
         "subtitle": "the journey so far — not there yet",
         "placement": { "fx": 0.06, "fy": 0.49, "fw": 0.88, "fh": 0.24 },
-        "from": 4.6, "duration": 2.0, "z": 20,
+        "from": 9.05, "duration": 2.0, "z": 20,
         "style": { "family": ["Montserrat","Open Sans","DejaVu Sans"], "weight": 800, "italic": false, "size": 58.0, "tracking": -0.015, "line_height": 1.08, "fill": "#ffffff", "case": "as-written", "align": "centre", "tabular": false },
         "subtitle_style": { "family": ["Montserrat","Open Sans","DejaVu Sans"], "weight": 500, "italic": false, "size": 30.0, "tracking": 0.005, "line_height": 1.3, "fill": "#c4cbd6", "case": "as-written", "align": "centre", "tabular": false },
         "enter": {

@@ -16,6 +16,11 @@ overworld sprite (§1) alongside the three starters already in use. Everything e
 this file (§1's four-shade art, §2's captured frames and the swarm clip, §4's stats) is
 unchanged from v1 — re-verified, not re-derived.
 
+**v3** (the captain rejected v2's burst on sight — seven still sprites sliding, not
+walking) replaces that burst with real walk-cycle *clips* baked from the same sprite
+sheet, and adds a new full-bleed real-footage insert right after it. Everything from §1
+and §2 above is still used unchanged; §5 below is new.
+
 ## 1. PixelGB cartridge art (no prep — used directly)
 
 Root: `projects/pixelgb/images/pokemon-blue/` (10,712 extracted, scaled PNGs; see that
@@ -38,9 +43,8 @@ Used directly, no modification:
 - `sprites/four-shade/8x/overworld-red-{down,side,up}-walk.png` — **v2**: the player's
   own overworld sprite (the in-game protagonist is called "Red" regardless of
   cartridge version — "Blue" is the rival's own overworld sprite, not the player's).
-  Used twice in the opener: once as a small "cast" cameo alongside the three starters,
-  and seven times as the swarm bursting out of the house (three walk-direction variants
-  cycled for texture, not for physical accuracy to each burst heading)
+  Used as a small "cast" cameo alongside the three starters. **v3**: also the source
+  frames for the walk-cycle burst clips — see §5
 
 Used after a one-time crop (see §3 below), not directly:
 
@@ -81,9 +85,12 @@ pixel art when upscaling 6×; neighbour keeps every pixel a hard-edged square, m
 the aesthetic the PixelGB assets already use.
 
 **The 16-agent swarm grid**: `pokemon-run-txtscr/film/mgba-screen-triggers.mp4/mgba-grid-16agents-mobile.mp4`
-(720×776, 30fps, 260.13s), used directly (no re-encode) via `trim: [120.0, 8.0]` — an
-8s window starting 120s in, chosen by eye for a mix of agents mid-run rather than all
-freshly spawned or all long finished. `grid-manifest.json` beside it (same
+(720×776, 30fps, 260.13s), used directly (no re-encode), twice, with two different
+`trim` windows so the same pixels never repeat: `trim: [120.0, 8.0]` in TODAY (an 8s
+window starting 120s in, chosen by eye for a mix of agents mid-run rather than all
+freshly spawned or all long finished), and **v3**'s `trim: [40.0, 3.6]` in the new
+opener insert (§5 — an earlier, more chaotic window: rival battles and menus rather
+than TODAY's later shop/wild-battle mix). `grid-manifest.json` beside it (same
 `mgba-screen-triggers.mp4/` directory) is the source of the film's "3 of 16" figure —
 see the stats section below for where "11 of 16" comes from (a different, later run,
 no video).
@@ -164,3 +171,63 @@ in the crop, not the rival's house or the lab).
 All four of the above were independently verified against raw JSON/log files, not
 taken from any doc's summary prose — see the captain-facing delivery note for the
 full verification trail.
+
+## 5. v3: walking burst clips + the real swarm-progress insert
+
+**The walk-cycle clips** (`walk/walk-{down,left,right}.mov`, in the derived assets
+dir). Each direction's real Gen-1 two-frame walk pose — the game's own sprite sheet
+already draws both leg positions per direction, e.g. `overworld-red-down.png` and
+`overworld-red-down-walk.png` are the *same* pose's two alternating frames, not an
+idle vs. a walk sprite (confirmed by diffing them — `compare -metric AE` reports large
+per-pixel differences, and eyeballing the two shows the classic alternating-leg
+silhouette). "right" is a horizontal flip of "side" (the sheet only ever draws a
+left-facing pose; the game mirrors it for right, done here with `ffmpeg -vf hflip`).
+Each direction's 6-frame (A,B,A,B,A,B — three full strides), 12fps loop is built from
+an explicit numbered image sequence (not `-loop 1`/concat, which under-counted frames
+in an earlier attempt) and encoded **`qtrle` in a `.mov`**, not `libvpx-vp9`/webm —
+see the "transparent `Content::Clip`" sharp edge in the project `AGENTS.md` for why.
+Regen (per direction, `frameA`/`frameB` the direction's still + `-walk` pair):
+```
+mkdir seq
+cp frameA.png seq/f01.png; cp frameB.png seq/f02.png
+cp frameA.png seq/f03.png; cp frameB.png seq/f04.png
+cp frameA.png seq/f05.png; cp frameB.png seq/f06.png
+ffmpeg -framerate 12 -i seq/f%02d.png -c:v qtrle -pix_fmt argb walk-<direction>.mov
+```
+Verified end to end before trusting it in the film: `showreel still` at 0.1s steps
+over a tiny test film using these clips, confirmed both the transparency (a known
+background pixel decodes `alpha=0` after the full render pipeline, not just at the
+ffmpeg-probe stage) and the leg alternation actually playing.
+
+**Twelve walkers' headings**, fanned 12°-168° clockwise from +x (mostly downward and
+outward, matching v2's own "never back into the building" constraint) with the crate's
+own `burst_jitter` splitmix64 hash (`src/layer.rs`) ported to Python, seed `7`,
+`jitter_deg=8`, so the wobble is reproducible the same way `Layer::burst` itself is —
+not hand-picked numbers. Distance 500px, `scale_to: 1.6`, 0.95s on screen (about two
+walk-cycle loops — enough to read as running, not one step), 0.09s stagger between
+launches. Direction picked per walker from its own heading (`<65°` right, `>115°`
+left, otherwise down) rather than cycled for texture, as v2's own note admitted. The
+generator script (not committed — a throwaway, the film's own JSON is what's
+canonical) is a ~30-line Python file computing `dx`/`dy` from each heading and
+printing the layer JSON directly; `burst_jitter`'s own splitmix64 steps (`src/layer.rs`)
+are the exact formula it ports — read that function if reproducing by hand.
+
+**The real swarm-map insert** (`swarm-map-progress.mp4`, in the derived assets dir):
+a crop + trim of `teacher-swarm-cerulean-mobile.mp4` (878×494, 30fps, 316.5s — a
+32-agent swarm timelapse crossing the actual Kanto map, captured the night this brief
+landed). Cropped to `705×452` from the top-left to drop the debug sidebar (agent
+count/stats text) and footer (a status bar), keeping just the map + agent-dot
+telemetry; trimmed to a 3.6s window starting at 54s, picked by eye for a visible
+cluster of agent dots with the "emulated minutes" readout visibly ticking up across
+the window (real motion, not a frozen frame with fake motion blur). Regen:
+```
+ffmpeg -ss 54 -t 3.6 -i teacher-swarm-cerulean-mobile.mp4 \
+  -vf "crop=705:452:0:0" -c:v libx264 -crf 18 -pix_fmt yuv420p -an \
+  swarm-map-progress.mp4
+```
+Placed as the top half of a split-screen (the bottom half is the grid clip's own
+`trim`, done directly in the film JSON with no pre-processing — see §2 above), a
+divider line, and one caption. The caption is deliberately short and generic ("the
+swarm, at scale." / "representative footage, not proof") — this footage is a
+different, later swarm run than the one behind any on-screen stat in this film, and
+must never be captioned as if it proves one.

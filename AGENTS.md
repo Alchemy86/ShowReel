@@ -610,18 +610,38 @@ got before this round of features touched it.
   then Red's own front door (map id 0's `rect`, warp index 0's tile) rather than an
   eyeballed guess — divide the target pixel by the atlas image's own width/height to get
   the `fx`/`fy` a `Camera` `"on": "at"` shot wants, at any scale, since the fractions
-  are scale-invariant. **A burst also works on `Content::Still`, hand-authored** — the
-  swarm-out-of-the-house shot fans several *still* sprites, not clips, from one point:
-  `Layer::burst` (`src/layer.rs`) only ever builds `Content::Clip` layers, but the
-  `drift`/`Placement::Frac`/staggered-`from` idiom it's built from is ordinary layer
-  JSON on any content kind — see the film's own "swarm, bursting out of the house"
-  comment for the fully worked example (headings computed by hand, not the helper).
-  **Hit the `Content::Title` no-clip sharp edge again, for real, on first render**: a
-  `Title` overlaid on a busy background (not the mostly-empty scene the previous chapter
-  in this same film uses it in) needs its own explicit, smaller `style`/`subtitle_style`
-  — the default 104px title wrapped this film's own "AI COMPLETES POKÉMON" onto three
-  lines and ran the subtitle off the bottom of the frame; caught by rendering real
-  stills and looking, exactly as the existing sharp edge above warns, not by `check`.
+  are scale-invariant. **Hit the `Content::Title` no-clip sharp edge again, for real, on
+  first render**: a `Title` overlaid on a busy background (not the mostly-empty scene
+  the previous chapter in this same film uses it in) needs its own explicit, smaller
+  `style`/`subtitle_style` — the default 104px title wrapped this film's own "AI
+  COMPLETES POKÉMON" onto three lines and ran the subtitle off the bottom of the frame;
+  caught by rendering real stills and looking, exactly as the existing sharp edge above
+  warns, not by `check`.
+  **v3** (the captain watched v2's burst and rejected it: "only the opening is good...
+  we should see a swarm run out, properly, moving, walking") replaced that hand-authored
+  `Content::Still` burst (seven copies of a still sprite sliding, not walking — v2's own
+  note admitted `Layer::burst` only ever builds `Content::Clip` layers, so a still burst
+  was a workaround) with a genuinely animated one: each direction's real two-frame Gen-1
+  walk pose baked to a short, real-alpha, looping *clip* (`ffmpeg` image2-sequence at a
+  fixed fps, `qtrle` codec in a `.mov` container — **not** `libvpx-vp9`/webm, which
+  silently drops alpha on decode through this ffmpeg build (8.1.2): the encode reports
+  `alpha_mode: 1` and the container tags it, but every decoded frame comes back fully
+  opaque; `qtrle`'s lossless RLE alpha round-trips correctly, verified end to end with
+  `showreel still` before trusting it in the film — see the film's own burst comment).
+  With the walk cycle as a real clip, the *existing* `Content::Clip` + `Drift` machinery
+  (the same idiom `Layer::burst` itself is built from) carries it outward with the cycle
+  actually playing — no crate change needed, and the "`Layer::burst` only takes clips"
+  gap named in v2 turns out not to block a still-only asset, just to require turning the
+  still into a clip first. Twelve walkers, not seven, each direction (down/left/right,
+  "right" a horizontal flip of the sprite sheet's own left-facing "side" pose — the
+  game's own mirroring trick) picked to roughly match its own fanned heading rather than
+  cycled for texture only. After the burst, a real full-bleed insert (a different trim
+  window of the existing swarm grid on the bottom half, a brand new 32-agent real map
+  swarm — `teacher-swarm-cerulean-mobile.mp4` — cropped to drop its debug sidebar/footer,
+  on top) answers "pan out... battle swarm the screen with example runs... as the map
+  swarm is running" with two real recordings playing at once rather than one hand-built
+  effect standing in for both. See the film's own header comment and `.assets.md` for
+  the exact commands.
 
 - **`tools/narrate/` and `tools/prosody/` are the narration support tools.**
   `tools/narrate/kokoro_narrate.py` is the thin Kokoro driver `showreel narrate`
@@ -755,6 +775,22 @@ got before this round of features touched it.
   chart reading external data is a *known, documented gap* (same shape as a clip
   needing pre-decode). Inline chart data works in the browser; a `Series::Data`
   there needs an `AssetStore::insert_data` call that does not exist on the JS side.
+
+- **A transparent `Content::Clip` needs a codec whose alpha ffmpeg actually decodes
+  back out, and `libvpx-vp9`/webm is not one of them on this machine's ffmpeg (8.1.2).**
+  `Clip`'s decode always requests `-pix_fmt rgba` (`src/assets/clip.rs`), so any codec
+  ffmpeg can losslessly round-trip through that request works with zero crate change —
+  but encoding a png sequence to `libvpx-vp9`/webm with `-pix_fmt yuva420p` *reports*
+  success (`alpha_mode: 1` in both the encode log and the container's own tag) while
+  every frame decoded back out is fully opaque; the alpha is silently lost somewhere in
+  that specific encode/decode round trip. `qtrle` (QuickTime Animation, lossless RLE) in
+  a `.mov` container does not have this problem — verified pixel-by-pixel (a known
+  transparent corner reads back `alpha=0`, not just "the container has an alpha tag") and
+  end-to-end through `showreel still` before trusting it in a real film. This is how
+  `examples/pokemon_progress_short.film.jsonc`'s v3 walk-cycle clips are built — see that
+  bullet above. If a clip layer renders as an opaque black box instead of a transparent
+  sprite, suspect this before suspecting the renderer: check the *decoded* pixel alpha,
+  not just whether the encode log or `ffprobe` mentions alpha at all.
 
 ## Working on it
 
