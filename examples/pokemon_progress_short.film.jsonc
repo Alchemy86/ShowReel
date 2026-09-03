@@ -1,23 +1,26 @@
 // =====================================================================
-//  AI COMPLETES POKÉMON — progress reel (YouTube Short)
+//  AI COMPLETES POKÉMON — progress reel (YouTube Short) — v2
 // =====================================================================
 //
 //  A staged progress video: what the pixels-only Pokémon-playing agent
-//  has actually done, in order, ending on the goal it hasn't reached yet.
-//  Every number on screen is a real, dated measurement — see
-//  `pokemon_progress_short.assets.md` for exactly where each one came
-//  from and the commands to reproduce it. Nothing here claims the game
-//  is beaten; the frontier today is crossing Viridian Forest, and the
-//  end card says so.
+//  has actually done, in order — now opening on the payoff instead of
+//  building to it. Every number on screen is a real, dated measurement —
+//  see `pokemon_progress_short.assets.md` for exactly where each one
+//  came from and the commands to reproduce it. Nothing here claims the
+//  game is beaten; the frontier today is crossing Viridian Forest, and
+//  the closing card still says so.
 //
 //  RENDER IT (assets are NOT committed — see the .assets.md beside this
-//  file for exact source paths and the one-time asset-prep step):
+//  file for exact source paths and the one-time asset-prep steps):
 //    showreel render examples/pokemon_progress_short.film.jsonc \
 //      -A <pixelgb-images-root> -A <derived-assets-dir> -A <swarm-clip-dir> \
 //      --crf 20 -o docs/pokemon-progress-short.mp4
 //
 //  Vertical 1080×1920 for YouTube Shorts. Nine chapters:
-//    1  hook ................ the ambition, stated honestly up front
+//    1  ARRIVAL ............. the full-colour Kanto atlas, whole -> Pallet
+//                              Town -> Red's own front door, starters and
+//                              the game character reprised, a swarm bursts
+//                              out of the house — THEN the ambition, stated
 //    2  nothing .............. it starts with zero
 //    3  bedroom → house ...... first two milestones
 //    4  Oak / starter / rival  the lab
@@ -25,13 +28,29 @@
 //    6  reads the shop screen  a hardcoded script, replaced — 0/20 → 20/20
 //    7  Viridian Forest ...... the current frontier
 //    8  TODAY ................ a real swarm grid + today's finish-rate jump
-//    9  the goal .............. stated as a goal, not a claim
+//    9  the goal .............. a short closing card, stated as a goal
+//
+//  v1 (11faace) opened on the ambition and closed on a slow zoom into the
+//  full-colour Kanto atlas. The captain watched it, liked it, and asked for
+//  one change: "the ending shot and upbeat tune I want as the start
+//  instead ... zoom in on pallet town, use the game character and starters
+//  again, trigger a swarm out of the house." Read literally that is five
+//  things — the map-zoom SHOT moves to the front (not the closing text: the
+//  goal statement itself stays, honesty-critical, as a short card at the
+//  end); the atlas earns more screen time, with a real destination (Pallet
+//  Town, then Red's own door, both located from `pixelgb atlas`'s own
+//  manifest, not eyeballed — see the .assets.md); the three starters and
+//  the player's own overworld sprite reappear; and a burst of that same
+//  character sprite pours out of the house — the money shot. What v1's
+//  crew already got right (chapters 2-8, the honesty framing, the
+//  documentary grade) is untouched.
 //
 //  Grade is "documentary" (muted) over the journey chapters (3–7) and
-//  natural colour on the bookends + the TODAY payoff (1, 8, 9) — grounded
-//  journey, vivid arrival. Music is the built-in generated chiptune
-//  (`src/music.rs`), mood "title", arranged to open on a held tone (not
-//  a drum — see AGENTS.md) and build to full intensity under TODAY.
+//  natural colour on the new opener, TODAY, and the closing card — grounded
+//  journey, vivid arrival and payoff. Music is the built-in generated
+//  chiptune (`src/music.rs`), mood "title", now arranged to open FULL
+//  (upbeat, at the front, per the captain's note) rather than build to it,
+//  settle for the journey chapters, and climax again on TODAY.
 // =====================================================================
 {
   "width": 1080,
@@ -47,13 +66,14 @@
         "bpm": 120,
         "fit": "film",
         "arrangement": [
-          { "name": "hook",    "bars": 2, "intensity": "tone" },
-          { "name": "rise",    "bars": 4, "intensity": "kick" },
-          { "name": "motion",  "bars": 2, "intensity": "pulse" },
-          { "name": "tension", "bars": 2, "intensity": "build" },
-          { "name": "hush",    "bars": 1, "intensity": "tone" },
-          { "name": "today",   "bars": 4, "intensity": "full" },
-          { "name": "goal",    "bars": 3, "intensity": "full" }
+          { "name": "arrival",  "bars": 3, "intensity": "full" },
+          { "name": "hook",     "bars": 2, "intensity": "tone" },
+          { "name": "rise",     "bars": 4, "intensity": "kick" },
+          { "name": "motion",   "bars": 2, "intensity": "pulse" },
+          { "name": "tension",  "bars": 2, "intensity": "build" },
+          { "name": "hush",     "bars": 1, "intensity": "tone" },
+          { "name": "today",    "bars": 4, "intensity": "full" },
+          { "name": "close",    "bars": 2, "intensity": "tone" }
         ]
       },
       "fade_in": 0.2,
@@ -63,31 +83,122 @@
   ],
 
   // ===============================================================
-  //  1 — HOOK. States the ambition AND the honesty in one breath —
-  //  the subtitle is doing real work, not decoration.
+  //  1 — ARRIVAL. The full-colour Kanto atlas (`kanto-atlas-full.png`,
+  //  the "region-tint" render straight off the cartridge — see the
+  //  .assets.md for the exact regen command and the pixel-exact door
+  //  coordinates below). Whole map -> Pallet Town -> Red's own front
+  //  door, located from `pixelgb atlas`'s own manifest (map id 0's
+  //  `rect`, and warp index 0's tile), not eyeballed. The camera holds
+  //  on the door from 3.0s, so the swarm below bursts from a door that
+  //  has actually stopped moving under it — a still-moving camera would
+  //  desync the burst's frame-centred launch point from the door itself.
   // ===============================================================
   "opening": {
-    "name": "hook",
-    "duration": 2.3,
+    "name": "arrival",
+    "duration": 6.6,
     "background": "#05070d",
     "layers": [
       {
-        "type": "gradient",
-        "stops": [ [0.0, "#101a33"], [1.0, "#05070d"] ],
-        "angle": 90.0
+        "type": "still",
+        "asset": "kanto-atlas-full.png",
+        "fit": "cover",
+        "camera": {
+          "shots": [
+            { "at": 0.0, "framing": { "on": "whole" }, "ease": "in-out-cubic" },
+            { "at": 1.6, "framing": { "on": "at", "fx": 0.20256, "fy": 0.61873, "height": 450.0 }, "ease": "in-out-cubic" },
+            { "at": 3.0, "framing": { "on": "at", "fx": 0.19296, "fy": 0.61111, "height": 200.0 }, "ease": "in-out-cubic" }
+          ]
+        }
       },
+
+      // -- the cast, reprised: the game character and the three starters,
+      //    a quick row across the top while the map is still descending --
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-down-walk.png", "fit": "contain",
+        "placement": { "fx": 0.05, "fy": 0.07, "fw": 0.19, "fh": 0.16 }, "from": 2.55, "duration": 1.0, "z": 3,
+        "enter": { "kind": "rise", "distance": 20.0, "duration": 0.3 }, "exit": { "kind": "fade", "duration": 0.25 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/pokemon-front-001-bulbasaur.png", "fit": "contain",
+        "placement": { "fx": 0.265, "fy": 0.07, "fw": 0.19, "fh": 0.16 }, "from": 2.65, "duration": 1.0, "z": 3,
+        "enter": { "kind": "rise", "distance": 20.0, "duration": 0.3 }, "exit": { "kind": "fade", "duration": 0.25 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/pokemon-front-004-charmander.png", "fit": "contain",
+        "placement": { "fx": 0.48, "fy": 0.07, "fw": 0.19, "fh": 0.16 }, "from": 2.75, "duration": 1.0, "z": 3,
+        "enter": { "kind": "rise", "distance": 20.0, "duration": 0.3 }, "exit": { "kind": "fade", "duration": 0.25 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/pokemon-front-007-squirtle.png", "fit": "contain",
+        "placement": { "fx": 0.695, "fy": 0.07, "fw": 0.19, "fh": 0.16 }, "from": 2.85, "duration": 1.0, "z": 3,
+        "enter": { "kind": "rise", "distance": 20.0, "duration": 0.3 }, "exit": { "kind": "fade", "duration": 0.25 } },
+
+      // -- the swarm, bursting out of the house. Seven copies of the same
+      //    game-character sprite, launched from the door (frame-centred
+      //    once the camera holds — see above) on headings fanned across
+      //    the town square in front of the house (20°-160° clockwise from
+      //    +x/right, i.e. mostly downward and outward, never back into the
+      //    building) — the drift/Placement::Frac idiom `Layer::burst`
+      //    itself is built from (AGENTS.md), written by hand here for a
+      //    still rather than a clip. `in-quad` easing (accelerating
+      //    outward reads as energy, per the burst-demo finding). --
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-down-walk.png", "fit": "contain",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.00, "duration": 0.85, "z": 5,
+        "drift": { "dx": 456.5, "dy": 148.3, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.2 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-side-walk.png", "fit": "contain",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.10, "duration": 0.85, "z": 6,
+        "drift": { "dx": 327.4, "dy": 351.0, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.2 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-up-walk.png", "fit": "contain",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.20, "duration": 0.85, "z": 7,
+        "drift": { "dx": 225.3, "dy": 423.8, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.2 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-down-walk.png", "fit": "contain",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.30, "duration": 0.85, "z": 8,
+        "drift": { "dx": -16.8, "dy": 479.7, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.2 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-side-walk.png", "fit": "contain",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.40, "duration": 0.85, "z": 9,
+        "drift": { "dx": -172.0, "dy": 448.1, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.2 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-up-walk.png", "fit": "contain",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.50, "duration": 0.85, "z": 10,
+        "drift": { "dx": -362.3, "dy": 314.9, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.2 } },
+      { "type": "still", "asset": "sprites/four-shade/8x/overworld-red-down-walk.png", "fit": "contain",
+        "placement": { "fx": 0.45, "fy": 0.45, "fw": 0.10, "fh": 0.10 }, "from": 3.60, "duration": 0.85, "z": 11,
+        "drift": { "dx": -459.0, "dy": 140.3, "scale_to": 1.6, "easing": "in-quad" },
+        "enter": { "kind": "scale", "from": 0.3, "duration": 0.15, "timing": { "kind": "eased", "easing": "out-back" } },
+        "exit": { "kind": "fade", "duration": 0.2 } },
+
+      // -- the ambition, stated once the swarm has actually cleared the
+      //    frame (burst's last sprite fades by ~4.45s) — not stacked under
+      //    it: a solid backing bar this size sitting on top of the burst
+      //    from the start smothered "the single most watchable idea" the
+      //    first time this was rendered and checked. The default title
+      //    style (104px; AGENTS.md's own sharp edge: a Title's placement
+      //    box does not clip or clamp wrapped text) also wrapped "AI
+      //    COMPLETES POKÉMON" onto three lines and ran the subtitle off
+      //    the bottom of the frame — an explicit, smaller size here, same
+      //    as every other chapter's Title in this film already sets. --
+      { "type": "solid", "colour": "#05070de6", "placement": { "fx": 0.03, "fy": 0.35, "fw": 0.94, "fh": 0.40 }, "from": 4.4, "duration": 2.2, "z": 15,
+        "enter": { "kind": "fade", "duration": 0.3 } },
       {
         "type": "still",
         "asset": "title/four-shade/8x/pokemon-logo.png",
         "fit": "contain",
-        "placement": { "fx": 0.18, "fy": 0.09, "fw": 0.64, "fh": 0.14 },
+        "placement": { "fx": 0.20, "fy": 0.37, "fw": 0.60, "fh": 0.09 },
+        "from": 4.6, "duration": 2.0, "z": 20,
         "enter": { "kind": "fade", "duration": 0.5, "timing": { "kind": "eased", "easing": "out-cubic" } }
       },
       {
         "type": "title",
         "text": "AI COMPLETES POKÉMON",
         "subtitle": "the journey so far — not there yet",
-        "placement": { "fx": 0.06, "fy": 0.40, "fw": 0.88, "fh": 0.30 },
+        "placement": { "fx": 0.06, "fy": 0.49, "fw": 0.88, "fh": 0.24 },
+        "from": 4.6, "duration": 2.0, "z": 20,
+        "style": { "family": ["Montserrat","Open Sans","DejaVu Sans"], "weight": 800, "italic": false, "size": 58.0, "tracking": -0.015, "line_height": 1.08, "fill": "#ffffff", "case": "as-written", "align": "centre", "tabular": false },
+        "subtitle_style": { "family": ["Montserrat","Open Sans","DejaVu Sans"], "weight": 500, "italic": false, "size": 30.0, "tracking": 0.005, "line_height": 1.3, "fill": "#c4cbd6", "case": "as-written", "align": "centre", "tabular": false },
         "enter": {
           "kind": "chars", "stagger": 0.035, "rise": 26.0, "duration": 0.5,
           "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } }
@@ -352,29 +463,29 @@
     },
 
     // =============================================================
-    //  9 — THE GOAL. Stated as a goal. "Next" names the actual next
-    //  unclaimed leg (Route 2 → Pewter), not a claim of reaching it.
+    //  9 — THE GOAL. A short closing card — the map-zoom SHOT already
+    //  played at the front, so this is just the honest statement it
+    //  used to carry: a goal, not a claim of completion. "Next" names
+    //  the actual next unclaimed leg (Route 2 → Pewter).
     // =============================================================
     {
       "transition": { "duration": 0.6, "presentation": { "kind": "fade", "through": "#000000" }, "timing": { "kind": "eased", "easing": "in-out-cubic" } },
       "scene": {
         "name": "goal",
-        "duration": 5.5,
+        "duration": 2.2,
         "background": "#05070d",
         "layers": [
-          { "type": "still", "asset": "kanto-atlas-2400.png", "fit": "cover",
-            "camera": { "shots": [
-              { "at": 0.0, "framing": { "on": "whole" }, "ease": "in-out-cubic" },
-              { "at": 5.5, "framing": { "on": "at", "fx": 0.5, "fy": 0.45, "height": 1500.0 }, "ease": "in-out-cubic" }
-            ] } },
-          { "type": "scrim", "height": 0.55, "strength": 0.85, "colour": "#000000" },
-
+          {
+            "type": "gradient",
+            "stops": [ [0.0, "#101a33"], [1.0, "#05070d"] ],
+            "angle": 90.0
+          },
           { "type": "title", "text": "THE GOAL.", "subtitle": "AI completes Pokémon — next: Route 2, then Pewter",
-            "placement": { "fx": 0.06, "fy": 0.42, "fw": 0.88, "fh": 0.34 }, "from": 0.2, "duration": 5.3, "z": 4,
+            "placement": { "fx": 0.06, "fy": 0.38, "fw": 0.88, "fh": 0.34 }, "from": 0.1, "duration": 2.1, "z": 4,
             "enter": { "kind": "chars", "stagger": 0.03, "rise": 26.0, "duration": 0.5,
               "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } } } },
           { "type": "lower-third", "text": "pixels only.", "detail": "no memory reads · same swarm, still going", "accent": "#ffd147",
-            "placement": { "fx": 0.06, "fy": 0.86, "fw": 0.88, "fh": 0.10 }, "from": 1.6, "duration": 3.9, "z": 4,
+            "placement": { "fx": 0.06, "fy": 0.86, "fw": 0.88, "fh": 0.10 }, "from": 0.9, "duration": 1.3, "z": 4,
             "enter": { "kind": "slide-in", "dx": -60.0, "dy": 0.0, "duration": 0.45,
               "timing": { "kind": "spring", "spring": { "mass": 1.0, "stiffness": 120.0, "damping": 20.0, "clamp": false } } } }
         ]

@@ -3,8 +3,18 @@
 None of this film's assets are committed — they are all external, undistributed
 research material from sibling projects on the machine this was built on, not
 ShowReel fixtures. This file is the exact record of where every asset came from and
-how the two derived-asset prep steps were done, so the film can be rebuilt (or
-rebuilt with a fresher swarm run / fresher stats) elsewhere.
+how the derived-asset prep steps were done, so the film can be rebuilt (or rebuilt
+with a fresher swarm run / fresher stats) elsewhere.
+
+**v2** (captain's direction after watching v1: open on the map-zoom payoff instead of
+closing on it, zoom to Pallet Town specifically, bring back the starters and the game
+character, and end the opener with a swarm bursting out of the house) replaced
+`kanto-atlas-2400.png` with a higher-resolution, non-downscaled `kanto-atlas-full.png`
+(§3 below — the opener now zooms in tight enough that the old 2400px-wide downscale
+would have shown visible blur, not crisp GB tile art) and added the player's own
+overworld sprite (§1) alongside the three starters already in use. Everything else in
+this file (§1's four-shade art, §2's captured frames and the swarm clip, §4's stats) is
+unchanged from v1 — re-verified, not re-derived.
 
 ## 1. PixelGB cartridge art (no prep — used directly)
 
@@ -25,6 +35,12 @@ Used directly, no modification:
   shop-screen scenes)
 - `sprites/four-shade/16x/overworld-pokedex.png` — Pokédex icon pop-in
 - `maps/four-shade/8x/051-viridian-forest.png` — forest background
+- `sprites/four-shade/8x/overworld-red-{down,side,up}-walk.png` — **v2**: the player's
+  own overworld sprite (the in-game protagonist is called "Red" regardless of
+  cartridge version — "Blue" is the rival's own overworld sprite, not the player's).
+  Used twice in the opener: once as a small "cast" cameo alongside the three starters,
+  and seven times as the swarm bursting out of the house (three walk-direction variants
+  cycled for texture, not for physical accuracy to each burst heading)
 
 Used after a one-time crop (see §3 below), not directly:
 
@@ -86,12 +102,34 @@ the character renders noticeably smaller than the placement box appears to allow
 Cropping to `getbbox()` first fixes this; see the sharp edge in the project `AGENTS.md`
 for the general version of this gotcha.
 
+**v1** downscaled the committed 2x atlas for its (never zoomed in past a wide
+establishing shot) goal-card background:
 ```
 ffmpeg -y -i atlas/region-tint/2x/kanto.png -vf "scale=2400:-1" kanto-atlas-2400.png
 ```
-The source atlas decodes to ~880 MB of raw RGBA at full size (15008×14688) — far more
-than a static, never-zoomed-in background needs. Downscaled once to 2400px wide
-(5.3 MB PNG) for the goal card.
+**v2**'s opener needs a real push all the way to a single house's front door, which
+that 2400px-wide downscale doesn't have the detail left to survive — so it regenerates
+the atlas at native 1x resolution instead (`pixelgb atlas`'s own render, `tile_px=16`,
+no interpolation to soften it) and uses the PNG directly, no further scaling:
+```
+pixelgb atlas --rom <pokemon-blue.gb> --out <dir> --scales 1
+cp <dir>/pokemon-blue/atlas/region-tint/1x/kanto.png kanto-atlas-full.png
+```
+7504×7344, ~2.9 MB PNG (~200 MB decoded — well within a mip-backed still's budget; see
+`src/camera.rs`'s "mip-backed" design). `pixelgb atlas` also writes `<dir>/atlas.json`
+alongside the PNGs — every map's exact `rect` (atlas pixels at scale 1) and, for an
+interior, its own door's tile coordinate — which is how the opener's camera targets a
+*real* location rather than an eyeballed guess:
+
+| Target | Source | Atlas pixel (1x) | `fx`, `fy` (pixel ÷ 7504, 7344) |
+|---|---|---|---|
+| Pallet Town (whole town) | `atlas.json` map id `0`'s `rect` centre: `x=1360+160, y=4400+144` | `(1520, 4544)` | `0.20256, 0.61873` |
+| Red's own front door | same map's `rect` origin `+ warp[0]`'s tile `(5, 5) × tile_px 16`, centred on the door tile | `(1448, 4488)` | `0.19296, 0.61111` |
+
+Both were also visually confirmed, not trusted to arithmetic alone — cropped straight
+out of the freshly rendered atlas and eyeballed against the four-shade Pallet Town map
+before committing to the film (matching warp index 0 to the *west* house, the one shown
+in the crop, not the rival's house or the lab).
 
 ## 4. The "today" stats — exact source and verification
 

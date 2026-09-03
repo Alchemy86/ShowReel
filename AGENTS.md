@@ -586,19 +586,42 @@ got before this round of features touched it.
   `.mp4` in one film — none of it committed (see `pokemon_progress_short.assets.md`),
   since it is all external, undistributed research material with a captain-facing
   publish target rather than a repo fixture. Nine chapters, `MusicFit::Film`-locked
-  generated chiptune (mood `"title"`, opens on `Intensity::TONE` per the arrangement
-  row above), `"grade": "documentary"` on the journey chapters only. Two hand-prep steps
-  before rendering, both plain `ffmpeg`/PIL, no crate code: (1) a handful of native
-  160×144 GB screenshots re-scaled with `-vf scale=W:H:flags=neighbor` (nearest-neighbour
-  — a smooth filter blurs pixel art) into upscaled stills; (2) the two cartridge
-  portraits (`trainer-*-*.png`) cropped to their real content bbox before use as a
-  `still` layer, because they ship on a much wider transparent canvas than their subject
-  — feeding the padded original through `Fit::Contain` visibly shrinks the character to
-  fit the *canvas's* aspect ratio, not the subject's; crop to `Image.getbbox()` first.
+  generated chiptune (mood `"title"`), `"grade": "documentary"` on the journey chapters
+  only. **v2** (the captain watched v1, then asked to open on the payoff instead of
+  building to it) moved the full-colour Kanto atlas zoom from the closing chapter to
+  the opener, arrangement now opens on `Intensity::FULL` and climaxes a second time on
+  TODAY rather than building to one closing peak (`Intensity::TONE` still opens the
+  *quiet* mid-film beats — "hook"/"hush"/"close" — per the arrangement row above, just
+  no longer the film's own opening bar). Two hand-prep steps before rendering, both
+  plain `ffmpeg`/PIL, no crate code: (1) a handful of native 160×144 GB screenshots
+  re-scaled with `-vf scale=W:H:flags=neighbor` (nearest-neighbour — a smooth filter
+  blurs pixel art) into upscaled stills; (2) the two cartridge portraits
+  (`trainer-*-*.png`) cropped to their real content bbox before use as a `still` layer,
+  because they ship on a much wider transparent canvas than their subject — feeding the
+  padded original through `Fit::Contain` visibly shrinks the character to fit the
+  *canvas's* aspect ratio, not the subject's; crop to `Image.getbbox()` first.
   Re-render: `showreel render examples/pokemon_progress_short.film.jsonc -A <pixelgb
-  images root> -A <derived assets dir> -A <swarm grid clip dir> --crf 20 --max-workers 1
-  -o docs/pokemon-progress-short.mp4` (`--max-workers 1` is deliberate here, not a
-  general recommendation — this render ran in a memory-constrained shared environment).
+  images root> -A <derived assets dir> -A <swarm grid clip dir> --crf 20
+  -o docs/pokemon-progress-short.mp4`.
+  **Finding a real map's pixel position in a PixelGB atlas**: `pixelgb atlas --rom
+  <cart> --out <dir> --scales 1` writes `atlas.json` beside the PNGs — every map's exact
+  `rect` (atlas pixels at scale 1) and every interior door's own tile coordinate within
+  it. That is how this film's opener zooms the *real* Kanto atlas onto Pallet Town and
+  then Red's own front door (map id 0's `rect`, warp index 0's tile) rather than an
+  eyeballed guess — divide the target pixel by the atlas image's own width/height to get
+  the `fx`/`fy` a `Camera` `"on": "at"` shot wants, at any scale, since the fractions
+  are scale-invariant. **A burst also works on `Content::Still`, hand-authored** — the
+  swarm-out-of-the-house shot fans several *still* sprites, not clips, from one point:
+  `Layer::burst` (`src/layer.rs`) only ever builds `Content::Clip` layers, but the
+  `drift`/`Placement::Frac`/staggered-`from` idiom it's built from is ordinary layer
+  JSON on any content kind — see the film's own "swarm, bursting out of the house"
+  comment for the fully worked example (headings computed by hand, not the helper).
+  **Hit the `Content::Title` no-clip sharp edge again, for real, on first render**: a
+  `Title` overlaid on a busy background (not the mostly-empty scene the previous chapter
+  in this same film uses it in) needs its own explicit, smaller `style`/`subtitle_style`
+  — the default 104px title wrapped this film's own "AI COMPLETES POKÉMON" onto three
+  lines and ran the subtitle off the bottom of the frame; caught by rendering real
+  stills and looking, exactly as the existing sharp edge above warns, not by `check`.
 
 - **`tools/narrate/` and `tools/prosody/` are the narration support tools.**
   `tools/narrate/kokoro_narrate.py` is the thin Kokoro driver `showreel narrate`
