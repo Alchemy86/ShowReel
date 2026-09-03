@@ -89,6 +89,21 @@ got before this round of features touched it.
 - **A `Layer`'s `placement` is `Option`.** `None` means "wherever this content belongs"
   (`Content::default_placement`) — a lower-third goes bottom-left, a counter top-right. A
   JSON layer with no placement must land where the Rust builder would put it.
+- **`Content::Title`'s placement box does not clip or clamp its text — unlike
+  `LowerThird`, whose plate is explicitly clamped into the frame (`draw_lower_third`'s
+  `.clamp(margin, frame.h - plate_h - margin)`), `draw_title` wraps at a fixed
+  `frame.w * 0.82` (the layer's own `fw` sizes nothing but the horizontal anchor) and
+  then just draws downward from `placement.fy` for as many lines as the text needs —
+  there is no ceiling.** A short 2-3 word title tucked low in frame (an `fy` of 0.70+,
+  the natural place for a per-beat caption under a picture) silently runs text off the
+  *bottom edge of the actual video frame*, not just out of its own box — caught only by
+  rendering a real `still` at that timestamp and looking, not by `check` (which doesn't
+  render) or a small contact-sheet thumbnail (easy to misread as "just tight"). Give a
+  low, caption-style Title generous headroom (a smaller `fy`, i.e. higher up) and/or an
+  explicit smaller `style.size` rather than trusting its placement box's `fh` to contain
+  it — `fh` is decorative for `Title`, not a clip mask. `Counter` has the same
+  no-wrap-width caveat but is single-line by nature (`TextLayout::build(..., None)`) so
+  it rarely bites; `Text` (`Content::Text`) is safer still with `fit: true`.
 - **`Clip::load` no longer holds a whole decoded clip in memory** (it did,
   until an OOM on 2026-08-29 — see `docs/clip-streaming.md` for the measured
   before/after). A clip above `EAGER_MAX_BYTES` (256 MiB estimated) decodes
@@ -562,6 +577,28 @@ got before this round of features touched it.
   rather than guessed — read those before changing the effect's defaults,
   and `BurstSpec::default()` in `src/layer.rs` before assuming a value in
   the header comment is still what ships.
+
+- **`examples/pokemon_progress_short.film.jsonc` is a real deliverable YouTube Short
+  built with ShowReel, not a feature-proof film** — the first film in this repo authored
+  at a **vertical 1080×1920** canvas (every other example is 1920×1080 or a portrait
+  crop of one), and the first to combine PixelGB's extracted cartridge sprites/maps,
+  real per-frame PNG captures from a finished agent run, and a real 16-agent swarm-grid
+  `.mp4` in one film — none of it committed (see `pokemon_progress_short.assets.md`),
+  since it is all external, undistributed research material with a captain-facing
+  publish target rather than a repo fixture. Nine chapters, `MusicFit::Film`-locked
+  generated chiptune (mood `"title"`, opens on `Intensity::TONE` per the arrangement
+  row above), `"grade": "documentary"` on the journey chapters only. Two hand-prep steps
+  before rendering, both plain `ffmpeg`/PIL, no crate code: (1) a handful of native
+  160×144 GB screenshots re-scaled with `-vf scale=W:H:flags=neighbor` (nearest-neighbour
+  — a smooth filter blurs pixel art) into upscaled stills; (2) the two cartridge
+  portraits (`trainer-*-*.png`) cropped to their real content bbox before use as a
+  `still` layer, because they ship on a much wider transparent canvas than their subject
+  — feeding the padded original through `Fit::Contain` visibly shrinks the character to
+  fit the *canvas's* aspect ratio, not the subject's; crop to `Image.getbbox()` first.
+  Re-render: `showreel render examples/pokemon_progress_short.film.jsonc -A <pixelgb
+  images root> -A <derived assets dir> -A <swarm grid clip dir> --crf 20 --max-workers 1
+  -o docs/pokemon-progress-short.mp4` (`--max-workers 1` is deliberate here, not a
+  general recommendation — this render ran in a memory-constrained shared environment).
 
 - **`tools/narrate/` and `tools/prosody/` are the narration support tools.**
   `tools/narrate/kokoro_narrate.py` is the thin Kokoro driver `showreel narrate`
